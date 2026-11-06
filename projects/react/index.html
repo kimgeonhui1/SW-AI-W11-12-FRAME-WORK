@@ -3,15 +3,85 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Phase 1 - Virtual DOM / Diff / Patch</title>
   <link rel="stylesheet" href="./src/styles/style.css" />
 </head>
-<body>
-  <div id="real-area"></div>
-  <div id="test-area"></div>
-  <button id="patch-btn">Patch</button>
-  <button id="undo-btn">뒤로가기</button>
-  <button id="redo-btn">앞으로가기</button>
+<body class="phase1">
+  <header class="page-header">
+    <h1>Phase 1 · Virtual DOM / Diff / Patch</h1>
+    <p>
+      오른쪽 <strong>테스트 영역</strong>을 고친 뒤 <strong>Patch</strong>를 누르면,
+      Diff로 찾은 변경점만 왼쪽 <strong>실제 영역</strong>에 반영됩니다.
+      바뀐 노드는 잠깐 강조됩니다.
+    </p>
+  </header>
+
+  <main>
+    <!-- ① 실제 영역 / 테스트 영역 -->
+    <div class="grid">
+      <section class="panel" aria-labelledby="real-title">
+        <h2 id="real-title" class="panel-title">실제 영역 <small>(#real-area · 읽기 전용)</small></h2>
+        <!--
+          실제 영역 안의 샘플 HTML.
+          일부러 들여쓰기를 해 두었다: 줄바꿈이 들어간 공백 텍스트는 domToVdom 이 무시하므로
+          VDOM 에는 들어가지 않고, patch 도 같은 규칙으로 자식 위치를 센다.
+          ※ main.js 는 이 영역에 클래스·속성을 추가하지 않는다 (VDOM 과 어긋나지 않게).
+        -->
+        <div id="real-area" class="area">
+          <section class="card" data-id="intro">
+            <h1>Virtual DOM 실험실</h1>
+            <h2 class="subtitle" style="color: #7c3aed;">바뀐 부분만 다시 그리기</h2>
+            <p>이 문단에는 <strong>굵은 글씨</strong>, <em>기울임</em>, <a href="https://developer.mozilla.org/ko/" title="MDN 문서">링크</a>, <code>코드</code>가 함께 들어 있습니다.</p>
+            <ul class="todo" data-count="3">
+              <li data-done="true">HTML을 Virtual DOM으로 변환</li>
+              <li data-done="false">Diff로 변경점 찾기</li>
+              <li data-done="false">Patch로 실제 DOM 수정</li>
+            </ul>
+            <p class="note" style="font-size: 0.9em;">테스트 영역에서 자유롭게 고쳐 보세요.</p>
+          </section>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="test-title">
+        <h2 id="test-title" class="panel-title">테스트 영역 <small>(#test-area · 직접 편집)</small></h2>
+        <!-- contenteditable: 미리보기를 클릭해서 글자를 바로 고칠 수 있다 -->
+        <div id="test-area" class="area area--editable" contenteditable="true" spellcheck="false"></div>
+
+        <label class="source-label" for="test-source">HTML 소스 편집기 <small>(태그 · 속성 · 구조 수정, 미리보기와 양방향 동기화)</small></label>
+        <textarea id="test-source" class="source" spellcheck="false" autocomplete="off" wrap="off"></textarea>
+      </section>
+    </div>
+
+    <!-- ② 조작 버튼 -->
+    <div class="toolbar" role="toolbar" aria-label="Patch 및 History 이동">
+      <button id="patch-btn" class="btn btn--primary" type="button">Patch</button>
+      <button id="undo-btn" class="btn" type="button">← 뒤로가기</button>
+      <button id="redo-btn" class="btn" type="button">앞으로가기 →</button>
+      <span id="position-label" class="position">현재 위치: - / -</span>
+      <span id="status" class="status" role="status" aria-live="polite"></span>
+    </div>
+
+    <!-- ③ State History / 마지막 Diff 결과 -->
+    <div class="grid">
+      <section class="panel" aria-labelledby="history-title">
+        <h2 id="history-title" class="panel-title">State History <small>(클릭하면 그 시점으로 이동)</small></h2>
+        <ol id="history-list" class="history"></ol>
+      </section>
+
+      <section class="panel" aria-labelledby="log-title">
+        <h2 id="log-title" class="panel-title">마지막 Diff 결과 <small id="log-summary"></small></h2>
+        <ol id="patch-log" class="patch-log"></ol>
+      </section>
+    </div>
+
+    <!-- ④ 현재 Virtual DOM (JSON) -->
+    <details class="panel vdom-view">
+      <summary>현재 Virtual DOM (JSON)</summary>
+      <pre id="vdom-json"></pre>
+    </details>
+  </main>
+
   <script type="module" src="./src/phase1/main.js"></script>
 </body>
 </html>

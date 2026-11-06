@@ -3,11 +3,25 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Phase 2 - Component / State / Hooks</title>
   <link rel="stylesheet" href="./src/styles/style.css" />
 </head>
-<body>
-  <div id="root"></div>
+<body class="phase2">
+  <header class="p2-header">
+    <div>
+      <p class="p2-eyebrow">Mini React · Phase 2</p>
+      <p class="p2-desc">함수형 컴포넌트 + <code>useState</code> · <code>useEffect</code> · <code>useMemo</code>.
+        상태가 바뀌면 새 Virtual DOM → Diff → Patch로 바뀐 노드만 실제 DOM에 반영합니다.</p>
+    </div>
+    <a class="p2-link" href="./index.html">Phase 1 (Diff · Patch 검증) →</a>
+  </header>
+  <main class="p2-layout">
+    <!-- App(루트 컴포넌트)이 그려지는 곳 -->
+    <div id="root"></div>
+    <!-- 렌더 관찰 패널 (별도의 루트 컴포넌트) -->
+    <aside id="inspector"></aside>
+  </main>
   <script type="module" src="./src/app/main.js"></script>
 </body>
 </html>
