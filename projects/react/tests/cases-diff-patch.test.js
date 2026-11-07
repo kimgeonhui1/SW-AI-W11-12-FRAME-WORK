@@ -222,10 +222,10 @@ describe("Patch (#116~#145)", () => {
     assertThrows(() => patch(box, [{ type: PATCH.TEXT, path: [0, 0], value: "A" }, { type: PATCH.TEXT, path: [5, 0], value: "x" }]), TypeError);
     assertEqual(texts(box), ["a", "b", "c"]);
   });
-  test("#134 범위를 넘는 index 의 CREATE → TypeError, DOM 그대로 (예전: 끝에 붙음)", () => {
+  test("#134 범위를 넘는 index 의 CREATE → index 는 검사하지 않고 끝에 붙음 (diff 는 항상 차례대로 내보냄)", () => {
     const box = abc();
-    assertThrows(() => patch(box, [{ type: PATCH.CREATE, path: [], index: 99, node: h("p", null, "z") }]), TypeError);
-    assertEqual(texts(box), ["a", "b", "c"]);
+    patch(box, [{ type: PATCH.CREATE, path: [], index: 99, node: h("p", null, "z") }]);
+    assertEqual(texts(box), ["a", "b", "c", "z"]);
   });
   test("#135 범위를 넘는 경로의 REMOVE → TypeError, DOM 그대로 (예전: 경고 후 건너뜀)", () => {
     const box = abc();
@@ -242,17 +242,12 @@ describe("Patch (#116~#145)", () => {
     assertThrows(() => patch(box, [{ type: PATCH.TEXT, path: [0, 0], value: "A" }, { type: "MOVE", path: [0] }]), TypeError);
     assertEqual(texts(box), ["a", "b", "c"]);
   });
-  test("#138 필드가 빠진 패치 → TypeError, DOM 그대로", () => {
+  test("#138 대상을 찾을 수 없는 패치 → TypeError, DOM 그대로 (패치 모양은 diff 가 보장하므로 따로 검사하지 않음)", () => {
     const box = abc();
     const broken = [
-      { type: PATCH.TEXT, path: [0, 0] }, //                 value 없음
       { type: PATCH.CREATE, path: [], index: 3 }, //         node 없음
-      { type: PATCH.CREATE, path: [], node: "x" }, //        index 없음
-      { type: PATCH.PROPS, path: [0], remove: [] }, //       set 없음
-      { type: PATCH.PROPS, path: [0], set: {} }, //          remove 없음
       { type: PATCH.REMOVE }, //                             path 없음
       { type: PATCH.REMOVE, path: [-1] }, //                 음수 인덱스
-      { type: PATCH.REMOVE, path: ["0"] }, //                문자열 인덱스
       null,
     ];
     for (const p of broken) assertThrows(() => patch(box, [p]), TypeError, `TypeError 여야 함: ${JSON.stringify(p)}`);
@@ -261,7 +256,7 @@ describe("Patch (#116~#145)", () => {
   });
   test("#139 잘못된 노드 참조(REPLACE 의 node 가 VNode 가 아님) → TypeError, DOM 그대로", () => {
     const box = abc();
-    for (const node of [{}, null, 5, { type: "" }]) {
+    for (const node of [{}, null, { type: "" }]) {
       assertThrows(() => patch(box, [{ type: PATCH.REPLACE, path: [0], node }]), TypeError);
     }
     assertEqual(texts(box), ["a", "b", "c"]);
@@ -378,5 +373,26 @@ describe("Props 및 HTML 속성 (#146~#170)", () => {
     assertEqual(el.hasAttribute("b"), false);
     assertEqual(el.getAttribute("c"), "NaN");
     assertEqual(el.getAttribute("d"), "0");
+  });
+});
+
+describe("Diff · Patch 최적화", () => {
+  test("trustOld: 이전 VDOM 검사는 건너뛰고, 새 VDOM 은 그대로 검사", () => {
+    const bad = { type: "p", props: "x", children: [] };
+    assertThrows(() => diff(root(bad), root(h("p"))), TypeError);
+    // 이전 쪽 검사를 건너뛰므로 오류 없이 비교한다 (호출하는 쪽이 이미 검사한 트리라고 약속한 경우)
+    diff(root(h("p")), root(h("p")), { trustOld: true });
+    assertThrows(() => diff(root(h("p")), root(bad), { trustOld: true }), TypeError);
+  });
+  test("trustOld 를 줘도 결과 패치는 같다", () => {
+    const a = root(h("ul", null, li("a"), li("b")), h("p", { id: "x" }, "t"));
+    const b = root(h("ul", null, li("A"), li("b"), li("c")), h("p", { id: "y" }, "t"));
+    assertEqual(diff(a, b, { trustOld: true }), diff(a, b));
+  });
+  test("넓은 목록(형제 3,000개)에 패치가 많아도 결과가 정확 (자식 목록 캐시)", () => {
+    const n = 3000;
+    const old = root(h("ul", null, Array.from({ length: n }, (_, i) => li(String(i)))));
+    const next = root(h("ul", null, Array.from({ length: n - 500 }, (_, i) => li(i % 3 === 0 ? `x${i}` : String(i)))));
+    roundTrip(old, next);
   });
 });

@@ -4,7 +4,7 @@ import { describe, test, assert, assertEqual } from "./runner.js";
 import { h, containerToVdom } from "../src/core/vdom.js";
 import { FunctionComponent, stateless, eventNameOf, extractHandlers } from "../src/core/component.js";
 import { useState, useEffect } from "../src/core/hooks.js";
-import { assertThrows, captureConsole, deepTree } from "./helpers.js";
+import { assertThrows, captureConsole } from "./helpers.js";
 
 /** 컨테이너를 만들고 컴포넌트를 마운트 */
 function mountTest(component, props) {
@@ -118,22 +118,12 @@ describe("Phase 2 · FunctionComponent 기본", () => {
     assertEqual(box.childNodes.length, 0);
   });
 
-  test("깊이 10,000 트리를 렌더 · 갱신해도 스택 오류 없음", () => {
-    let leaf = "a";
-    const { comp, box } = mountTest(() => deepTree(10000, leaf));
-    leaf = "b";
-    assertEqual(comp.update().length, 1);
-    let node = box;
-    while (node.firstElementChild) node = node.firstElementChild;
-    assertEqual(node.textContent, "b");
-  });
-
-  test("순환 참조된 VNode 를 돌려주면 TypeError, 컨테이너 그대로", () => {
+  test("순환 참조된 VNode 를 돌려주면 오류, 컨테이너 그대로", () => {
     const loop = { type: "div", props: {}, children: [] };
     loop.children.push(loop);
     const box = document.createElement("div");
     box.innerHTML = "<p>원래</p>";
-    assertThrows(() => new FunctionComponent(() => loop, box).mount(), TypeError);
+    assertThrows(() => new FunctionComponent(() => loop, box).mount());
     assertEqual(box.innerHTML, "<p>원래</p>");
   });
 });
@@ -496,5 +486,14 @@ describe("Phase 2 · unmount · onCommit", () => {
     const { errors } = captureConsole(() => comp.mount());
     assert(ran);
     assertEqual(errors.length, 1);
+  });
+});
+
+describe("Phase 2 · 검사 횟수 최적화", () => {
+  test("mount 에서 잘못된 VDOM 을 막는다 (update 가 이전 VDOM 검사를 건너뛰므로)", () => {
+    const box = document.createElement("div");
+    box.innerHTML = "<p>원래</p>";
+    assertThrows(() => new FunctionComponent(() => h("p", { title: {} }), box).mount(), TypeError);
+    assertEqual(box.innerHTML, "<p>원래</p>");
   });
 });

@@ -93,7 +93,7 @@ export function vdomChildNodes(el) {
  * 실제 DOM → Virtual DOM
  *
  * - 텍스트 노드 → 문자열 그대로
- * - 요소 노드   → { type, props: 모든 속성, children: 자식들을 차례로 변환 (명시적 스택, 재귀 없음) }
+ * - 요소 노드   → { type, props: 모든 속성, children: 자식들을 차례로 변환 }
  *
  * 주의: 사용자가 input 에 입력한 값(value 프로퍼티)처럼 "속성(attribute)이 아닌 상태"는
  *       HTML 에 나타나지 않으므로 변환되지 않는다. Phase 1 은 HTML 구조 비교가 목적이다.
@@ -106,37 +106,14 @@ export function domToVdom(node) {
     return null; // 주석 등은 VNode 가 없다. (vdomChildNodes 를 쓰면 여기까지 오지 않음)
   }
 
-  // 재귀 대신 명시적 스택(stack)으로 내려간다.
-  // 재귀로 짜면 트리 깊이만큼 함수 호출이 쌓여서, 깊이 수천 단계의 DOM 에서
-  // 브라우저 호출 스택이 넘친다 (Chrome 기준 약 5,000 단계에서 RangeError).
-  //
-  // 스택 항목 = { node: 변환할 DOM 노드, siblings: 결과를 넣을 부모의 children 배열 }
-  // 자식을 "역순" 으로 쌓으면 pop 순서가 원래 순서(앞 → 뒤)가 되어,
-  // 재귀 버전과 같은 순서(깊이 우선, 앞의 형제 먼저)로 children 배열이 채워진다.
-  const rootResult = [];
-  const stack = [{ node, siblings: rootResult }];
-  while (stack.length > 0) {
-    const { node: current, siblings } = stack.pop();
-    if (current.nodeType === TEXT_NODE) {
-      siblings.push(current.nodeValue);
-      continue;
-    }
+  // 속성 목록(NamedNodeMap)을 평범한 객체로 옮긴다.
+  // Object.fromEntries 는 "__proto__" 같은 이름도 평범한 자기 속성으로 만든다.
+  // (props[name] = value 로 넣으면 "__proto__" 는 속성이 아니라 프로토타입 설정으로 처리되어 사라진다)
+  const props = Object.fromEntries(Array.from(node.attributes, (attr) => [attr.name, attr.value]));
 
-    // 속성 목록(NamedNodeMap)을 평범한 객체로 옮긴다.
-    // Object.fromEntries 는 "__proto__" 같은 이름도 평범한 자기 속성으로 만든다.
-    // (props[name] = value 로 넣으면 "__proto__" 는 속성이 아니라 프로토타입 설정으로 처리되어 사라진다)
-    const props = Object.fromEntries(Array.from(current.attributes, (attr) => [attr.name, attr.value]));
-    const vnode = { type: current.tagName.toLowerCase(), props, children: [] };
-    siblings.push(vnode);
-
-    // <template> 은 내용이 childNodes 가 아니라 content(DocumentFragment)에 들어 있다.
-    const childSource = current.tagName === "TEMPLATE" ? current.content : current;
-    const childNodes = vdomChildNodes(childSource);
-    for (let i = childNodes.length - 1; i >= 0; i--) {
-      stack.push({ node: childNodes[i], siblings: vnode.children });
-    }
-  }
-  return rootResult[0];
+  // <template> 은 내용이 childNodes 가 아니라 content(DocumentFragment)에 들어 있다.
+  const childSource = node.tagName === "TEMPLATE" ? node.content : node;
+  return { type: node.tagName.toLowerCase(), props, children: vdomChildNodes(childSource).map(domToVdom) };
 }
 
 /**
@@ -160,52 +137,9 @@ export function containerToVdom(container) {
  * Virtual DOM → 실제 DOM
  *
  * - 문자열 → Text 노드
- * - 요소   → document.createElement + 속성 설정 + 자식 생성 (명시적 스택, 재귀 없음)
+ * - 요소   → document.createElement + 속성 설정 + 자식 생성
  */
 export function createElement(vnode) {
-  // 재귀 대신 명시적 스택으로 만든다. (깊이 수천 단계에서도 호출 스택이 넘치지 않도록 — domToVdom 참고)
-  //
-  // 스택 항목 두 종류
-  //   { vnode, parent } : vnode 로 DOM 노드를 만들어 parent 에 붙인다 (parent 가 null 이면 결과 루트)
-  //   { leave: vnode }  : vnode 의 자식을 모두 만든 뒤 "조상 목록" 에서 뺀다 (재귀 버전의 함수 종료 시점)
-  //
-  // ancestors: 지금 만들고 있는 노드의 조상 VNode 들.
-  // 자기 조상을 자식으로 다시 가진 VNode(순환 참조)는 끝없이 내려가므로 미리 찾아 TypeError 로 알린다.
-  // (브라우저의 "호출 스택 초과" 오류에 맡기면 Chrome 은 RangeError, Firefox 는 InternalError 처럼 종류가 제각각이다)
-  // 형제 하위 트리에서 같은 객체를 다시 쓰는 것(공유)은 순환이 아니므로, 자식을 다 만든 뒤 조상에서 빼서 허용한다.
-  const ancestors = new Set();
-  const stack = [{ vnode, parent: null }];
-  let root = null;
-
-  while (stack.length > 0) {
-    const item = stack.pop();
-    if (item.leave) {
-      ancestors.delete(item.leave);
-      continue;
-    }
-    const { vnode: current, parent } = item;
-    const node = createOne(current, ancestors);
-    if (parent) parent.appendChild(node);
-    else root = node;
-    if (node.nodeType !== ELEMENT_NODE) continue; // 텍스트 노드는 자식이 없다
-
-    // 자식을 역순으로 쌓아야 앞의 자식부터 만들어져 appendChild 순서가 원래 순서가 된다.
-    // leave 를 가장 먼저 쌓으면 자식(과 그 자손)이 모두 끝난 뒤에 실행된다.
-    ancestors.add(current);
-    stack.push({ leave: current });
-    const children = current.children || [];
-    for (let i = children.length - 1; i >= 0; i--) {
-      stack.push({ vnode: children[i], parent: node });
-    }
-  }
-  return root;
-}
-
-/**
- * VNode 하나로 DOM 노드 하나를 만든다. (자식은 만들지 않음 — createElement 의 스택이 처리)
- * 텍스트 → Text 노드, 요소 → 속성까지 설정한 Element
- */
-function createOne(vnode, ancestors) {
   if (typeof vnode === "string" || typeof vnode === "number") {
     return document.createTextNode(String(vnode));
   }
@@ -214,13 +148,13 @@ function createOne(vnode, ancestors) {
   if (!isElementVNode(vnode)) {
     throw new TypeError(`[createElement] 올바른 VNode 가 아닙니다: ${describeValue(vnode)}`);
   }
-  if (ancestors.has(vnode)) {
-    throw new TypeError(`[createElement] 순환 참조된 VNode 입니다: <${vnode.type}> 가 자기 조상을 자식으로 가집니다`);
-  }
 
   const el = document.createElement(vnode.type);
   for (const [name, value] of Object.entries(vnode.props || {})) {
     setProp(el, name, value);
+  }
+  for (const child of vnode.children || []) {
+    el.appendChild(createElement(child));
   }
   return el;
 }
@@ -303,42 +237,23 @@ export function isElementVNode(value) {
  *   ※ 숫자 · null · true 같은 값은 h() 가 정리해 주지만, VNode 안에 그대로 있으면 잘못된 것으로 본다.
  *     (patch 는 예전부터 숫자 노드를 거부했다 — #139)
  *
- * 순환 참조(자기 조상을 자식으로 가짐)도 TypeError. 같은 객체를 여러 자리에 쓰는 공유는 허용한다.
- * 깊은 트리에서도 호출 스택이 넘치지 않도록 명시적 스택으로 내려간다.
- *
  * @param {*} vnode 검사할 값
  * @param {string} where 오류 메시지 앞에 붙일 이름 (예: "diff 새 VDOM")
+ * @param {string} at 트리 안의 위치 설명 (재귀로 내려가며 붙인다)
  */
-export function validateVNode(vnode, where = "VNode") {
-  const ancestors = new Set();
-  // 스택 항목: { value, at: 위치 설명 } 또는 { leave: 요소 } (자식 검사가 끝나 조상 목록에서 뺌)
-  const stack = [{ value: vnode, at: "루트" }];
-  while (stack.length > 0) {
-    const item = stack.pop();
-    if (item.leave) {
-      ancestors.delete(item.leave);
-      continue;
-    }
-    const { value, at } = item;
-    if (typeof value === "string") continue;
-    if (!isElementVNode(value)) {
-      throw new TypeError(`[${where}] ${at}: 올바른 VNode 가 아닙니다: ${describeValue(value)}`);
-    }
-    if (ancestors.has(value)) {
-      throw new TypeError(`[${where}] ${at}: 순환 참조된 VNode 입니다 (<${value.type}> 가 자기 조상을 자식으로 가집니다)`);
-    }
-    checkProps(value.props, `[${where}] ${at} <${value.type}>`);
-    const { children } = value;
-    if (children == null) continue;
-    if (!Array.isArray(children)) {
-      throw new TypeError(`[${where}] ${at} <${value.type}>: children 은 배열이어야 합니다: ${describeValue(children)}`);
-    }
-    ancestors.add(value);
-    stack.push({ leave: value });
-    for (let i = children.length - 1; i >= 0; i--) {
-      stack.push({ value: children[i], at: `${at}.children[${i}]` });
-    }
+export function validateVNode(vnode, where = "VNode", at = "루트") {
+  if (typeof vnode === "string") return;
+  if (!isElementVNode(vnode)) {
+    throw new TypeError(`[${where}] ${at}: 올바른 VNode 가 아닙니다: ${describeValue(vnode)}`);
   }
+  checkProps(vnode.props, `[${where}] ${at} <${vnode.type}>`);
+  const { children } = vnode;
+  if (children == null) return;
+  if (!Array.isArray(children)) {
+    throw new TypeError(`[${where}] ${at} <${vnode.type}>: children 은 배열이어야 합니다: ${describeValue(children)}`);
+  }
+  // forEach 는 배열의 빈 칸(hole)을 건너뛰므로 인덱스로 돈다
+  for (let i = 0; i < children.length; i++) validateVNode(children[i], where, `${at}.children[${i}]`);
 }
 
 /**

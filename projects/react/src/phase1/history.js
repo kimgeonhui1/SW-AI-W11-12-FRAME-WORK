@@ -22,53 +22,9 @@ let index = -1;
 
 /**
  * VNode 깊은 복사 (null 은 그대로)
- *
- * 처음에는 structuredClone 을 그대로 썼는데, structuredClone 도 내부에서 재귀로 내려가서
- * 깊이 수천 단계의 VDOM 에서 호출 스택이 넘쳤다 (Chrome 기준 약 5,000 단계에서 RangeError).
- * 그래서 VDOM 을 이루는 "배열" 과 "평범한 객체" 는 명시적 스택으로 직접 복사하고,
- * 그 밖의 값만 structuredClone 에 맡긴다. 결과는 structuredClone 과 같게 맞춘다.
- *   - 원시값(문자열 · 숫자 · null …)            → 그대로
- *   - 함수 · Symbol 등 복사할 수 없는 값          → structuredClone 이 DataCloneError 를 던짐 (예전과 같음)
- *   - Date · Map 같은 그 밖의 객체                → structuredClone 으로 복사 (이 값들은 깊지 않음)
- *   - 같은 객체를 여러 곳에서 쓰면(공유) 복사본에서도 하나의 객체를 공유, 순환 참조도 그대로 복사
- *   - 얼린(Object.freeze) 객체도 복사본은 얼리지 않음, 속성 이름 "__proto__" 도 평범한 속성으로 복사
+ * 함수 · Symbol 처럼 복사할 수 없는 값이 들어 있으면 structuredClone 이 DataCloneError 를 던진다.
  */
-function clone(vdom) {
-  if (vdom == null) return vdom;
-  const copies = new Map(); // 원본 객체 → 복사본 (공유 · 순환 참조 처리)
-  const stack = []; //         [원본, 복사본] — 속성을 아직 채우지 않은 복사본
-
-  /** 값 하나의 복사본을 돌려준다. 배열 · 평범한 객체는 빈 껍데기만 만들고 내용은 스택에 맡긴다 */
-  function copyOf(value) {
-    if (value === null || (typeof value !== "object" && typeof value !== "function" && typeof value !== "symbol")) {
-      return value; // 원시값
-    }
-    if (copies.has(value)) return copies.get(value);
-    if (!isPlainContainer(value)) return structuredClone(value); // 함수 · Symbol 이면 DataCloneError
-    const copy = Array.isArray(value) ? new Array(value.length) : {};
-    copies.set(value, copy);
-    stack.push([value, copy]);
-    return copy;
-  }
-
-  const result = copyOf(vdom);
-  while (stack.length > 0) {
-    const [source, copy] = stack.pop();
-    for (const key of Object.keys(source)) {
-      // defineProperty: copy["__proto__"] = 값 은 프로토타입 설정이 되므로 평범한 속성으로 만든다
-      Object.defineProperty(copy, key, { value: copyOf(source[key]), enumerable: true, writable: true, configurable: true });
-    }
-  }
-  return result;
-}
-
-/** 직접 복사할 값인가: 배열, 또는 프로토타입이 Object.prototype · null 인 평범한 객체 */
-function isPlainContainer(value) {
-  if (Array.isArray(value)) return true;
-  if (typeof value !== "object") return false;
-  const proto = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
-}
+const clone = (vdom) => structuredClone(vdom);
 
 /**
  * 새 기록 추가
@@ -132,6 +88,16 @@ export function go(i) {
 /** 현재 위치의 VNode 복사본 (기록이 없으면 null) */
 export function current() {
   return index < 0 ? null : clone(stack[index].vdom);
+}
+
+/**
+ * 현재 위치의 VNode 를 복사하지 않고 그대로 돌려준다 (기록이 없으면 null)
+ * 읽기 전용: diff 비교 · JSON 표시 · 자가 점검처럼 바꾸지 않고 읽기만 할 때 쓴다.
+ * current() 는 부를 때마다 트리 전체를 깊은 복사하므로, 버튼 한 번에 여러 번 부르면 그만큼 느려진다.
+ * ※ 돌려받은 객체를 고치면 기록이 바뀐다. 고칠 일이 있으면 current() 를 쓴다.
+ */
+export function peek() {
+  return index < 0 ? null : stack[index].vdom;
 }
 
 /** 뒤로 갈 수 있는가 */

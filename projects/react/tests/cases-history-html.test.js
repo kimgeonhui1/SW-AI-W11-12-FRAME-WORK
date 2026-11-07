@@ -253,3 +253,23 @@ describe("Serialize — toHtml (#201~#230)", () => {
     assertEqual(html.length, "<p></p>".length + 200000 * "&amp;".length);
   });
 });
+
+describe("History · 복사 없이 읽기 (최적화)", () => {
+  test("peek() 은 current() 와 내용이 같고, 복사하지 않아 부를 때마다 같은 객체", () => {
+    history.reset();
+    assertEqual(history.peek(), null);
+    history.push(root(h("p", null, "a")));
+    assertEqual(history.peek(), history.current());
+    assert(history.peek() === history.peek(), "같은 객체여야 함");
+    assert(history.current() !== history.current(), "current() 는 매번 새 복사본");
+  });
+  test("peek() 은 undo · redo 를 따라간다", () => {
+    history.reset();
+    history.push(root("1"));
+    history.push(root("2"));
+    history.undo();
+    assertEqual(history.peek().children, ["1"]);
+    history.redo();
+    assertEqual(history.peek().children, ["2"]);
+  });
+});

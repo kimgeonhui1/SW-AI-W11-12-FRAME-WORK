@@ -37,22 +37,38 @@ async function openApp({ storage = null } = {}) {
     window.addEventListener("error", (e) => window.__errors.push("uncaught: " + e.message));
   `;
   parsed.head.prepend(base, spy);
+  // 페이지 안에서 main.js 를 한 번 더 import 해 마운트된 app 을 window.__app 으로 꺼낸다.
+  // 같은 문서 안의 import 는 페이지가 실행한 모듈과 같은 것(같은 app 객체)을 돌려준다.
+  const grab = parsed.createElement("script");
+  grab.type = "module";
+  grab.textContent = 'import { app } from "./src/app/main.js"; window.__app = app;';
+  parsed.body.append(grab);
   const frame = await loadFrame({ srcdoc: "<!DOCTYPE html>" + parsed.documentElement.outerHTML });
-  const win = frame.contentWindow;
-  const doc = frame.contentDocument;
-  await waitFor(() => doc.getElementById("render-count"));
-  return tools(frame, win, doc);
+  return tools(frame);
+}
+
+/** iframe 안의 App(FunctionComponent)을 꺼내고, 렌더마다 패치 목록을 기록한다 */
+async function attachApp(win) {
+  await waitFor(() => win.__app && win.document.querySelector(".todo-app"));
+  const app = win.__app;
+  const commits = [];
+  app.onCommit((info) => commits.push(info));
+  return { app, commits };
 }
 
 /** 페이지를 읽고 조작하는 도우미 */
-function tools(frame, win, doc) {
+async function tools(frame) {
+  const win = frame.contentWindow;
+  const doc = frame.contentDocument;
+  const { app, commits } = await attachApp(win);
   const $ = (sel) => doc.querySelector(sel);
   const $$ = (sel) => [...doc.querySelectorAll(sel)];
   return {
-    frame, win, doc, $, $$,
+    frame, win, doc, $, $$, app,
     texts: () => $$(".todo-text").map((el) => el.textContent),
-    renders: () => Number($("#render-count").textContent),
-    patches: () => Number($("#patch-count").textContent),
+    renders: () => app.renderCount,
+    /** 마지막 렌더의 패치 종류 목록 */
+    lastPatchTypes: () => (commits.at(-1)?.patches ?? []).map((p) => p.type),
     stat: (key) => $(`[data-stat="${key}"]`).textContent,
     /** 입력창에 글자를 넣고 input 이벤트 (사용자 타이핑) */
     async type(sel, text) {
@@ -82,7 +98,7 @@ describe("Phase 2 페이지 · 할 일 보드", () => {
     const t = await openApp();
     assertEqual(t.texts().length, 4);
     assertEqual(t.renders(), 1);
-    assertEqual(t.$$(".insp-hooks tbody tr").length, 10);
+    assertEqual(t.app.hooks.length, 10);
     assertEqual(t.stat("active"), "3");
     assertEqual(t.doc.title, "할 일 3개 남음 · 미니 React");
     t.close();
@@ -95,7 +111,7 @@ describe("Phase 2 페이지 · 할 일 보드", () => {
     assertEqual(t.texts().at(-1), "새 할 일");
     assertEqual(t.$("#todo-input").value, "");
     assert(t.$(".todo-item") === firstLi, "첫 항목은 같은 요소여야 함");
-    assert(t.$$(".insp-patches li").some((li) => li.textContent.includes("CREATE")), "패치 목록에 CREATE");
+    assert(t.lastPatchTypes().includes("CREATE"), "패치 목록에 CREATE");
     assertEqual(t.stat("total"), "5");
     t.close();
   });
@@ -139,7 +155,7 @@ describe("Phase 2 페이지 · 할 일 보드", () => {
     assert(li.classList.contains("done") && li.isConnected, "같은 요소에 done");
     assert(li.querySelector("input").checked);
     assertEqual(t.stat("done"), "2");
-    assert(t.$$(".insp-patches li").some((x) => x.textContent.includes("PROPS")), "PROPS 패치");
+    assert(t.lastPatchTypes().includes("PROPS"), "PROPS 패치");
     await t.click(li.querySelector("input"));
     assert(!li.classList.contains("done") && !li.querySelector("input").checked);
     assertEqual(t.stat("done"), "1");
@@ -217,8 +233,7 @@ describe("Phase 2 페이지 · 할 일 보드", () => {
     const reloaded = new Promise((resolve) => t.frame.addEventListener("load", resolve, { once: true }));
     t.win.location.reload();
     await reloaded;
-    const t2 = tools(t.frame, t.frame.contentWindow, t.frame.contentDocument);
-    await waitFor(() => t2.doc.getElementById("render-count"));
+    const t2 = await tools(t.frame);
     assert(t2.texts().includes("저장될 일"), `목록: ${t2.texts()}`);
     t.close();
   });
@@ -249,16 +264,6 @@ describe("Phase 2 페이지 · 할 일 보드", () => {
     input.focus();
     for (const text of ["가", "가나", "가나다"]) await t.type("#todo-input", text);
     assert(t.$("#todo-input") === input && input.value === "가나다" && t.doc.activeElement === input);
-    t.close();
-  });
-
-  test("렌더 관찰 패널: 강조 버튼 켜기 · 끄기, hooks 표에 최신 상태", async () => {
-    const t = await openApp();
-    assertEqual(t.$("#toggle-highlight").getAttribute("aria-pressed"), "true");
-    await t.click("#toggle-highlight");
-    assertEqual(t.$("#toggle-highlight").getAttribute("aria-pressed"), "false");
-    await t.type("#todo-search", "검색어");
-    assert(t.$$(".insp-hooks td").some((td) => td.textContent === '"검색어"'), "query 상태가 표에 보여야 함");
     t.close();
   });
 

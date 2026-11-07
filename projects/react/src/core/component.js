@@ -1,6 +1,6 @@
 // [component.js] 함수형 컴포넌트를 감싸 상태 저장(hooks)과 렌더링(mount/update)을 담당
 
-import { h, createElement } from "./vdom.js";
+import { h, createElement, validateVNode } from "./vdom.js";
 import { diff } from "./diff.js";
 import { patch } from "./patch.js";
 import { prepareHooks, finishHooks, enterChild, exitChild, runEffects, runAllCleanups } from "./hooks.js";
@@ -102,6 +102,8 @@ export class FunctionComponent {
     const { vdom, handlers } = this.render();
     let nodes;
     try {
+      // update 에서 diff 가 이전 VDOM 검사를 건너뛸 수 있도록(trustOld), 첫 VDOM 도 여기서 한 번 검사해 둔다
+      validateVNode(vdom, "mount");
       nodes = vdom.children.map(createElement); // DOM 을 바꾸기 전에 모두 만든다 (실패하면 컨테이너 그대로)
     } catch (err) {
       this.abandonRender();
@@ -129,7 +131,8 @@ export class FunctionComponent {
     let patches;
     let touched;
     try {
-      patches = diff(this.vdom, vdom); //            잘못된 VNode 면 TypeError
+      // this.vdom 은 지난 렌더(mount 또는 update)에서 검사를 마쳤으므로 새 VDOM 만 검사한다
+      patches = diff(this.vdom, vdom, { trustOld: true }); // 잘못된 VNode 면 TypeError
       touched = patch(this.container, patches); //   입력 오류면 TypeError, DOM 그대로
     } catch (err) {
       this.abandonRender();
@@ -319,33 +322,16 @@ export function stateless(render) {
  * - 원래 트리는 바꾸지 않고 새 트리를 만든다. (useMemo 로 재사용하는 VNode 를 망가뜨리지 않도록)
  * - 번호는 트리 순서대로 0, 1, 2 … → 구조가 같으면 렌더마다 같은 번호 → 핸들러가 새 함수여도 패치 없음.
  * - onClick: null / undefined / false 는 "핸들러 없음" 으로 보고 지운다. 그 밖의 함수 아닌 값은 TypeError.
- * - 깊은 트리에서도 호출 스택이 넘치지 않도록 명시적 스택, 순환 참조는 TypeError.
  *
  * @param {object} root h("div", null, …) 로 감싼 루트
  * @returns {{vdom: object, handlers: Map<string, {type: string, fn: Function}>}}
  */
 export function extractHandlers(root) {
   const handlers = new Map();
-  const ancestors = new Set();
-  const holder = [];
-  // 스택 항목: { node, out: 결과를 넣을 배열 } 또는 { leave: node }
-  const stack = [{ node: root, out: holder }];
 
-  while (stack.length > 0) {
-    const item = stack.pop();
-    if (item.leave) {
-      ancestors.delete(item.leave);
-      continue;
-    }
-    const { node, out } = item;
+  function convert(node) {
     // 문자열 · 잘못된 값은 그대로 둔다 (잘못된 값은 diff 의 validateVNode 가 위치와 함께 알려 준다)
-    if (node === null || typeof node !== "object" || Array.isArray(node)) {
-      out.push(node);
-      continue;
-    }
-    if (ancestors.has(node)) {
-      throw new TypeError(`[FunctionComponent] 순환 참조된 VNode 입니다: <${node.type}>`);
-    }
+    if (node === null || typeof node !== "object" || Array.isArray(node)) return node;
 
     const props = {};
     for (const [name, value] of Object.entries(node.props ?? {})) {
@@ -362,19 +348,12 @@ export function extractHandlers(root) {
         setOwn(props, name, value);
       }
     }
-
-    const copy = { type: node.type, props, children: node.children };
-    out.push(copy);
-    if (Array.isArray(node.children)) {
-      copy.children = [];
-      ancestors.add(node);
-      stack.push({ leave: node });
-      for (let i = node.children.length - 1; i >= 0; i--) {
-        stack.push({ node: node.children[i], out: copy.children });
-      }
-    }
+    // 자식은 props 다음에 변환 → 번호가 트리 순서(앞 → 뒤, 부모 → 자식)대로 붙는다
+    const children = Array.isArray(node.children) ? Array.from(node.children, convert) : node.children;
+    return { type: node.type, props, children };
   }
-  return { vdom: holder[0], handlers };
+
+  return { vdom: convert(root), handlers };
 }
 
 /** obj[name] = value 와 같지만 "__proto__" 같은 이름도 평범한 속성으로 만든다 */

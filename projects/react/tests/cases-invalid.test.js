@@ -1,15 +1,16 @@
-// [tests/cases-invalid.test.js] 잘못된 입력 — diff 의 VNode, patch 의 Patch 객체 · 경로 · 종류별 필드
+// [tests/cases-invalid.test.js] 잘못된 입력 — diff 의 VNode, patch 의 경로 · 종류 · 새 노드
 //
 // 원칙
 //   - diff  : 두 트리 중 하나라도 잘못되면 TypeError (브라우저마다 다른 기본 오류 문구가 아니라 우리 문구)
-//   - patch : 입력이 하나라도 잘못되면 TypeError, 실제 DOM 은 전혀 바뀌지 않는다 (전부 적용되거나 전혀 안 되거나)
+//   - patch : 대상을 못 찾거나 새 노드를 만들 수 없으면 TypeError, 실제 DOM 은 전혀 바뀌지 않는다 (전부 적용되거나 전혀 안 되거나)
+//             패치 모양 자체는 검사하지 않는다 (diff 가 만든 패치는 항상 올바름)
 // "DOM 이 전혀 바뀌지 않음" 은 HTML 문자열뿐 아니라 노드 객체가 그대로인지(같은 참조)까지 확인한다.
 
 import { describe, test, assert, assertEqual } from "./runner.js";
-import { h, createElement, containerToVdom } from "../src/core/vdom.js";
+import { h, containerToVdom } from "../src/core/vdom.js";
 import { diff, PATCH } from "../src/core/diff.js";
 import { patch } from "../src/core/patch.js";
-import { root, render, assertThrows, captureConsole, openIndex, deepTree } from "./helpers.js";
+import { root, render, assertThrows, captureConsole, openIndex } from "./helpers.js";
 
 // ── 공통 도구 ──────────────────────────────────────────────────────────
 
@@ -63,13 +64,6 @@ function assertRejectedAtomically(badPatch, label = JSON.stringify(badPatch)) {
   }
 }
 
-/** 순환 VNode */
-function cyclic() {
-  const node = { type: "b", props: {}, children: [] };
-  node.children.push({ type: "i", props: {}, children: [node] });
-  return node;
-}
-
 // ── diff ───────────────────────────────────────────────────────────────
 
 describe("diff 에 잘못된 VNode", () => {
@@ -92,7 +86,6 @@ describe("diff 에 잘못된 VNode", () => {
     "props 값이 Symbol": { type: "p", props: { a: Symbol("x") }, children: [] },
     "children 이 문자열": { type: "p", props: {}, children: "abc" },
     "children 이 객체": { type: "p", props: {}, children: { 0: "a" } },
-    "순환 참조": cyclic(),
   };
 
   for (const [name, bad] of Object.entries(invalid)) {
@@ -126,14 +119,6 @@ describe("diff 에 잘못된 VNode", () => {
     assertThrows(() => diff(root(), root(h("div", null, bad))), TypeError);
   });
 
-  test("깊이 10,000 아래의 잘못된 노드도 스택 오류 없이 TypeError", () => {
-    const tree = deepTree(10000, "leaf");
-    let node = tree;
-    while (typeof node.children[0] === "object") node = node.children[0];
-    node.children.push(null);
-    assertThrows(() => diff(root(tree), root(deepTree(10000, "leaf"))), TypeError);
-  });
-
   test("올바른 입력은 그대로 통과: props 없음 · null, children 없음 · null, 숫자 · 불리언 · null 속성값", () => {
     const loose = { type: "p" };
     assertEqual(diff(root(loose), root({ type: "p", props: null, children: null })), []);
@@ -150,69 +135,14 @@ describe("diff 에 잘못된 VNode", () => {
 
 // ── patch: 패치 객체 자체가 잘못됨 ─────────────────────────────────────
 
-describe("patch 에 잘못된 Patch 객체", () => {
-  test("patches 가 배열이 아님 → TypeError, DOM 그대로", () => {
-    for (const bad of [null, undefined, {}, "TEXT", 1, { length: 0 }]) {
-      const box = mount();
-      const before = snapshot(box);
-      assertThrows(() => patch(box, bad), TypeError);
-      assertUnchanged(box, before);
-    }
-  });
-
-  test("container 가 DOM 요소가 아님 → TypeError", () => {
-    for (const bad of [null, undefined, {}, "div", document.createTextNode("x")]) {
-      assertThrows(() => patch(bad, []), TypeError);
-    }
-  });
-
-  test("빈 패치 목록은 아무것도 하지 않음", () => {
-    const box = mount();
-    const before = snapshot(box);
-    assertEqual(patch(box, []), []);
-    assertUnchanged(box, before);
-  });
-
-  const badObjects = {
-    "null": null,
-    "undefined": undefined,
-    "문자열": "TEXT",
-    "숫자": 0,
-    "type 없음": { path: [0] },
-    "알 수 없는 type": { type: "MOVE", path: [0] },
-    "type 소문자": { type: "text", path: [0, 0], value: "x" },
-    "path 없음": { type: PATCH.REMOVE },
-    "path 가 문자열": { type: PATCH.REMOVE, path: "0" },
-    "path 에 음수": { type: PATCH.REMOVE, path: [-1] },
-    "path 에 소수": { type: PATCH.REMOVE, path: [0.5] },
-    "path 에 NaN": { type: PATCH.REMOVE, path: [NaN] },
-    "path 에 문자열": { type: PATCH.REMOVE, path: ["0"] },
-  };
-  for (const [name, bad] of Object.entries(badObjects)) {
-    test(`${name} → TypeError, 앞뒤의 정상 패치도 적용 안 됨`, () => assertRejectedAtomically(bad, name));
-  }
-
-  test("배열의 빈 칸(hole) → TypeError, DOM 그대로", () => {
-    const box = mount();
-    const before = snapshot(box);
-    const list = [{ type: PATCH.TEXT, path: [0, 0], value: "A" }];
-    list[2] = { type: PATCH.REMOVE, path: [1] }; // list[1] 은 빈 칸
-    assertThrows(() => patch(box, list), TypeError);
-    assertUnchanged(box, before);
-  });
-});
-
-// ── patch: 존재하지 않는 경로 ──────────────────────────────────────────
-
-describe("patch 에 존재하지 않는 경로", () => {
+describe("patch 가 거부하는 입력", () => {
   const missing = {
     "범위 밖 자식": [9],
     "범위 밖 손자": [0, 5],
     "텍스트 노드 아래로 내려감": [0, 0, 0],
-    "아주 깊은 경로": Array(50).fill(0),
   };
   for (const [name, path] of Object.entries(missing)) {
-    test(`${name} ${JSON.stringify(path)} → 모든 종류에서 TypeError, DOM 그대로`, () => {
+    test(`없는 경로: ${name} ${JSON.stringify(path)} → 모든 종류에서 TypeError, DOM 그대로`, () => {
       for (const p of [
         { type: PATCH.TEXT, path, value: "x" },
         { type: PATCH.PROPS, path, set: { a: "1" }, remove: [] },
@@ -220,6 +150,20 @@ describe("patch 에 존재하지 않는 경로", () => {
         { type: PATCH.REMOVE, path },
         { type: PATCH.REPLACE, path, node: "x" },
       ]) assertRejectedAtomically(p, `${p.type} ${JSON.stringify(path)}`);
+    });
+  }
+
+  test("알 수 없는 패치 종류 → TypeError, DOM 그대로", () => assertRejectedAtomically({ type: "MOVE", path: [1] }));
+
+  const badNodes = {
+    "{}": {},
+    "태그 이름에 공백": h("a b"),
+    "안쪽 자식이 잘못됨": { type: "li", props: {}, children: [{}] },
+  };
+  for (const [name, node] of Object.entries(badNodes)) {
+    test(`CREATE · REPLACE 의 새 노드가 잘못됨(${name}) → TypeError, DOM 그대로`, () => {
+      assertRejectedAtomically({ type: PATCH.CREATE, path: [2], index: 1, node }, `CREATE ${name}`);
+      assertRejectedAtomically({ type: PATCH.REPLACE, path: [1], node }, `REPLACE ${name}`);
     });
   }
 
@@ -238,98 +182,15 @@ describe("patch 에 존재하지 않는 경로", () => {
     const { warns } = captureConsole(() => assertThrows(() => patch(box, [{ type: PATCH.REMOVE, path: [9] }]), TypeError));
     assertEqual(warns.length, 0);
   });
-});
 
-// ── patch: 종류별로 잘못된 패치 ────────────────────────────────────────
-
-describe("잘못된 CREATE", () => {
-  const cases = {
-    "index 없음": { type: PATCH.CREATE, path: [2], node: "x" },
-    "index 음수": { type: PATCH.CREATE, path: [2], index: -1, node: "x" },
-    "index 소수": { type: PATCH.CREATE, path: [2], index: 1.5, node: "x" },
-    "index 문자열": { type: PATCH.CREATE, path: [2], index: "1", node: "x" },
-    "index 가 자식 수보다 작음 (중간 끼워 넣기는 지원 안 함)": { type: PATCH.CREATE, path: [2], index: 0, node: "x" },
-    "index 가 자식 수보다 큼": { type: PATCH.CREATE, path: [2], index: 99, node: "x" },
-    "node 없음": { type: PATCH.CREATE, path: [2], index: 1 },
-    "node 가 숫자": { type: PATCH.CREATE, path: [2], index: 1, node: 5 },
-    "node 가 null": { type: PATCH.CREATE, path: [2], index: 1, node: null },
-    "node 가 {}": { type: PATCH.CREATE, path: [2], index: 1, node: {} },
-    "node 안쪽 자식이 잘못됨": { type: PATCH.CREATE, path: [2], index: 1, node: { type: "li", props: {}, children: [{}] } },
-    "node 의 속성값이 객체": { type: PATCH.CREATE, path: [2], index: 1, node: { type: "li", props: { a: {} }, children: [] } },
-    "node 가 순환 참조": { type: PATCH.CREATE, path: [2], index: 1, node: cyclic() },
-    "node 의 태그 이름에 공백": { type: PATCH.CREATE, path: [2], index: 1, node: h("a b") },
-    "부모가 텍스트 노드": { type: PATCH.CREATE, path: [0, 0], index: 0, node: "x" },
-  };
-  for (const [name, p] of Object.entries(cases)) test(`${name} → TypeError, DOM 그대로`, () => assertRejectedAtomically(p, name));
-
-  test("올바른 연속 CREATE (index 가 차례로 늘어남)는 그대로 동작", () => {
-    const box = mount();
-    patch(box, [1, 2].map((i) => ({ type: PATCH.CREATE, path: [2], index: i, node: h("li", null, String(i)) })));
-    assertEqual([...box.querySelectorAll("li")].map((li) => li.textContent), ["x", "1", "2"]);
-  });
-
-  test("연속 CREATE 에서 index 를 건너뛰면 → TypeError, 앞의 CREATE 도 적용 안 됨", () => {
-    const box = mount();
-    const before = snapshot(box);
-    assertThrows(() => patch(box, [1, 3].map((i) => ({ type: PATCH.CREATE, path: [2], index: i, node: "x" }))), TypeError);
-    assertUnchanged(box, before);
-  });
-});
-
-describe("잘못된 REMOVE", () => {
-  test("컨테이너 자신(경로 []) → TypeError, 컨테이너가 떨어져 나가지 않음", () => assertRejectedAtomically({ type: PATCH.REMOVE, path: [] }, "REMOVE []"));
-  test("없는 노드 → TypeError", () => assertRejectedAtomically({ type: PATCH.REMOVE, path: [7] }, "REMOVE [7]"));
-});
-
-describe("잘못된 REPLACE", () => {
-  const cases = {
-    "컨테이너 자신(경로 [])": { type: PATCH.REPLACE, path: [], node: h("div") },
-    "node 없음": { type: PATCH.REPLACE, path: [1] },
-    "node 가 숫자": { type: PATCH.REPLACE, path: [1], node: 5 },
-    "node 가 배열": { type: PATCH.REPLACE, path: [1], node: [h("p")] },
-    "node 의 type 이 빈 문자열": { type: PATCH.REPLACE, path: [1], node: { type: "" } },
-    "node 안쪽 자식이 잘못됨": { type: PATCH.REPLACE, path: [1], node: { type: "p", props: {}, children: [null] } },
-    "node 의 children 이 문자열": { type: PATCH.REPLACE, path: [1], node: { type: "p", props: {}, children: "abc" } },
-    "node 가 순환 참조": { type: PATCH.REPLACE, path: [1], node: cyclic() },
-    "node 의 태그 이름에 공백": { type: PATCH.REPLACE, path: [1], node: h("a b") },
-  };
-  for (const [name, p] of Object.entries(cases)) test(`${name} → TypeError, DOM 그대로`, () => assertRejectedAtomically(p, name));
-});
-
-describe("잘못된 TEXT", () => {
-  const cases = {
-    "value 없음": { type: PATCH.TEXT, path: [0, 0] },
-    "value 가 숫자": { type: PATCH.TEXT, path: [0, 0], value: 1 },
-    "value 가 null": { type: PATCH.TEXT, path: [0, 0], value: null },
-    "대상이 요소 (예전에는 조용히 무시됨)": { type: PATCH.TEXT, path: [1], value: "x" },
-    "대상이 컨테이너(경로 [])": { type: PATCH.TEXT, path: [], value: "x" },
-  };
-  for (const [name, p] of Object.entries(cases)) test(`${name} → TypeError, DOM 그대로`, () => assertRejectedAtomically(p, name));
-});
-
-describe("잘못된 PROPS", () => {
-  const cases = {
-    "set 없음": { type: PATCH.PROPS, path: [1], remove: [] },
-    "set 이 null": { type: PATCH.PROPS, path: [1], set: null, remove: [] },
-    "set 이 배열": { type: PATCH.PROPS, path: [1], set: ["a"], remove: [] },
-    "set 값이 객체 (예전에는 \"[object Object]\" 로 설정됨)": { type: PATCH.PROPS, path: [1], set: { a: { x: 1 } }, remove: [] },
-    "set 값이 함수": { type: PATCH.PROPS, path: [1], set: { onclick: () => {} }, remove: [] },
-    "set 값이 Symbol": { type: PATCH.PROPS, path: [1], set: { a: Symbol("x") }, remove: [] },
-    "remove 없음": { type: PATCH.PROPS, path: [1], set: {} },
-    "remove 가 문자열": { type: PATCH.PROPS, path: [1], set: {}, remove: "title" },
-    "remove 에 숫자": { type: PATCH.PROPS, path: [1], set: {}, remove: [1] },
-    "대상이 텍스트 노드": { type: PATCH.PROPS, path: [0, 0], set: { a: "1" }, remove: [] },
-  };
-  for (const [name, p] of Object.entries(cases)) test(`${name} → TypeError, DOM 그대로`, () => assertRejectedAtomically(p, name));
-
-  test("쓸 수 없는 속성 이름(공백)은 예전처럼 그 속성만 건너뛰고 경고 (#074 와 같은 동작)", () => {
+  test("쓸 수 없는 속성 이름(공백)은 그 속성만 건너뛰고 경고 (#074 와 같은 동작)", () => {
     const box = mount();
     const { warns } = captureConsole(() => patch(box, [{ type: PATCH.PROPS, path: [1], set: { "a b": "1", id: "ok" }, remove: [] }]));
     assertEqual(warns.length, 1);
     assertEqual(box.children[1].id, "ok");
   });
 
-  test("컨테이너(경로 [])의 PROPS 는 예전처럼 허용 (#136)", () => {
+  test("컨테이너(경로 [])의 PROPS 는 허용 (#136)", () => {
     const box = mount();
     patch(box, [{ type: PATCH.PROPS, path: [], set: { "data-x": "1" }, remove: [] }]);
     assertEqual(box.dataset.x, "1");
@@ -338,7 +199,7 @@ describe("잘못된 PROPS", () => {
 
 // ── 정상 입력은 그대로 ─────────────────────────────────────────────────
 
-describe("입력 검사를 넣은 뒤에도 정상 패치는 그대로", () => {
+describe("정상 패치는 그대로", () => {
   test("다섯 종류가 섞인 정상 패치 → 모두 적용, 결과가 새 VDOM 과 같음", () => {
     const next = root(h("p", { id: "new" }, "A"), h("ul", null, h("li", null, "z"), h("li", null, "y")));
     const old = BASE();

@@ -9,12 +9,12 @@
  *
  * [Patch 클릭]
  *   테스트 영역 DOM ──containerToVdom──▶ VDOMₙ
- *   diff(history.current(), VDOMₙ) ──▶ patches   (비어 있으면 "변경 없음")
+ *   diff(history.peek(), VDOMₙ) ──▶ patches   (비어 있으면 "변경 없음")
  *   patch(실제 영역, patches)  ← 바뀐 노드만 수정
  *   history.push(VDOMₙ)
  *
  * [뒤로가기 / 앞으로가기 / History 목록 클릭]
- *   이전 = history.current(),  대상 = undo() / redo() / go(i)
+ *   이전 = history.peek(),  대상 = undo() / redo() / go(i)
  *   patch(실제 영역, diff(이전, 대상))  ← 실제 영역도 Diff/Patch 로 이동
  *   테스트 영역 = createElement(대상)    ← 편집 영역은 통째로 다시 그림
  *
@@ -102,75 +102,43 @@ function allElements(nodes) {
  * @param {Array<object|string>|object|string} nodes 형제 VNode 목록 (보통 루트 VNode 의 children)
  * @param {number} depth 들여쓰기 깊이 (기본 0)
  * @returns {string}
- *
- * 구현: 재귀 대신 명시적 스택.
- *   재귀로 짜면 트리 깊이만큼 호출이 쌓여 깊이 수천 단계에서 호출 스택이 넘친다 (Chrome 기준 약 5,000 단계).
- *   스택에는 "출력할 조각" 을 역순으로 쌓는다. 조각은 두 종류다.
- *     문자열                       : 그대로 출력
- *     { node, depth, inline }      : 노드 하나 — 꺼낼 때 여는 태그 · 자식 · 닫는 태그 조각으로 펼친다
- *   펼치는 규칙은 아래 expandNode 에 있고, 예전 재귀 버전(nodeToHtml)과 출력이 글자 하나까지 같다.
  */
 export function toHtml(nodes, depth = 0) {
   const list = Array.isArray(nodes) ? nodes : [nodes];
-  const out = [];
-  const stack = siblingPieces(list, depth).reverse();
-  while (stack.length > 0) {
-    const piece = stack.pop();
-    if (typeof piece === "string") {
-      out.push(piece);
-    } else {
-      const pieces = expandNode(piece.node, piece.depth, piece.inline);
-      for (let i = pieces.length - 1; i >= 0; i--) stack.push(pieces[i]);
-    }
-  }
-  return out.join("");
-}
-
-/**
- * 형제 목록을 출력 조각으로 바꾼다.
- *   - 텍스트가 섞인 형제 → 줄바꿈 없이 이어 붙임
- *     (앞에 pad 를 붙이지 않는다: 줄바꿈 다음에 오는 것이 아니므로 "줄바꿈 + 공백" 텍스트가 되지 않게)
- *   - 모두 요소 → 한 줄에 하나씩, depth 만큼 들여쓰고 줄바꿈("\n")으로 구분
- */
-function siblingPieces(list, depth) {
-  if (!allElements(list)) {
-    return list.map((node) => ({ node, depth: 0, inline: false }));
-  }
+  // 텍스트가 섞인 형제 → 줄바꿈 없이 이어 붙임
+  // (앞에 pad 를 붙이지 않는다: 줄바꿈 다음에 오는 것이 아니므로 "줄바꿈 + 공백" 텍스트가 되지 않게)
+  if (!allElements(list)) return list.map((node) => nodeToHtml(node, 0, false)).join("");
+  // 모두 요소 → 한 줄에 하나씩, depth 만큼 들여쓰고 줄바꿈("\n")으로 구분
   const pad = INDENT.repeat(depth);
-  const pieces = [];
-  list.forEach((node, i) => {
-    pieces.push(i === 0 ? pad : "\n" + pad, { node, depth, inline: false });
-  });
-  return pieces;
+  return list.map((node) => pad + nodeToHtml(node, depth, false)).join("\n");
 }
 
 /**
- * 노드 하나를 출력 조각으로 펼친다. (자식은 다시 { node, ... } 조각으로 남겨 두어 스택이 처리)
+ * 노드 하나 → HTML 문자열
  * @param {object|string} node VNode
  * @param {number} depth 이 노드의 들여쓰기 깊이 (닫는 태그 위치 계산용)
  * @param {boolean} inline <pre> 안쪽처럼 끝까지 한 줄로 써야 하는가
- * @returns {Array<string|object>}
  */
-function expandNode(node, depth, inline) {
-  if (typeof node === "string") return [escapeText(node)];
+function nodeToHtml(node, depth, inline) {
+  if (typeof node === "string") return escapeText(node);
 
   const open = `<${node.type}${propsToString(node.props)}>`;
-  if (VOID_TAGS.has(node.type)) return [open]; // <br>, <img ...> 는 닫는 태그 없음
+  if (VOID_TAGS.has(node.type)) return open; // <br>, <img ...> 는 닫는 태그 없음
 
   const close = `</${node.type}>`;
   const children = node.children || [];
-  if (children.length === 0) return [open + close];
+  if (children.length === 0) return open + close;
 
   // <pre> 안쪽은 끝까지 한 줄로 쓴다. 그 안에서는 줄바꿈 공백도 내용이므로 들여쓰기를 넣으면 VDOM 이 바뀐다.
   if (inline || KEEP_INLINE_TAGS.has(node.type)) {
-    return [open, ...children.map((child) => ({ node: child, depth: 0, inline: true })), close];
+    return open + children.map((child) => nodeToHtml(child, 0, true)).join("") + close;
   }
   // 텍스트가 섞여 있으면 한 줄로 이어 붙인다 (자식 요소 안쪽도 들여쓰기 없이)
   if (!allElements(children)) {
-    return [open, ...children.map((child) => ({ node: child, depth: 0, inline: false })), close];
+    return open + children.map((child) => nodeToHtml(child, 0, false)).join("") + close;
   }
   // 자식이 모두 요소 → 한 단계 들여쓴 여러 줄
-  return [open, "\n", ...siblingPieces(children, depth + 1), `\n${INDENT.repeat(depth)}${close}`];
+  return `${open}\n${toHtml(children, depth + 1)}\n${INDENT.repeat(depth)}${close}`;
 }
 
 // ── 2. 화면: DOM 참조 ──────────────────────────────────────────────────
@@ -372,7 +340,7 @@ function renderHistoryUI() {
   });
   historyList.replaceChildren(...items);
 
-  vdomJson.textContent = JSON.stringify(history.current(), null, 2);
+  vdomJson.textContent = JSON.stringify(history.peek(), null, 2);
 }
 
 /**
@@ -380,7 +348,7 @@ function renderHistoryUI() {
  * patch 가 올바르게 동작했다면 항상 true 여야 한다.
  */
 function realAreaMatchesHistory() {
-  return JSON.stringify(containerToVdom(realArea)) === JSON.stringify(history.current());
+  return JSON.stringify(containerToVdom(realArea)) === JSON.stringify(history.peek());
 }
 
 // ── 3. 버튼 동작 ────────────────────────────────────────────────────────
@@ -389,9 +357,10 @@ function realAreaMatchesHistory() {
  * [Patch] 테스트 영역의 변경 사항을 실제 영역에 반영하고 History 에 저장한다.
  */
 function onPatch() {
-  const oldVdom = history.current(); //            지금 실제 영역에 그려진 상태
+  const oldVdom = history.peek(); //               지금 실제 영역에 그려진 상태 (읽기만 하므로 복사 안 함)
   const newVdom = containerToVdom(testArea); //     사용자가 편집한 상태
-  const patches = diff(oldVdom, newVdom);
+  // History 의 VDOM 은 저장될 때 이미 diff 검사를 통과했으므로 이전 VDOM 검사는 건너뛴다
+  const patches = diff(oldVdom, newVdom, { trustOld: true });
 
   renderPatchLog(patches, "Patch");
   if (patches.length === 0) {
@@ -424,13 +393,13 @@ function onPatch() {
  * @param {string} reason 로그에 표시할 이름
  */
 function moveTo(move, reason) {
-  const prevVdom = history.current(); // 움직이기 전 = 지금 실제 영역 상태
+  const prevVdom = history.peek(); // 움직이기 전 = 지금 실제 영역 상태 (읽기만 하므로 복사 안 함)
   const prevIndex = history.position().index;
   const target = move();
   if (!target) return; // 이동할 수 없음 (버튼이 꺼져 있어야 정상)
 
   // 실제 영역: 이전 상태 → 대상 상태로 diff/patch (바뀐 부분만)
-  const patches = diff(prevVdom, target);
+  const patches = diff(prevVdom, target, { trustOld: true });
   try {
     highlight(patch(realArea, patches));
   } catch (err) {
@@ -460,7 +429,7 @@ function reportResult(message) {
     setStatus(`${message} — 실제 영역이 VDOM과 일치합니다.`, "ok");
   } else {
     setStatus(`${message} — 경고: 실제 영역이 VDOM과 다릅니다!`, "warn");
-    console.warn("[phase1] 실제 영역과 History VDOM 불일치", containerToVdom(realArea), history.current());
+    console.warn("[phase1] 실제 영역과 History VDOM 불일치", containerToVdom(realArea), history.peek());
   }
 }
 

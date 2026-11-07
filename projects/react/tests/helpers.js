@@ -212,33 +212,3 @@ export async function openIndex({ removeIds = [] } = {}) {
   await new Promise((r) => setTimeout(r, 30));
   return { frame, win, doc, $ };
 }
-
-/**
- * 반복문으로 하는 깊은 비교 (VNode · 배열 · 평범한 객체 · 원시값)
- * runner.js 의 deepEqual 은 재귀라서 깊이 수천 단계의 트리를 비교하면 호출 스택이 넘친다.
- * 깊은 트리 테스트(cases-deep.test.js)에서만 쓴다.
- * @returns {string|null} 같으면 null, 다르면 처음 다른 위치 설명
- */
-export function treeDifference(a, b) {
-  const stack = [[a, b, "(루트)"]];
-  while (stack.length > 0) {
-    const [x, y, where] = stack.pop();
-    if (x === y) continue;
-    if (typeof x !== typeof y || x === null || y === null || typeof x !== "object") return `${where}: ${String(x)} ≠ ${String(y)}`;
-    if (Array.isArray(x) !== Array.isArray(y)) return `${where}: 배열 여부가 다름`;
-    const keysX = Object.keys(x);
-    const keysY = Object.keys(y);
-    if (keysX.length !== keysY.length) return `${where}: 키 개수가 다름`;
-    for (const key of keysX) {
-      if (!Object.hasOwn(y, key)) return `${where}: "${key}" 가 없음`;
-      stack.push([x[key], y[key], `${where}.${key}`]);
-    }
-  }
-  return null;
-}
-
-/** treeDifference 가 null 이 아니면 실패 */
-export function assertSameTree(actual, expected, message = "트리가 다릅니다") {
-  const difference = treeDifference(actual, expected);
-  assert(difference === null, `${message}: ${difference}`);
-}
