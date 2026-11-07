@@ -3,10 +3,7 @@
 import { h } from "../../core/vdom.js";
 import { stateless } from "../../core/component.js";
 
-/**
- * 검색어와 맞는 부분을 <mark> 로 감싼 조각 목록 (대소문자 무시)
- * 예) ("useState 설명", "state") → ["use", <mark>State</mark>, " 설명"]
- */
+/** 검색어와 맞는 부분을 <mark> 로 (대소문자 무시). ("useState 설명", "state") → ["use", <mark>State</mark>, " 설명"] */
 function highlight(text, query) {
   if (!query) return [text];
   const lower = text.toLowerCase();
@@ -22,21 +19,15 @@ function highlight(text, query) {
   return parts;
 }
 
-/**
- * @param {{todo: {id: number, text: string, done: boolean, priority: string}, query: string,
- *          priorities: object, onToggle: (id: number) => void, onRemove: (id: number) => void}} props
- */
+/** props: { todo: { id, text, done, priority }, query, priorities, onToggle(id), onRemove(id) } */
 export const TodoItem = stateless(function TodoItem({ todo, query, priorities, onToggle, onRemove }) {
   return h(
     "li",
     { class: todo.done ? "todo-item done" : "todo-item", "data-id": String(todo.id), "data-priority": todo.priority },
-    h(
-      "label",
-      { class: "todo-check" },
-      // checked 는 true/false 로 항상 넘긴다 → 체크 해제도 PROPS 패치(set checked:false)로 반영
+    h("label", { class: "todo-check" },
+      // checked 는 항상 true/false 로 → 체크 해제도 PROPS 패치(checked: false)로 반영
       h("input", { type: "checkbox", checked: todo.done, onChange: () => onToggle(todo.id) }),
-      h("span", { class: "todo-text" }, highlight(todo.text, query)),
-    ),
+      h("span", { class: "todo-text" }, highlight(todo.text, query))),
     h("span", { class: `prio prio-${todo.priority}` }, priorities[todo.priority]),
     h("button", { type: "button", class: "icon-btn", "aria-label": `"${todo.text}" 삭제`, onClick: () => onRemove(todo.id) }, "삭제"),
   );

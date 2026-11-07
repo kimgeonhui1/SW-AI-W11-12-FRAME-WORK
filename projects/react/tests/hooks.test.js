@@ -20,6 +20,17 @@ function setup(body, props) {
   return api;
 }
 
+/** useState 하나만 쓰는 컴포넌트를 마운트한다. view(값) 이 렌더 결과. → { api, set } */
+function withState(initial, view) {
+  let set;
+  const api = setup(() => {
+    const [value, setValue] = useState(initial);
+    set = setValue;
+    return view(value);
+  });
+  return { api, set: (next) => set(next) };
+}
+
 /** 예약된 렌더가 끝날 때까지 */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -34,24 +45,14 @@ describe("Phase 2 · useState", () => {
 
   test("함수를 넘기면 첫 렌더에서 한 번만 실행 (지연 초기화)", async () => {
     let calls = 0;
-    let set;
-    setup(() => {
-      const [v, setV] = useState(() => (calls++, "init"));
-      set = setV;
-      return v;
-    });
+    const { set } = withState(() => (calls++, "init"), (v) => v);
     set("next");
     await settle();
     assertEqual(calls, 1);
   });
 
   test("setState 하면 다시 렌더되고, 함수는 다시 실행돼도 값이 유지된다", async () => {
-    let set;
-    const api = setup(() => {
-      const [n, setN] = useState(0);
-      set = setN;
-      return h("p", null, String(n));
-    });
+    const { api, set } = withState(0, (n) => h("p", null, String(n)));
     set(5);
     await settle();
     assertEqual(api.box.textContent, "5");
@@ -74,36 +75,21 @@ describe("Phase 2 · useState", () => {
   });
 
   test("같은 값(Object.is)이면 다시 렌더하지 않음 — NaN 도 같은 값", async () => {
-    let set;
-    const api = setup(() => {
-      const [, setV] = useState(NaN);
-      set = setV;
-      return null;
-    });
+    const { api, set } = withState(NaN, (_) => null);
     set(NaN);
     await settle();
     assertEqual(api.renders, 1);
   });
 
   test("객체는 내용이 같아도 새 객체면 다시 렌더 (참조 비교)", async () => {
-    let set;
-    const api = setup(() => {
-      const [, setV] = useState({ a: 1 });
-      set = setV;
-      return null;
-    });
+    const { api, set } = withState({ a: 1 }, (_) => null);
     set({ a: 1 });
     await settle();
     assertEqual(api.renders, 2);
   });
 
   test("배칭: setState 를 3번 불러도 렌더는 1번", async () => {
-    let set;
-    const api = setup(() => {
-      const [n, setN] = useState(0);
-      set = setN;
-      return String(n);
-    });
+    const { api, set } = withState(0, (n) => String(n));
     set(1);
     set(2);
     set(3);
@@ -167,24 +153,14 @@ describe("Phase 2 · useState", () => {
   });
 
   test("비동기(setTimeout)에서 setState 해도 반영", async () => {
-    let set;
-    const api = setup(() => {
-      const [v, setV] = useState("전");
-      set = setV;
-      return v;
-    });
+    const { api, set } = withState("전", (v) => v);
     await new Promise((resolve) => setTimeout(() => (set("후"), resolve()), 5));
     await settle();
     assertEqual(api.box.textContent, "후");
   });
 
   test("flush() 로 예약된 렌더를 바로 실행 · 예약이 없으면 아무것도 안 함", () => {
-    let set;
-    const api = setup(() => {
-      const [v, setV] = useState(0);
-      set = setV;
-      return String(v);
-    });
+    const { api, set } = withState(0, (v) => String(v));
     api.comp.flush();
     assertEqual(api.renders, 1);
     set(9);

@@ -1,136 +1,58 @@
 // [history.js] Patch된 Virtual DOM 기록 관리 (뒤로가기 / 앞으로가기)
 
 /**
- * State History — 브라우저의 뒤로가기/앞으로가기와 같은 방식으로 동작하는 기록 저장소
- *
- *   stack : 저장된 기록 배열. 각 기록 = { vdom, patchCount, label, time }
- *   index : 지금 화면에 보이는 기록의 위치 (-1 이면 아직 기록이 없음)
- *
- *   예) stack = [A, B, C], index = 2  → 현재 C
- *       undo()  → index = 1, B 반환
- *       push(D) → C 를 버리고 stack = [A, B, D], index = 2
- *       (뒤로 간 상태에서 새 기록을 만들면 "앞으로가기" 기록은 사라진다 = 분기)
- *
- * 깊은 복사 이유
- *   VNode 는 평범한 객체라서 참조를 그대로 저장하면, 바깥에서 객체를 수정했을 때
- *   과거 기록까지 같이 바뀌어 버린다. 그래서 넣을 때도, 꺼낼 때도 structuredClone 으로 복사한다.
+ * 브라우저 뒤로가기 · 앞으로가기와 같은 방식의 기록 저장소.
+ *   stack = [A, B, C], index = 2 (현재 C) → undo() 하면 index 1 · B
+ *   그 상태에서 push(D) → C 를 버리고 [A, B, D] (뒤로 간 뒤 새 기록을 만들면 앞쪽 기록이 사라짐 = 분기)
+ * VNode 는 평범한 객체라, 바깥에서 고쳐도 과거 기록이 바뀌지 않도록 넣을 때 · 꺼낼 때 깊은 복사를 한다.
+ * 함수 · Symbol 이 든 VDOM 은 structuredClone 이 DataCloneError 를 던진다.
  */
 
-// 모듈 내부 상태 (밖에서는 아래 함수로만 접근)
-let stack = [];
-let index = -1;
+let stack = []; // 기록: { vdom, patchCount, label, time }
+let index = -1; // 현재 위치 (-1 = 기록 없음)
 
 /**
- * VNode 깊은 복사 (null 은 그대로)
- * 함수 · Symbol 처럼 복사할 수 없는 값이 들어 있으면 structuredClone 이 DataCloneError 를 던진다.
- */
-const clone = (vdom) => structuredClone(vdom);
-
-/**
- * 새 기록 추가
- *
- * @param {object} vdom 저장할 Virtual DOM (복사해서 저장)
- * @param {{patchCount?: number, label?: string}} meta 화면 목록에 보여 줄 부가 정보
- *   patchCount : 이 기록을 만들 때 적용된 패치 개수
- *   label      : 기록 이름 (예: "초기 상태", "Patch #1")
- * @returns {number} 새 기록의 위치(index)
+ * 새 기록 추가. meta = { patchCount, label } (화면 목록용, 잘못된 값은 기본값). @returns 새 위치
+ * 새 기록을 먼저 완성(복사)한 뒤 앞쪽 기록을 버린다 → 복사가 실패해도 History 가 그대로 남는다.
  */
 export function push(vdom, meta) {
-  // 1) 새 기록을 먼저 완성한다.
-  //    복사(structuredClone)가 실패하면(함수 · Symbol 이 든 VDOM) 여기서 예외가 나고,
-  //    아래의 "앞으로가기 기록 버리기" 는 실행되지 않으므로 History 가 그대로 남는다.
-  const info = meta !== null && typeof meta === "object" ? meta : {}; // null · 문자열 등은 무시
+  const info = meta !== null && typeof meta === "object" ? meta : {};
   const entry = {
-    vdom: clone(vdom),
+    vdom: structuredClone(vdom),
     patchCount: Number.isFinite(info.patchCount) ? info.patchCount : 0,
     label: typeof info.label === "string" && info.label !== "" ? info.label : `기록 ${index + 2}`,
     time: Date.now(),
   };
-
-  // 2) 현재 위치 뒤의 "앞으로가기" 기록을 버리고 새 기록을 붙인다.
-  stack = stack.slice(0, index + 1);
-  stack.push(entry);
-  index = stack.length - 1;
-  return index;
+  stack = [...stack.slice(0, index + 1), entry];
+  return (index = stack.length - 1);
 }
 
-/**
- * 한 칸 뒤로 이동
- * @returns {object|null} 이동한 위치의 VNode 복사본. 맨 앞이라 이동할 수 없으면 null
- */
-export function undo() {
-  if (!canUndo()) return null;
-  index -= 1;
-  return current();
-}
-
-/**
- * 한 칸 앞으로 이동
- * @returns {object|null} 이동한 위치의 VNode 복사본. 맨 뒤라 이동할 수 없으면 null
- */
-export function redo() {
-  if (!canRedo()) return null;
-  index += 1;
-  return current();
-}
-
-/**
- * 특정 위치로 바로 이동 (History 목록 클릭)
- * @param {number} i 이동할 위치 (0부터)
- * @returns {object|null} 해당 VNode 복사본. 범위를 벗어나면 null (위치는 그대로)
- */
+/** 한 칸 뒤로 / 앞으로 / i 번째로 이동 → 그 위치의 VNode 복사본 (갈 수 없으면 null, 위치 그대로) */
+export const undo = () => (canUndo() ? go(index - 1) : null);
+export const redo = () => (canRedo() ? go(index + 1) : null);
 export function go(i) {
   if (!Number.isInteger(i) || i < 0 || i >= stack.length) return null;
   index = i;
   return current();
 }
 
-/** 현재 위치의 VNode 복사본 (기록이 없으면 null) */
-export function current() {
-  return index < 0 ? null : clone(stack[index].vdom);
-}
+/** 현재 VNode 복사본 (기록이 없으면 null) */
+export const current = () => (index < 0 ? null : structuredClone(stack[index].vdom));
 
 /**
- * 현재 위치의 VNode 를 복사하지 않고 그대로 돌려준다 (기록이 없으면 null)
- * 읽기 전용: diff 비교 · JSON 표시 · 자가 점검처럼 바꾸지 않고 읽기만 할 때 쓴다.
- * current() 는 부를 때마다 트리 전체를 깊은 복사하므로, 버튼 한 번에 여러 번 부르면 그만큼 느려진다.
- * ※ 돌려받은 객체를 고치면 기록이 바뀐다. 고칠 일이 있으면 current() 를 쓴다.
+ * 현재 VNode 를 복사 없이 그대로 (읽기 전용). diff 비교 · JSON 표시 · 자가 점검처럼 읽기만 할 때 쓴다.
+ * current() 는 부를 때마다 트리 전체를 복사한다. ※ 돌려받은 객체를 고치면 기록이 바뀐다.
  */
-export function peek() {
-  return index < 0 ? null : stack[index].vdom;
-}
+export const peek = () => (index < 0 ? null : stack[index].vdom);
 
-/** 뒤로 갈 수 있는가 */
-export function canUndo() {
-  return index > 0;
-}
+export const canUndo = () => index > 0;
+export const canRedo = () => index >= 0 && index < stack.length - 1;
+/** { index(0부터, 기록 없으면 -1), length } */
+export const position = () => ({ index, length: stack.length });
 
-/** 앞으로 갈 수 있는가 */
-export function canRedo() {
-  return index >= 0 && index < stack.length - 1;
-}
-
-/**
- * 현재 위치 정보
- * @returns {{index: number, length: number}} index 는 0부터 시작 (기록이 없으면 -1)
- */
-export function position() {
-  return { index, length: stack.length };
-}
-
-/**
- * 화면 목록용 기록 요약 (VNode 자체는 빼고 메타 정보만)
- * @returns {Array<{index:number, label:string, patchCount:number, time:number, active:boolean}>}
- */
-export function entries() {
-  return stack.map((entry, i) => ({
-    index: i,
-    label: entry.label,
-    patchCount: entry.patchCount,
-    time: entry.time,
-    active: i === index,
-  }));
-}
+/** 화면 목록용 요약 (VNode 는 빼고 메타 정보만) */
+export const entries = () =>
+  stack.map(({ label, patchCount, time }, i) => ({ index: i, label, patchCount, time, active: i === index }));
 
 /** 기록 전체 삭제 (테스트 · 초기화용) */
 export function reset() {
