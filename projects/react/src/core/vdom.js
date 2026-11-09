@@ -122,10 +122,20 @@ export function domToVdom(node) {
   // (props[name] = value 로 넣으면 "__proto__" 는 속성이 아니라 프로토타입 설정으로 처리되어 사라진다)
   const props = Object.fromEntries(Array.from(node.attributes, (attr) => [attr.name, attr.value]));
 
-  // <template> 은 내용이 childNodes 가 아니라 content(DocumentFragment) 안에 들어 있다
-  const childSource = node.tagName === "TEMPLATE" ? node.content : node;
-  return { type: node.tagName.toLowerCase(), props, children: vdomChildNodes(childSource).map(domToVdom) };
+  // <template> 은 내용이 childNodes 가 아니라 content(DocumentFragment) 안에 들어 있다 (childHost)
+  return { type: node.tagName.toLowerCase(), props, children: vdomChildNodes(childHost(node)).map(domToVdom) };
 }
+
+/**
+ * 자식이 실제로 들어가는 곳.
+ * <template> 의 자식은 template 자신이 아니라 content(DocumentFragment) 안에 있다 (화면에 그려지지 않는 내용).
+ * domToVdom(읽기) · createElement(만들기) · patch(경로 찾기 · CREATE) 가 모두 이 함수로 같은 곳을 본다.
+ * 셋 중 하나라도 다른 곳을 보면 template 의 VDOM 과 실제 DOM 이 어긋난다.
+ *
+ * @param {Node} node
+ * @returns {Node} template 이면 content, 아니면 node 그대로
+ */
+export const childHost = (node) => (node.tagName === "TEMPLATE" ? node.content : node);
 
 /**
  * 영역(컨테이너) → 루트 VNode
@@ -162,7 +172,8 @@ export function createElement(vnode) {
   if (!isElementVNode(vnode)) throw new TypeError(`[createElement] 올바른 VNode 가 아닙니다: ${describeValue(vnode)}`);
   const el = document.createElement(vnode.type);
   for (const [name, value] of Object.entries(vnode.props || {})) setProp(el, name, value); // 속성
-  for (const child of vnode.children || []) el.appendChild(createElement(child)); //        자식 (재귀)
+  const host = childHost(el); // <template> 이면 content 에 붙인다 (domToVdom 이 거기서 읽으므로)
+  for (const child of vnode.children || []) host.appendChild(createElement(child)); //      자식 (재귀)
   return el;
 }
 
