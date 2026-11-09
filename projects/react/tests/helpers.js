@@ -179,19 +179,23 @@ export async function waitFor(check, timeoutMs = 3000) {
 }
 
 /**
- * ../index.html 을 고쳐서 iframe 으로 연다.
- * - removeIds: 지울 요소 id 목록 (필수 요소가 없는 상황 재현)
- * - 페이지 스크립트보다 먼저 console.error / window error 를 기록하는 스크립트를 넣는다
- *   → frame.contentWindow.__errors 로 콘솔 오류를 확인할 수 있다
- * @returns {Promise<{frame: HTMLIFrameElement, win: Window, doc: Document, $: (id: string) => HTMLElement}>}
+ * 프로젝트의 페이지(../index.html, ../app.html)를 고쳐서 iframe 으로 연다. (Phase 1 · Phase 2 페이지 테스트 공용)
+ *
+ * 1. 원래 HTML 을 받아 DOMParser 로 읽는다.
+ * 2. edit(parsed) 로 테스트에 필요한 만큼 고친다 (예: 필수 요소 지우기, 스크립트 하나 더 넣기).
+ * 3. <base> 를 넣는다 → srcdoc 페이지에서도 ./src/... 상대 경로가 원래 위치 기준으로 풀린다.
+ * 4. 페이지 스크립트보다 먼저 console.error · window error 를 기록하는 스크립트를 넣는다
+ *    → frame.contentWindow.__errors 로 "동작하는 동안 콘솔 오류가 없었는지" 확인할 수 있다.
+ *
+ * @param {string} file 테스트 페이지 기준 상대 경로 (예: "../index.html")
+ * @param {(parsed: Document) => void} [edit] 열기 전에 문서를 고치는 함수
+ * @returns {Promise<HTMLIFrameElement>} 로드가 끝난 iframe
  */
-export async function openIndex({ removeIds = [] } = {}) {
-  const pageUrl = new URL("../index.html", location.href);
+export async function loadPage(file, edit = () => {}) {
+  const pageUrl = new URL(file, location.href);
   const html = await (await fetch(pageUrl, { cache: "no-store" })).text();
   const parsed = new DOMParser().parseFromString(html, "text/html");
-  for (const id of removeIds) parsed.getElementById(id)?.remove();
-
-  // srcdoc 페이지에서도 ./src/... 상대 경로가 원래 위치 기준으로 풀리도록 <base> 지정
+  edit(parsed);
   const base = parsed.createElement("base");
   base.href = pageUrl.href;
   const spy = parsed.createElement("script");
@@ -202,12 +206,22 @@ export async function openIndex({ removeIds = [] } = {}) {
     window.addEventListener("error", (e) => window.__errors.push("uncaught: " + e.message));
   `;
   parsed.head.prepend(base, spy);
+  return loadFrame({ srcdoc: "<!DOCTYPE html>" + parsed.documentElement.outerHTML });
+}
 
-  const frame = await loadFrame({ srcdoc: "<!DOCTYPE html>" + parsed.documentElement.outerHTML });
+/**
+ * ../index.html(Phase 1) 을 iframe 으로 열고 시작이 끝날 때까지 기다린다.
+ * - removeIds: 지울 요소 id 목록 (필수 요소가 없는 상황 재현)
+ * @returns {Promise<{frame: HTMLIFrameElement, win: Window, doc: Document, $: (id: string) => HTMLElement}>}
+ */
+export async function openIndex({ removeIds = [] } = {}) {
+  const frame = await loadPage("../index.html", (parsed) => {
+    for (const id of removeIds) parsed.getElementById(id)?.remove();
+  });
   const win = frame.contentWindow;
   const doc = frame.contentDocument;
   const $ = (id) => doc.getElementById(id);
-  // 모듈 스크립트 실행이 끝날 때까지 (정상 시작이면 #status, 실패면 안내 문단)
+  // 모듈 스크립트 실행이 끝날 때까지 (정상 시작이면 #status 에 글자가 생기고, 실패면 안내 문단이 생긴다)
   await waitFor(() => ($("status") && $("status").textContent) || doc.querySelector(".startup-error"));
   await new Promise((r) => setTimeout(r, 30));
   return { frame, win, doc, $ };

@@ -3,7 +3,7 @@
 // localStorage 는 iframe(srcdoc)과 이 테스트 페이지가 같은 출처라 공유된다 → 테스트마다 저장 값을 지우고 시작.
 
 import { describe, test, assert, assertEqual } from "./runner.js";
-import { loadFrame, waitFor } from "./helpers.js";
+import { loadPage, waitFor } from "./helpers.js";
 
 const STORAGE_KEY = "mini-react:todos";
 /** 테스트 전에 저장돼 있던 값 (같은 주소에서 앱을 쓰던 목록을 지우지 않도록 마지막에 되돌린다) */
@@ -24,26 +24,14 @@ async function openApp({ storage = null } = {}) {
   if (storage === null) localStorage.removeItem(STORAGE_KEY);
   else localStorage.setItem(STORAGE_KEY, storage);
 
-  const pageUrl = new URL("../app.html", location.href);
-  const html = await (await fetch(pageUrl, { cache: "no-store" })).text();
-  const parsed = new DOMParser().parseFromString(html, "text/html");
-  const base = parsed.createElement("base");
-  base.href = pageUrl.href;
-  const spy = parsed.createElement("script");
-  spy.textContent = `
-    window.__errors = [];
-    const original = console.error.bind(console);
-    console.error = (...args) => { window.__errors.push(args.map(String).join(" ")); original(...args); };
-    window.addEventListener("error", (e) => window.__errors.push("uncaught: " + e.message));
-  `;
-  parsed.head.prepend(base, spy);
-  // 페이지 안에서 main.js 를 한 번 더 import 해 마운트된 app 을 window.__app 으로 꺼낸다.
-  // 같은 문서 안의 import 는 페이지가 실행한 모듈과 같은 것(같은 app 객체)을 돌려준다.
-  const grab = parsed.createElement("script");
-  grab.type = "module";
-  grab.textContent = 'import { app } from "./src/app/main.js"; window.__app = app;';
-  parsed.body.append(grab);
-  const frame = await loadFrame({ srcdoc: "<!DOCTYPE html>" + parsed.documentElement.outerHTML });
+  const frame = await loadPage("../app.html", (parsed) => {
+    // 페이지 안에서 main.js 를 한 번 더 import 해 마운트된 app 을 window.__app 으로 꺼낸다.
+    // 같은 문서 안의 import 는 페이지가 실행한 모듈과 같은 것(같은 app 객체)을 돌려준다.
+    const grab = parsed.createElement("script");
+    grab.type = "module";
+    grab.textContent = 'import { app } from "./src/app/main.js"; window.__app = app;';
+    parsed.body.append(grab);
+  });
   return tools(frame);
 }
 
