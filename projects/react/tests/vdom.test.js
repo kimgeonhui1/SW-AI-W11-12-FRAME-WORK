@@ -8,7 +8,7 @@
 // domToVdom / createElement 는 document, Node 같은 "브라우저에만 있는" 객체를 쓴다.
 // 그래서 외부 테스트 라이브러리(Jest 등) 없이, 브라우저에서 직접 돌리는 아주 작은 테스트 도구를 아래에 만들었다.
 
-// 테스트할 함수 3개를 vdom.js에서 가져온다. (../ = 한 폴더 위로 올라가기)
+// 테스트할 함수들을 vdom.js에서 가져온다. (../ = 한 폴더 위로 올라가기)
 import { h, domToVdom, createElement, setProp, removeProp } from "../src/core/vdom.js";
 
 // 각 테스트의 결과({ name, ok, message })를 모아 두는 배열. 마지막에 화면에 출력한다.

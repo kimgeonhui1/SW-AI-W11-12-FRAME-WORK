@@ -50,6 +50,10 @@ test("vdomToHtml: 특수문자 이스케이프", () => {
   assertEqual(vdomToHtml(h("div", null, h("p", { title: 'a "b" & c' }, "1 < 2 & 3"))), '<p title="a &quot;b&quot; &amp; c">1 &lt; 2 &amp; 3</p>');
 });
 
+test("vdomToHtml: 숫자 style은 createElement와 같게 px (단위 없는 속성은 그대로) (4차 리뷰)", () => {
+  assertEqual(vdomToHtml(h("div", null, h("p", { style: { width: 100, opacity: 0.5 } }, "x"))), '<p style="width: 100px; opacity: 0.5">x</p>');
+});
+
 // 핵심 약속: 테스트 영역에 보여 준 HTML을 그대로 다시 읽으면 같은 VDOM이어야 한다
 // (그래야 로드 직후 / 뒤로가기 직후 Patch를 눌러도 "변경 없음"이 된다)
 const ROUND_TRIP = [

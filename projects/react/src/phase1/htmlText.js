@@ -5,7 +5,7 @@
 //   - Patch 때        : 사용자가 고친 HTML 문자열 → VDOM(htmlToVdom)으로 읽는다
 // 둘 다 루트를 <div> 하나로 감싼 VDOM을 다룬다. (여러 최상위 태그를 쓸 수 있게, 그리고 patch는 루트가 하나여야 해서)
 
-import { domToVdom } from "../core/vdom.js";
+import { domToVdom, styleValueToCss } from "../core/vdom.js";
 
 // 닫는 태그가 없는 태그 (<input>, <br> ...). </input>을 쓰면 브라우저가 무시하거나 엉뚱하게 해석한다
 const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
@@ -101,7 +101,7 @@ function attrsToHtml(props) {
 // { fontSize: "12px", "--gap": "4px" } → "font-size: 12px; --gap: 4px" (CSS 변수는 이름 그대로)
 function styleToText(style) {
   return Object.entries(style)
-    .map(([key, value]) => `${key.startsWith("--") ? key : key.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase())}: ${value}`)
+    .map(([key, value]) => `${key.startsWith("--") ? key : key.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase())}: ${key.startsWith("--") ? value : styleValueToCss(key, value)}`)
     .join("; ");
 }
 

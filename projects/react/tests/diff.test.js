@@ -444,6 +444,31 @@ test("ref: REMOVE / REPLACE 되면 null, 같은 ref를 새 요소가 받으면 �
   assertEqual([afterReplace, ref.current], ["TEXTAREA", null]);
 });
 
+// ======================================================================
+// 4차 리뷰 재현 테스트
+// ======================================================================
+
+test("ref: 같은 함수 ref가 뒤 형제 → 앞 형제로 옮겨가도 마지막 값은 새 요소 (해제가 연결보다 먼저)", () => {
+  let saved = "초기값";
+  const fnRef = (el) => (saved = el);
+  const v1 = h("div", null, h("p", null, "A"), h("p", { ref: fnRef }, "B"));
+  const v2 = h("div", null, h("p", { ref: fnRef }, "A"), h("p", null, "B"));
+  const container = document.createElement("div");
+  container.appendChild(createElement(v1));
+  patch(container, diff(v1, v2));
+  assertEqual(saved === container.firstChild.firstChild, true, "saved가 첫 번째 p여야 함");
+});
+
+test("key 섞임: 앞에 key 항목이 추가돼도 key 없는 자식은 재사용 (key 없는 것끼리의 순번으로 짝지음)", () => {
+  const v1 = h("div", null, h("p", { key: "k1" }, "고정"), h("span", null, "유지"));
+  const v2 = h("div", null, h("b", { key: "k0" }, "새항목"), h("p", { key: "k1" }, "고정"), h("span", null, "유지"));
+  const container = document.createElement("div");
+  container.appendChild(createElement(v1));
+  const span = container.querySelector("span");
+  patch(container, diff(v1, v2));
+  assertEqual([container.querySelector("span") === span, domToVdom(container.firstChild)], [true, domToVdom(createElement(v2))]);
+});
+
 const escape = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const passed = results.filter((r) => r.ok).length;
 document.getElementById("results").innerHTML =

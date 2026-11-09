@@ -63,6 +63,11 @@ const listenerStore = new WeakMap();
 // 요소별로 연결된 ref를 기억해 두는 저장소 (요소가 화면에서 빠질 때 ref.current를 null로 되돌리기 위해)
 const refStore = new WeakMap();
 
+// patch 도중 미뤄 둔 ref 연결 목록 ([ref, el]). null이면 지금은 patch 중이 아님 → 바로 연결한다
+// 이유: patch는 자식을 앞에서부터 고친다. 같은 ref가 뒤 형제 → 앞 형제로 옮겨가면 "앞 형제에 연결" 다음에 "뒤 형제에서 해제"가 실행되어
+//       함수 ref가 마지막에 null을 받는다. 그래서 patch 중에는 해제는 바로 하고 연결은 모아 뒀다가 맨 끝에 한다 (React도 해제 → 연결 순서)
+let pendingRefs = null;
+
 // SVG 요소는 일반 HTML 요소와 "이름공간(namespace)"이 달라서 document.createElementNS로 만들어야 그려진다
 export const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -381,8 +386,8 @@ export function setProp(el, name, value, oldValue) {
     if (oldValue && oldValue !== value) detachRef(oldValue, el);
     if (value) {
       refStore.set(el, value);
-      if (typeof value === "function") value(el);
-      else value.current = el;
+      if (pendingRefs) pendingRefs.push([value, el]);
+      else attachRef(value, el);
     } else refStore.delete(el);
     return;
   }
@@ -518,6 +523,27 @@ function detachRef(ref, el) {
   else if (ref.current === el) ref.current = null;
 }
 
+function attachRef(ref, el) {
+  if (typeof ref === "function") ref(el);
+  else ref.current = el;
+}
+
+/**
+ * ■ withDeferredRefs : fn 실행 중 생기는 ref 연결을 모아 뒀다가 fn이 끝난 뒤 한꺼번에 연결한다 (patch가 사용)
+ * 해제(detach / clearRefs)는 그 자리에서 바로 일어나므로, 결과적으로 "모든 해제 → 모든 연결" 순서가 된다
+ */
+export function withDeferredRefs(fn) {
+  if (pendingRefs) return fn(); // 이미 모으는 중이면(중첩 호출) 바깥에서 한 번에 연결한다
+  pendingRefs = [];
+  try {
+    return fn();
+  } finally {
+    const refs = pendingRefs;
+    pendingRefs = null;
+    for (const [ref, el] of refs) attachRef(ref, el);
+  }
+}
+
 /**
  * ■ clearRefs : 화면에서 빠지는 노드(와 그 자손)에 연결된 ref를 null로 되돌린다
  * patch가 노드를 지우거나(REMOVE) 갈아 끼우기(REPLACE) 직전에 부른다. (지운 요소를 ref가 계속 붙잡고 있지 않게)
@@ -578,6 +604,13 @@ function clearStyle(el) {
 // 스타일 한 개를 적용. CSS 변수(--gap)는 el.style.xxx 로 쓸 수 없어서 setProperty를 써야 한다
 function setStyleValue(el, key, value) {
   if (key.startsWith("--")) el.style.setProperty(key, value);
-  // 숫자는 px를 붙인다 (단위 없는 속성과 0은 그대로). 숫자만 넣으면 브라우저가 무시한다 (el.style.width = 100 → 적용 안 됨)
-  else el.style[key] = typeof value === "number" && value !== 0 && !UNITLESS_STYLES.has(key) ? `${value}px` : value;
+  else el.style[key] = styleValueToCss(key, value);
+}
+
+/**
+ * ■ styleValueToCss : style 값 하나를 CSS 문자열로 (createElement와 htmlText의 vdomToHtml이 같은 규칙을 쓰도록 공유)
+ * 숫자는 px를 붙인다 (단위 없는 속성과 0은 그대로). 숫자만 넣으면 브라우저가 무시한다 (el.style.width = 100 → 적용 안 됨)
+ */
+export function styleValueToCss(key, value) {
+  return typeof value === "number" && value !== 0 && !UNITLESS_STYLES.has(key) ? `${value}px` : value;
 }

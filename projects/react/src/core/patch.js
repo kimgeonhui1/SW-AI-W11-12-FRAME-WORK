@@ -1,6 +1,6 @@
 // [patch.js] Diff 결과(변경 목록)를 실제 DOM에 반영
 
-import { createElement, setProp, removeProp, clearRefs, SVG_NS } from "./vdom.js";
+import { createElement, setProp, removeProp, clearRefs, withDeferredRefs, SVG_NS } from "./vdom.js";
 
 // 이 부모 아래에 새로 만들 요소가 SVG여야 하는지 (<foreignObject> 안쪽은 다시 HTML)
 function inSvg(parent) {
@@ -21,7 +21,8 @@ function inSvg(parent) {
  *    실제 DOM을 domToVdom으로 읽었다면 createElement 결과로 한 번 교체해 둘의 모양을 맞춰야 한다 (vdom.js 참고).
  */
 export function patch(container, patches) {
-  applyPatch(container, patches, container.firstChild);
+  // ref 연결은 patch가 끝난 뒤 한꺼번에 한다 → 같은 ref가 형제 사이를 옮겨가도 "해제 → 연결" 순서가 지켜진다
+  withDeferredRefs(() => applyPatch(container, patches, container.firstChild));
 }
 
 // 실제 DOM 노드(node)에 패치 하나를 적용하고, UPDATE면 자식들로 재귀한다. (CREATE일 때 node는 없음)

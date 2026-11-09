@@ -132,10 +132,12 @@ function diffChildren(oldChildren, newChildren) {
 function hasKey(child) {
   return typeof child !== "string" && child.props?.key != null;
 }
-// 짝짓기에 쓸 이름. key가 없는 자식(텍스트 등)은 "몇 번째인지"를 이름으로 쓴다 → key 없는 자식끼리는 지금처럼 위치로 짝지어진다
-// (k:/i: 접두어로 key "0"과 위치 0이 섞이지 않게 한다)
-function matchKey(child, index) {
-  return hasKey(child) ? `k:${child.props.key}` : `i:${index}`;
+// 자식 목록의 짝짓기 이름들. key가 없는 자식(텍스트 등)은 "key 없는 자식들 중 몇 번째인지"를 이름으로 쓴다.
+// 전체 위치가 아니라 key 없는 것끼리의 순번이라서, 앞에 key 항목이 끼어들어도 key 없는 자식은 계속 같은 이전 노드와 짝지어진다.
+// (k:/u: 접두어로 key "0"과 순번 0이 섞이지 않게 한다)
+function matchKeys(children) {
+  let unkeyed = 0;
+  return children.map((child) => (hasKey(child) ? `k:${child.props.key}` : `u:${unkeyed++}`));
 }
 
 /**
@@ -148,15 +150,15 @@ function matchKey(child, index) {
 function diffKeyedChildren(oldChildren, newChildren) {
   // 이름 → 이전 위치. 짝지어지면 지워서 같은 이전 노드를 두 번 쓰지 않게 한다
   const oldIndexByKey = new Map();
-  oldChildren.forEach((child, i) => {
-    const key = matchKey(child, i);
+  matchKeys(oldChildren).forEach((key, i) => {
     if (!oldIndexByKey.has(key)) oldIndexByKey.set(key, i);
   });
 
   const order = [];
   const children = [];
+  const newKeys = matchKeys(newChildren);
   newChildren.forEach((child, i) => {
-    const key = matchKey(child, i);
+    const key = newKeys[i];
     const oldIndex = oldIndexByKey.get(key);
     if (oldIndex === undefined) {
       order.push(-1);
