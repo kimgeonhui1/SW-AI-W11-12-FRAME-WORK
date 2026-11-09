@@ -4,31 +4,11 @@ import { domToVdom, createElement } from "../core/vdom.js";
 import { diff } from "../core/diff.js";
 import { patch } from "../core/patch.js";
 import { push, undo, redo } from "./history.js";
+import { htmlToVdom, vdomToHtml } from "./htmlText.js";
 
 const realArea = document.getElementById("real-area");
 const testInput = document.getElementById("test-input");
 const patchLog = document.getElementById("patch-log");
-
-// 처음 화면. 속성 추가/삭제, 자식 개수 변화, input value 같은 경우를 바로 시험해 볼 수 있게 골랐다
-const INITIAL_HTML = `<h3 class="title">할 일 목록</h3>
-<ul id="todo">
-  <li>Virtual DOM 만들기</li>
-  <li>Diff 구현</li>
-</ul>
-<p style="color: gray;">총 <b>2</b>개</p>
-<input value="입력값" />
-<label><input type="checkbox" checked /> 완료</label>`;
-
-/**
- * HTML 문자열 → VDOM
- * 여러 최상위 태그를 쓸 수 있도록 <div> 하나로 감싸서 읽는다. 그래서 실제 영역의 루트는 항상 이 <div>다.
- * (실제 영역에 그려지는 내용이므로 사용자가 쓴 HTML의 onerror 같은 속성도 실행될 수 있다. 자기 화면에서만 쓰는 도구라 허용)
- */
-function htmlToVdom(html) {
-  const wrapper = document.createElement("div");
-  wrapper.innerHTML = html;
-  return domToVdom(wrapper);
-}
 
 /**
  * 실제 영역을 target VDOM 모양으로 바꾼다 (Patch / 뒤로가기 / 앞으로가기 공통)
@@ -45,32 +25,44 @@ function render(target) {
   return patches;
 }
 
-// 처음 그리기: 컨테이너를 비우고 루트 하나만 붙인다.
-// patch는 container.firstChild를 루트로 보므로, 줄바꿈 공백 같은 다른 노드가 앞에 있으면 안 된다.
-// current = 지금 실제 영역이 보여 주기로 한 기록. 새 기록을 남길지 판단할 때 쓴다
-let current = { vdom: htmlToVdom(INITIAL_HTML), html: INITIAL_HTML };
-realArea.replaceChildren(createElement(current.vdom));
-testInput.value = INITIAL_HTML;
+// ── 페이지 로드 (과제 요구사항 순서) ──
+// 1) "실제 영역"에 적혀 있는 샘플 HTML(DOM)을 Virtual DOM으로 변환한다.
+//    #real-area 자체(id 포함)가 아니라 그 "안쪽"만 쓰고, 루트는 htmlToVdom과 같은 모양(속성 없는 <div>)으로 맞춘다.
+//    그래야 테스트 영역에서 읽은 VDOM과 같은 기준으로 diff할 수 있다.
+const sample = domToVdom(realArea);
+const initialVdom = { type: "div", props: {}, children: sample.children };
+
+// 2) 실제 영역을 그 VDOM으로 만든 DOM으로 교체한다.
+//    patch는 container.firstChild를 루트로 보고 "VDOM 자식 i번째 = DOM 자식 i번째"를 전제로 한다.
+//    HTML에 적힌 원래 DOM에는 들여쓰기 공백 노드가 있어서 이 전제가 깨지므로, 한 번 다시 만들어 모양을 맞춘다.
+realArea.replaceChildren(createElement(initialVdom));
+
+// 3) 방금 만든 Virtual DOM으로 테스트 영역을 렌더링한다. (VDOM → HTML 코드)
+testInput.value = vdomToHtml(initialVdom);
+
+// State History에는 Virtual DOM을 저장한다.
+// current = 지금 실제 영역이 보여 주기로 한 VDOM. 새 기록을 남길지 판단할 때 쓴다
+let current = initialVdom;
 push(current);
 
 document.getElementById("patch-btn").addEventListener("click", () => {
-  const html = testInput.value;
-  const vdom = htmlToVdom(html);
+  // 현재 테스트 영역 상태를 다시 Virtual DOM으로 만들고 → diff → 바뀐 부분만 실제 영역에 반영
+  const vdom = htmlToVdom(testInput.value);
   render(vdom);
   // 직전 기록과 VDOM이 같으면 기록을 남기지 않는다 (뒤로가기를 눌렀는데 화면이 그대로인 칸이 생기지 않게).
   // render의 diff 결과로 판단하지 않는 이유: 사용자가 실제 영역 input만 바꿨을 때도 diff 결과가 생기기 때문이다
-  if (diff(current.vdom, vdom) !== null) {
-    current = { vdom, html };
+  if (diff(current, vdom) !== null) {
+    current = vdom;
     push(current);
   }
 });
 
-// 뒤로/앞으로: 실제 영역은 patch로, 테스트 영역은 그 시점에 사용자가 쓴 HTML 원문으로 되돌린다
-function restore(snapshot) {
-  if (snapshot === null) return; // 더 갈 기록이 없음
-  current = snapshot;
-  render(snapshot.vdom);
-  testInput.value = snapshot.html;
+// 뒤로/앞으로: 기록의 Virtual DOM으로 실제 영역은 patch, 테스트 영역은 다시 렌더링한다
+function restore(vdom) {
+  if (vdom === null) return; // 더 갈 기록이 없음
+  current = vdom;
+  render(vdom);
+  testInput.value = vdomToHtml(vdom);
 }
 document.getElementById("undo-btn").addEventListener("click", () => restore(undo()));
 document.getElementById("redo-btn").addEventListener("click", () => restore(redo()));

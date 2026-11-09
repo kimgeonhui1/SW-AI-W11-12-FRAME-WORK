@@ -16,7 +16,17 @@
   <div class="areas">
     <section>
       <h2>실제 영역</h2>
-      <div id="real-area"></div>
+      <!-- 샘플 HTML. 페이지가 로드되면 main.js가 이 DOM을 domToVdom으로 읽어 Virtual DOM으로 만든다 -->
+      <div id="real-area">
+        <h3 class="title">할 일 목록</h3>
+        <ul id="todo">
+          <li>Virtual DOM 만들기</li>
+          <li>Diff 구현</li>
+        </ul>
+        <p style="color: gray;">총 <b>2</b>개</p>
+        <input value="입력값" />
+        <label><input type="checkbox" checked /> 완료</label>
+      </div>
     </section>
     <section>
       <h2>테스트 영역 (HTML을 고친 뒤 Patch)</h2>
