@@ -413,6 +413,67 @@ test("removeProp: input value 제거", () => {
 
 // 테스트 이름에 "<pre>" 같은 태그 글자가 있어서 HTML로 해석되지 않도록 이스케이프(무해한 글자로 바꾸기)
 // & → &amp;  < → &lt;  > → &gt;  (순서 중요: &를 먼저 바꿔야 이미 바꾼 &lt;의 &가 다시 바뀌지 않는다)
+// ======================================================================
+// 보강: 이벤트 이름 / onChange / 숫자 style / SVG / ref / key
+// ======================================================================
+
+test("onChange: 텍스트 입력은 글자마다(input 이벤트), checkbox는 change 이벤트", () => {
+  const log = [];
+  const text = createElement(h("input", { onChange: () => log.push("text") }));
+  const area = createElement(h("textarea", { onChange: () => log.push("area") }));
+  const box = createElement(h("input", { type: "checkbox", onChange: () => log.push("box") }));
+  text.dispatchEvent(new Event("input"));
+  area.dispatchEvent(new Event("input"));
+  box.dispatchEvent(new Event("input")); // checkbox는 input 이벤트로는 실행되면 안 됨
+  box.dispatchEvent(new Event("change"));
+  assertEqual(log, ["text", "area", "box"]);
+});
+
+test("onChange와 onInput을 같이 써도 둘 다 실행, 하나를 지우면 나머지만 실행", () => {
+  const log = [];
+  const el = createElement(h("input", { onChange: () => log.push("change"), onInput: () => log.push("input") }));
+  el.dispatchEvent(new Event("input"));
+  removeProp(el, "onChange");
+  el.dispatchEvent(new Event("input"));
+  removeProp(el, "onInput");
+  el.dispatchEvent(new Event("input"));
+  assertEqual(log, ["change", "input", "input"]);
+});
+
+test("onDoubleClick → dblclick 이벤트", () => {
+  let count = 0;
+  const el = createElement(h("div", { onDoubleClick: () => count++ }));
+  el.dispatchEvent(new Event("dblclick"));
+  assertEqual(count, 1);
+});
+
+test("style: 숫자에는 px, 단위 없는 속성(opacity, zIndex, flex...)은 그대로", () => {
+  const el = createElement(h("div", { style: { width: 100, marginTop: 8, opacity: 0.5, zIndex: 3, flexGrow: 2 } }));
+  assertEqual([el.style.width, el.style.marginTop, el.style.opacity, el.style.zIndex, el.style.flexGrow], ["100px", "8px", "0.5", "3", "2"]);
+});
+
+test("SVG: svg와 자손은 SVG 이름공간, foreignObject 안은 다시 HTML / domToVdom 왕복", () => {
+  const SVG = "http://www.w3.org/2000/svg";
+  const vnode = h("svg", { viewBox: "0 0 10 10" }, h("circle", { r: "1", className: "dot" }), h("foreignObject", null, h("p", null, "html")));
+  const el = createElement(vnode);
+  const [circle, fo] = el.childNodes;
+  assertEqual(
+    [el.namespaceURI, circle.namespaceURI, fo.namespaceURI, fo.firstChild.namespaceURI],
+    [SVG, SVG, SVG, "http://www.w3.org/1999/xhtml"]
+  );
+  // localName으로 읽어서 foreignObject / viewBox의 대소문자가 그대로 돌아와야 한다
+  assertEqual(domToVdom(el), vnode);
+});
+
+test("ref: 객체 ref는 current에, 함수 ref는 인자로 요소를 받음 / key·ref는 DOM 속성이 아님", () => {
+  const objRef = { current: null };
+  let fnRefArg;
+  const el = createElement(h("div", { ref: objRef, key: "k" }, h("span", { ref: (e) => (fnRefArg = e) })));
+  assertEqual([objRef.current === el, fnRefArg === el.firstChild, el.hasAttribute("key"), el.hasAttribute("ref")], [true, true, false, false]);
+  removeProp(el, "ref", objRef);
+  assertEqual(objRef.current, null);
+});
+
 const escape = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 // 성공한 테스트 개수 세기
 const passed = results.filter((r) => r.ok).length;

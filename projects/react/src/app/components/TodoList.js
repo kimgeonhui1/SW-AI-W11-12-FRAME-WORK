@@ -8,6 +8,7 @@ export function TodoList({ todos, onToggle, onRemove }) {
   return h(
     "ul",
     { className: "todo-list" },
-    todos.map((todo) => h(TodoItem, { todo, onToggle, onRemove }))
+    // key: 항목을 지우거나 순서가 바뀌어도 같은 할 일은 같은 DOM 노드를 쓴다 (체크·포커스 상태가 다른 항목으로 넘어가지 않음)
+    todos.map((todo) => h(TodoItem, { key: todo.id, todo, onToggle, onRemove }))
   );
 }

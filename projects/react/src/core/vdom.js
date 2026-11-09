@@ -56,8 +56,26 @@ const PROP_TO_ATTR = { className: "class", htmlFor: "for" };
 
 // 요소별로 "지금 등록된 이벤트 핸들러"를 기억해 두는 저장소.
 // WeakMap: 키(DOM 요소)가 화면에서 사라져 더 이상 쓰이지 않으면 저장된 값도 자동으로 정리되는 Map.
-// 구조: listenerStore.get(button) → { click: 현재 onClick 함수, input: 현재 onInput 함수 }
+// 구조: listenerStore.get(input) → { input: { onInput: 함수, onChange: 함수 }, click: { onClick: 함수 } }
+// (이벤트 종류 → prop 이름 → 함수. onChange와 onInput이 같은 input 이벤트를 써도 서로 덮어쓰지 않게 prop 이름별로 나눈다)
 const listenerStore = new WeakMap();
+
+// 요소별로 연결된 ref를 기억해 두는 저장소 (요소가 화면에서 빠질 때 ref.current를 null로 되돌리기 위해)
+const refStore = new WeakMap();
+
+// SVG 요소는 일반 HTML 요소와 "이름공간(namespace)"이 달라서 document.createElementNS로 만들어야 그려진다
+export const SVG_NS = "http://www.w3.org/2000/svg";
+
+// "on + 이름"을 소문자로 바꾼 것과 실제 브라우저 이벤트 이름이 다른 경우 (onDoubleClick → "doubleclick"이 아니라 "dblclick")
+const EVENT_NAME_FIX = { doubleclick: "dblclick" };
+
+// 숫자를 그대로 쓰는 CSS 속성 (React와 같은 목록 중 자주 쓰는 것). 그 외 숫자 값에는 px를 붙인다 ({ width: 100 } → "100px")
+const UNITLESS_STYLES = new Set([
+  "animationIterationCount", "aspectRatio", "columnCount", "fillOpacity", "flex", "flexGrow", "flexShrink",
+  "fontWeight", "gridColumn", "gridColumnEnd", "gridColumnStart", "gridRow", "gridRowEnd", "gridRowStart",
+  "lineHeight", "opacity", "order", "orphans", "scale", "stopOpacity", "strokeOpacity", "strokeWidth",
+  "tabSize", "widows", "zIndex", "zoom",
+]);
 
 /**
  * ■ h : Virtual DOM 객체를 "만드는" 함수 (JSX 대신 쓰는 도구)
@@ -185,8 +203,9 @@ export function domToVdom(node, preserveWhitespace = false) {
   }
 
   // ── 3) 요소 노드인 경우 (nodeType === 1) ──
-  // tagName은 HTML에서 대문자("DIV")로 나오므로 소문자("div")로 통일한다. h("div")로 만든 것과 비교할 수 있게.
-  const type = node.tagName.toLowerCase();
+  // localName: 태그 이름을 h()에 쓰는 모양 그대로 준다. HTML은 소문자("div"), SVG는 원래 대소문자("linearGradient").
+  // (tagName은 HTML에서 대문자 "DIV"라서 소문자로 바꿔야 하고, 그러면 SVG의 "foreignObject"까지 "foreignobject"로 바뀌어 버린다)
+  const type = node.localName;
 
   // 속성들을 담을 빈 객체
   const props = {};
@@ -297,7 +316,7 @@ function toCamelCase(cssName) {
  *    - 우리 createElement(vnode)   : vnode 객체 전체(속성 + 자식 전부)를 실제 DOM 트리로 만든다.
  *      (내부에서 document.createElement를 사용한다)
  */
-export function createElement(vnode) {
+export function createElement(vnode, inSvg = false) {
   // ── 1) 텍스트인 경우 ──
   // 팀 규약상 문자열 = 텍스트 노드. 숫자가 섞여 들어와도 안전하게 String()으로 바꿔 처리
   if (typeof vnode === "string" || typeof vnode === "number") {
@@ -306,8 +325,11 @@ export function createElement(vnode) {
   }
 
   // ── 2) 요소인 경우 ──
-  // vnode.type("div" 등) 태그로 빈 요소를 새로 만든다
-  const el = document.createElement(vnode.type);
+  // <svg>와 그 안쪽은 SVG 이름공간으로 만든다. document.createElement("circle")은 이름만 circle인 HTML 요소라서 화면에 안 그려진다.
+  // inSvg: 부모가 SVG 안이면 true (재귀로 아래까지 전달). <foreignObject> 안은 다시 HTML이다
+  const svg = inSvg || vnode.type === "svg";
+  const el = svg ? document.createElementNS(SVG_NS, vnode.type) : document.createElement(vnode.type);
+  const childInSvg = svg && vnode.type !== "foreignObject";
 
   // 자식을 "먼저" 만들어 붙인다 (children이 없으면 빈 배열로 대비)
   // 순서가 중요한 이유: <select>의 value는 <option>들이 붙어 있어야 고를 수 있다.
@@ -316,7 +338,7 @@ export function createElement(vnode) {
   if (vnode.props?.multiple) setProp(el, "multiple", vnode.props.multiple);
   for (const child of vnode.children ?? []) {
     // 자식도 createElement로 실제 DOM을 만들고(재귀), el의 마지막 자식으로 붙인다
-    el.appendChild(createElement(child));
+    el.appendChild(createElement(child, childInSvg));
   }
 
   // 그다음 속성을 넣는다 (props가 없을 수도 있으니 빈 객체로 대비)
@@ -353,12 +375,28 @@ export function createElement(vnode) {
  *   그 외                → setAttribute(이름, 값)
  */
 export function setProp(el, name, value, oldValue) {
+  // ── 0) key / ref ── DOM 속성이 아니다. key는 diff가 리스트 항목을 짝짓는 데만 쓰고, ref는 요소를 담아 줄 그릇이다
+  if (name === "key") return;
+  if (name === "ref") {
+    if (oldValue && oldValue !== value) detachRef(oldValue, el);
+    if (value) {
+      refStore.set(el, value);
+      if (typeof value === "function") value(el);
+      else value.current = el;
+    } else refStore.delete(el);
+    return;
+  }
+
   // ── 1) 이벤트 ── onClick, onInput 처럼 "on + 대문자"로 시작하는 이름
   // (HTML에서 읽어 온 onclick="..." 같은 소문자 문자열 속성은 여기 걸리지 않고 아래 일반 속성으로 처리된다)
   if (/^on[A-Z]/.test(name)) {
     // "onClick" → slice(2)로 앞 두 글자 제거 → "Click" → toLowerCase() → "click"
-    // [한계] onDoubleClick → "doubleclick"처럼 실제 이벤트 이름(dblclick)과 다른 경우는 지원하지 않는다
-    updateListener(el, name.slice(2).toLowerCase(), value);
+    let eventType = name.slice(2).toLowerCase();
+    eventType = EVENT_NAME_FIX[eventType] ?? eventType;
+    // React의 onChange는 글자를 칠 때마다 실행된다. 브라우저 change 이벤트는 텍스트 입력에서 "포커스를 잃을 때"만 오므로
+    // 텍스트를 입력하는 요소(textarea, checkbox/radio/file이 아닌 input)는 input 이벤트에 연결한다
+    if (eventType === "change" && isTextEntry(el)) eventType = "input";
+    updateListener(el, eventType, name, value);
     return;
   }
 
@@ -435,31 +473,64 @@ export function removeProp(el, name, oldValue) {
  *       "지금 실행할 핸들러"는 listenerStore에 저장해 두고 교체만 한다.
  *       → 핸들러가 바뀔 때 add/remove를 반복할 필요가 없고, 중복 등록이 원천적으로 불가능하다.
  */
-function updateListener(el, eventType, handler) {
+function updateListener(el, eventType, propName, handler) {
   // 이 요소의 핸들러 목록. 처음이면 빈 객체를 만들어 저장한다
   let handlers = listenerStore.get(el);
   if (!handlers) {
     handlers = {};
     listenerStore.set(el, handlers);
   }
+  // 이 이벤트 종류의 핸들러 묶음 (prop 이름 → 함수)
+  const group = handlers[eventType] ?? (handlers[eventType] = {});
 
   if (typeof handler === "function") {
     // 이 이벤트 종류를 처음 등록하는 경우에만 실제 리스너(runLatestHandler)를 붙인다
-    if (!handlers[eventType]) el.addEventListener(eventType, runLatestHandler);
+    if (Object.keys(group).length === 0) el.addEventListener(eventType, runLatestHandler);
     // 실행할 핸들러는 항상 최신 것으로 교체
-    handlers[eventType] = handler;
-  } else if (handlers[eventType]) {
-    // 값이 함수가 아니면(없어졌으면) 실제 리스너를 떼고 목록에서도 지운다
-    el.removeEventListener(eventType, runLatestHandler);
-    delete handlers[eventType];
+    group[propName] = handler;
+  } else if (propName in group) {
+    // 값이 함수가 아니면(없어졌으면) 목록에서 지우고, 이 이벤트 종류에 남은 핸들러가 없으면 실제 리스너도 뗀다
+    delete group[propName];
+    if (Object.keys(group).length === 0) {
+      el.removeEventListener(eventType, runLatestHandler);
+      delete handlers[eventType];
+    }
   }
 }
 
-// 모든 요소가 공유하는 "진짜" 이벤트 리스너. 이벤트가 오면 그 요소에 저장된 최신 핸들러를 찾아 실행한다
+// 모든 요소가 공유하는 "진짜" 이벤트 리스너. 이벤트가 오면 그 요소에 저장된 최신 핸들러들을 찾아 실행한다
 // event.currentTarget = 지금 이 리스너가 붙어 있는 요소, event.type = "click" 같은 이벤트 이름
 function runLatestHandler(event) {
-  const handler = listenerStore.get(event.currentTarget)?.[event.type];
-  if (handler) return handler(event);
+  const group = listenerStore.get(event.currentTarget)?.[event.type];
+  if (!group) return;
+  for (const handler of Object.values(group)) handler(event);
+}
+
+// 글자를 입력하는 요소인지 (onChange를 input 이벤트로 연결할 대상)
+function isTextEntry(el) {
+  if (el.tagName === "TEXTAREA") return true;
+  return el.tagName === "INPUT" && !["checkbox", "radio", "file"].includes(el.type);
+}
+
+// ref 연결을 끊는다. 객체 ref는 아직 이 요소를 가리킬 때만 null로 (그사이 다른 요소가 같은 ref를 받았을 수 있으므로)
+function detachRef(ref, el) {
+  if (typeof ref === "function") ref(null);
+  else if (ref.current === el) ref.current = null;
+}
+
+/**
+ * ■ clearRefs : 화면에서 빠지는 노드(와 그 자손)에 연결된 ref를 null로 되돌린다
+ * patch가 노드를 지우거나(REMOVE) 갈아 끼우기(REPLACE) 직전에 부른다. (지운 요소를 ref가 계속 붙잡고 있지 않게)
+ */
+export function clearRefs(node) {
+  if (node.nodeType !== Node.ELEMENT_NODE) return;
+  for (const el of [node, ...node.querySelectorAll("*")]) {
+    const ref = refStore.get(el);
+    if (ref) {
+      detachRef(ref, el);
+      refStore.delete(el);
+    }
+  }
 }
 
 /**
@@ -507,5 +578,6 @@ function clearStyle(el) {
 // 스타일 한 개를 적용. CSS 변수(--gap)는 el.style.xxx 로 쓸 수 없어서 setProperty를 써야 한다
 function setStyleValue(el, key, value) {
   if (key.startsWith("--")) el.style.setProperty(key, value);
-  else el.style[key] = value;
+  // 숫자는 px를 붙인다 (단위 없는 속성과 0은 그대로). 숫자만 넣으면 브라우저가 무시한다 (el.style.width = 100 → 적용 안 됨)
+  else el.style[key] = typeof value === "number" && value !== 0 && !UNITLESS_STYLES.has(key) ? `${value}px` : value;
 }

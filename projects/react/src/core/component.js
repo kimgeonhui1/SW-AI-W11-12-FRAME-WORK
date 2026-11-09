@@ -162,13 +162,20 @@ function expand(node) {
   if (Array.isArray(node)) return node.map(expand);
   if (node === null || typeof node !== "object") return node;
   if (typeof node.type === "function") {
+    // key는 컴포넌트에게 주는 값이 아니라 diff가 짝짓는 표시다 (React도 props.key로 넘기지 않는다)
+    const { key, ...props } = node.props;
     childDepth++;
+    let out;
     try {
       // children도 props.children으로 넘긴다 (React와 같은 방식)
-      return expand(node.type({ ...node.props, children: node.children }));
+      out = expand(node.type({ ...props, children: node.children }));
     } finally {
       childDepth--;
     }
+    // h(TodoItem, { key }) 의 key를 컴포넌트가 돌려준 요소에 옮겨 붙인다. diff는 요소만 보므로 여기 있어야 짝지어진다
+    const isElement = out !== null && typeof out === "object" && !Array.isArray(out);
+    if (key != null && isElement && out.props.key == null) out = { ...out, props: { ...out.props, key } };
+    return out;
   }
   return h(node.type, node.props, ...node.children.map(expand));
 }

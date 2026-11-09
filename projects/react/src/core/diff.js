@@ -11,12 +11,18 @@
  *   { type: "UPDATE",  props, children }  → 같은 태그. 속성 변경 목록 + 자식별 패치 배열
  *       props    : [{ name, value, oldValue }, ...]  (value가 undefined면 "속성 삭제")
  *       children : [자식0 패치, 자식1 패치, ...]     (인덱스 = 이전 VDOM의 자식 위치, 바뀐 게 없으면 null)
+ *   { type: "UPDATE",  props, children, order, removed }  → 자식에 key가 있을 때 (아래 "key 모드")
+ *       order    : [새 0번 자식이 이전 몇 번째였는지, ...]  (-1 = 새로 생긴 자식)
+ *       children : [새 0번 자식의 패치, ...]               (인덱스 = "새" VDOM의 자식 위치. 새로 생긴 자식은 CREATE)
+ *       removed  : [더 이상 없는 이전 자식의 인덱스, ...]
  *
  * 왜 트리 모양인가?
  *   patch가 실제 DOM을 "같은 인덱스로" 따라 내려가기만 하면 되어서, 노드 경로(예: [0, 2, 1])를 따로 계산할 필요가 없다.
  *
- * [의도된 한계] key를 쓰지 않고 "같은 위치(인덱스)끼리" 비교한다.
- *   리스트 맨 앞에 항목을 끼우면 뒤의 항목들이 전부 한 칸씩 밀려 UPDATE로 잡힌다. 결과 화면은 맞지만 변경이 많아진다.
+ * key가 없으면 "같은 위치(인덱스)끼리" 비교한다.
+ *   리스트 맨 앞에 항목을 끼우면 뒤의 항목들이 전부 한 칸씩 밀려 UPDATE로 잡힌다. 결과 화면은 맞지만,
+ *   DOM 노드는 자리를 지키고 "내용만" 바뀌므로 포커스·입력 중인 값처럼 노드에 붙은 상태가 다른 항목으로 넘어간다.
+ * 자식에 key(h("li", { key: id }))가 있으면 "같은 key끼리" 비교하고, 노드를 지우지 않고 자리만 옮긴다. (실제 React와 같은 방식)
  */
 export function diff(oldVNode, newVNode) {
   // 1) 이전엔 없고 이번엔 있음 → 새로 만들기
@@ -43,7 +49,9 @@ export function diff(oldVNode, newVNode) {
 
   // 5) 같은 태그 → 요소는 그대로 두고 속성과 자식만 비교한다
   const props = diffProps(oldVNode.props ?? {}, newVNode.props ?? {});
-  const children = diffChildren(oldVNode.children ?? [], newVNode.children ?? []);
+  const { children, order, removed } = diffChildren(oldVNode.children ?? [], newVNode.children ?? []);
+  // key 모드에서 순서가 바뀌었거나 빠진 자식이 있으면, 자식별 패치가 전부 null이어도 "자식이 바뀐 것"이다
+  const reordered = order !== undefined && (removed.length > 0 || order.some((oldIndex, i) => oldIndex !== i));
 
   // <select>/<textarea>는 자식이 바뀌면 value prop이 그대로여도 화면 값이 어긋난다.
   //   - select  : 선택돼 있던 option의 value가 바뀌면 select의 값도 따라 바뀐다
@@ -55,7 +63,7 @@ export function diff(oldVNode, newVNode) {
   // select는 multiple이 바뀔 때도 맞춘다. 단일 ↔ 다중 전환 시 브라우저가 남기는 선택이 새로 그린 것과 다르기 때문이다.
   // (이미 value가 바뀌어 diffProps가 넣었다면 새로 만들지 않는다 → 중복 없음)
   const newProps = newVNode.props ?? {};
-  const childChanged = children.some((c) => c !== null);
+  const childChanged = reordered || children.some((c) => c !== null);
   const multipleChanged = props.some((p) => p.name === "multiple");
   const resyncValue =
     (newVNode.type === "textarea" && childChanged) || (newVNode.type === "select" && (childChanged || multipleChanged));
@@ -68,8 +76,8 @@ export function diff(oldVNode, newVNode) {
   if (valueIndex !== -1) props.push(props.splice(valueIndex, 1)[0]);
 
   // 속성도 그대로고 자식도 전부 null이면 이 노드는 아무것도 안 바뀐 것 → null로 알려서 patch가 건너뛰게 한다
-  if (props.length === 0 && children.every((c) => c === null)) return null;
-  return { type: "UPDATE", props, children };
+  if (props.length === 0 && !childChanged) return null;
+  return order === undefined ? { type: "UPDATE", props, children } : { type: "UPDATE", props, children, order, removed };
 }
 
 /**
@@ -80,11 +88,13 @@ function diffProps(oldProps, newProps) {
   const changes = [];
   // 새 props 기준: 값이 달라졌거나 새로 생긴 속성
   for (const [name, value] of Object.entries(newProps)) {
+    // key는 짝짓기용 표시일 뿐 DOM에 반영할 속성이 아니다
+    if (name === "key") continue;
     if (!sameValue(oldProps[name], value)) changes.push({ name, value, oldValue: oldProps[name] });
   }
   // 이전 props 기준: 이번엔 없는 속성 → value: undefined (= 삭제)
   for (const name of Object.keys(oldProps)) {
-    if (!(name in newProps)) changes.push({ name, value: undefined, oldValue: oldProps[name] });
+    if (name !== "key" && !(name in newProps)) changes.push({ name, value: undefined, oldValue: oldProps[name] });
   }
   return changes;
 }
@@ -109,10 +119,56 @@ function sameValue(a, b) {
  * (그래서 CREATE는 끝에만, REMOVE도 끝에만 생긴다. patch는 이 성질 덕분에 CREATE를 appendChild로 처리할 수 있다)
  */
 function diffChildren(oldChildren, newChildren) {
+  if (oldChildren.some(hasKey) || newChildren.some(hasKey)) return diffKeyedChildren(oldChildren, newChildren);
   const length = Math.max(oldChildren.length, newChildren.length);
   const patches = [];
   for (let i = 0; i < length; i++) {
     patches.push(diff(oldChildren[i], newChildren[i]));
   }
-  return patches;
+  return { children: patches };
+}
+
+// key가 있는 요소인지 (텍스트는 key를 가질 수 없다)
+function hasKey(child) {
+  return typeof child !== "string" && child.props?.key != null;
+}
+// 짝짓기에 쓸 이름. key가 없는 자식(텍스트 등)은 "몇 번째인지"를 이름으로 쓴다 → key 없는 자식끼리는 지금처럼 위치로 짝지어진다
+// (k:/i: 접두어로 key "0"과 위치 0이 섞이지 않게 한다)
+function matchKey(child, index) {
+  return hasKey(child) ? `k:${child.props.key}` : `i:${index}`;
+}
+
+/**
+ * key 모드 자식 비교: 새 자식마다 "같은 이름의 이전 자식"을 찾아 그것과 diff한다.
+ *   - 찾았으면: 이전 노드를 재사용 (order에 이전 위치, children에 그 노드에 대한 패치)
+ *   - 없으면  : 새로 만든다 (order에 -1, children에 CREATE)
+ *   - 이전 자식 중 아무도 안 가져간 것: removed (patch가 지운다)
+ * 같은 key가 두 번 나오면 두 번째는 짝이 없는 것으로 보고 새로 만든다 (key는 형제 사이에서 유일해야 한다)
+ */
+function diffKeyedChildren(oldChildren, newChildren) {
+  // 이름 → 이전 위치. 짝지어지면 지워서 같은 이전 노드를 두 번 쓰지 않게 한다
+  const oldIndexByKey = new Map();
+  oldChildren.forEach((child, i) => {
+    const key = matchKey(child, i);
+    if (!oldIndexByKey.has(key)) oldIndexByKey.set(key, i);
+  });
+
+  const order = [];
+  const children = [];
+  newChildren.forEach((child, i) => {
+    const key = matchKey(child, i);
+    const oldIndex = oldIndexByKey.get(key);
+    if (oldIndex === undefined) {
+      order.push(-1);
+      children.push({ type: "CREATE", node: child });
+    } else {
+      oldIndexByKey.delete(key);
+      order.push(oldIndex);
+      children.push(diff(oldChildren[oldIndex], child));
+    }
+  });
+  // 아무도 안 가져간 이전 자식은 지운다. (Map에 남은 것만 보면 안 된다: 같은 key가 두 번 있던 이전 자식의 두 번째는 Map에 아예 없다)
+  const used = new Set(order);
+  const removed = oldChildren.map((_, i) => i).filter((i) => !used.has(i));
+  return { children, order, removed };
 }

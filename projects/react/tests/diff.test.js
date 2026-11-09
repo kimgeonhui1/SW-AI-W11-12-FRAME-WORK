@@ -299,7 +299,20 @@ const SAMPLES = [
   h("div", null, h("textarea", null, "init2")),
   h("div", null, "text", h("b", null, "bold"), "tail"),
   h("span", null, "x"),
+  // key 리스트 (보강): 삭제 / 순서 변경 / 앞 삽입 / key 없는 자식이 섞인 경우 / 텍스트가 섞인 경우
+  h("ul", null, keyed("a"), keyed("b"), keyed("c")),
+  h("ul", null, keyed("c"), keyed("a")),
+  h("ul", null, keyed("d"), keyed("b"), "텍스트", keyed("a", { value: "x" })),
+  h("ul", null, h("li", null, "키 없음"), keyed("a"), keyed("a")),
+  h("ul", null, keyed("b"), h("p", { key: "a" }, "태그가 다른 같은 key")),
+  // SVG (보강)
+  h("div", null, h("svg", { viewBox: "0 0 10 10" }, h("circle", { r: "1", fill: "red" }))),
+  h("div", null, h("svg", null, h("rect", { width: "2" }), h("foreignObject", null, h("p", null, "html")))),
 ];
+// key가 있는 li. value는 li의 value 속성(번호)이 아니라 구분용 title로 쓴다
+function keyed(key, { value } = {}) {
+  return h("li", { key, title: value ?? key }, key.toUpperCase());
+}
 
 // container 안의 현재 화면과 createElement(expected)가 같은지 비교. 다르면 어느 전환인지 알려 준다
 function assertSameAsFresh(container, expected, label) {
@@ -361,6 +374,75 @@ test("patch: null 패치는 아무것도 안 함", () => {
 // ======================================================================
 // 결과 출력
 // ======================================================================
+
+// ======================================================================
+// 보강: key / SVG / ref
+// ======================================================================
+
+// key 있는 리스트를 그리고, 이전→새로 patch한 뒤 [컨테이너, 이전 li 노드들]을 돌려준다
+function keyedPatch(oldKeys, newKeys) {
+  const list = (keys) => h("ul", null, ...keys.map((k) => h("li", { key: k }, k)));
+  const container = document.createElement("div");
+  container.appendChild(createElement(list(oldKeys)));
+  const before = [...container.firstChild.childNodes];
+  patch(container, diff(list(oldKeys), list(newKeys)));
+  assertEqual(domToVdom(container.firstChild), domToVdom(createElement(list(newKeys))), "patch 결과");
+  return [container, before];
+}
+
+test("key: 앞 항목 삭제 → 나머지 노드는 재사용되고 내용 변경 없음", () => {
+  const [c, [, b, cc]] = keyedPatch(["a", "b", "c"], ["b", "c"]);
+  const now = [...c.firstChild.childNodes];
+  assertEqual([now[0] === b, now[1] === cc], [true, true]);
+});
+
+test("key: 앞에 삽입 / 순서 뒤집기 → 기존 노드를 그대로 옮김", () => {
+  const [c1, [a, b]] = keyedPatch(["a", "b"], ["new", "a", "b"]);
+  const n1 = [...c1.firstChild.childNodes];
+  const [c2, [x, y, z]] = keyedPatch(["x", "y", "z"], ["z", "y", "x"]);
+  const n2 = [...c2.firstChild.childNodes];
+  assertEqual([n1[1] === a, n1[2] === b, n2[0] === z, n2[1] === y, n2[2] === x], [true, true, true, true, true]);
+});
+
+test("key: 노드에 붙은 상태(직접 입력한 값)가 항목을 따라감 (index 비교에서는 다른 항목에 남던 문제)", () => {
+  const list = (keys) => h("ul", null, ...keys.map((k) => h("li", { key: k }, h("input", null))));
+  const container = document.createElement("div");
+  container.appendChild(createElement(list(["a", "b"])));
+  container.querySelectorAll("input")[1].value = "b에 입력";
+  patch(container, diff(list(["a", "b"]), list(["b"])));
+  assertEqual(container.querySelector("input").value, "b에 입력");
+});
+
+test("key: 순서도 내용도 그대로면 null, key만 다르면(속성 변경 아님) 순서 패치", () => {
+  const list = (...keys) => h("ul", null, ...keys.map((k) => h("li", { key: k }, "x")));
+  assertEqual(diff(list("a", "b"), list("a", "b")), null);
+  const p = diff(list("a", "b"), list("b", "a"));
+  assertEqual([p.props, p.order, p.removed], [[], [1, 0], []]);
+});
+
+test("SVG: patch로 새로 만든 요소(CREATE / REPLACE / key 삽입)도 SVG 이름공간", () => {
+  const SVG = "http://www.w3.org/2000/svg";
+  const container = document.createElement("div");
+  const v1 = h("svg", null, h("rect"));
+  const v2 = h("svg", null, h("circle"), h("g", null, h("path", { key: "p" })), h("line"));
+  container.appendChild(createElement(v1));
+  patch(container, diff(v1, v2));
+  const names = [...container.firstChild.querySelectorAll("*")].map((el) => `${el.localName}:${el.namespaceURI === SVG}`);
+  assertEqual(names, ["circle:true", "g:true", "path:true", "line:true"]);
+});
+
+test("ref: REMOVE / REPLACE 되면 null, 같은 ref를 새 요소가 받으면 새 요소를 가리킴", () => {
+  const ref = { current: null };
+  const container = document.createElement("div");
+  const v1 = h("div", null, h("input", { ref }));
+  const v2 = h("div", null, h("textarea", { ref })); // 태그가 달라 REPLACE
+  const v3 = h("div", null);
+  container.appendChild(createElement(v1));
+  patch(container, diff(v1, v2));
+  const afterReplace = ref.current?.tagName;
+  patch(container, diff(v2, v3));
+  assertEqual([afterReplace, ref.current], ["TEXTAREA", null]);
+});
 
 const escape = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const passed = results.filter((r) => r.ok).length;

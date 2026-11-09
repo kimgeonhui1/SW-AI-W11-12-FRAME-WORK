@@ -2,7 +2,7 @@
 
 import { h } from "../../core/vdom.js";
 
-export function TodoForm({ text, onTextChange, onAdd }) {
+export function TodoForm({ text, inputRef, onTextChange, onAdd }) {
   return h(
     "form",
     {
@@ -14,7 +14,8 @@ export function TodoForm({ text, onTextChange, onAdd }) {
       },
     },
     // 제어 컴포넌트: 화면 값은 항상 App의 text State. 입력할 때마다 State를 바꿔 다시 그린다
-    h("input", { value: text, placeholder: "할 일을 입력하세요", onInput: (e) => onTextChange(e.target.value) }),
+    // onChange는 React처럼 글자마다 실행된다 (vdom.js가 텍스트 입력의 onChange를 input 이벤트에 연결)
+    h("input", { ref: inputRef, value: text, placeholder: "할 일을 입력하세요", onChange: (e) => onTextChange(e.target.value) }),
     h("button", { type: "submit", disabled: text.trim() === "" }, "추가")
   );
 }

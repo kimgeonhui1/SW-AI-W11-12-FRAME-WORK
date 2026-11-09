@@ -1,7 +1,7 @@
 // [App.js] 루트 컴포넌트 — 앱의 모든 상태(State)를 가지고 자식에게 props로 전달
 
 import { h } from "../core/vdom.js";
-import { useState, useEffect, useMemo } from "../core/hooks.js";
+import { useState, useEffect, useMemo, useRef } from "../core/hooks.js";
 import { TodoForm } from "./components/TodoForm.js";
 import { TodoList } from "./components/TodoList.js";
 import { FilterBar } from "./components/FilterBar.js";
@@ -26,6 +26,8 @@ export function App() {
   const [todos, setTodos] = useState(loadTodos); // 함수를 넘겨서 localStorage는 첫 렌더링에만 읽는다
   const [text, setText] = useState("");
   const [filter, setFilter] = useState("all");
+  // 입력창 DOM 요소. "추가" 버튼을 클릭하면 포커스가 버튼으로 가므로, 추가 후 입력창으로 되돌리는 데 쓴다
+  const inputRef = useRef(null);
 
   // 개수와 필터링 결과는 todos/filter가 바뀔 때만 다시 계산한다 (입력창에 타이핑할 때는 재사용)
   const counts = useMemo(() => {
@@ -55,6 +57,7 @@ export function App() {
     if (value === "") return;
     setTodos((prev) => [...prev, { id: Date.now(), text: value, done: false }]);
     setText(""); // 두 setState가 Batching되어 렌더링은 1번
+    inputRef.current?.focus();
   };
   const toggleTodo = (id) => setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
   const removeTodo = (id) => setTodos((prev) => prev.filter((t) => t.id !== id));
@@ -64,7 +67,7 @@ export function App() {
     "main",
     { className: "todo-app" },
     h("h1", null, "할 일 목록"),
-    h(TodoForm, { text, onTextChange: setText, onAdd: addTodo }),
+    h(TodoForm, { text, inputRef, onTextChange: setText, onAdd: addTodo }),
     h(FilterBar, { filter, counts, onFilterChange: setFilter, onClearDone: clearDone }),
     h(TodoList, { todos: visible, onToggle: toggleTodo, onRemove: removeTodo })
   );

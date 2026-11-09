@@ -54,6 +54,14 @@ export function useEffect(callback, deps) {
   component.pendingEffects.push({ hook, callback, deps });
 }
 
+// 렌더링마다 "같은 { current } 객체"를 돌려준다. current를 바꿔도 다시 그리지 않는다
+// 쓰임: h("input", { ref }) 로 실제 DOM 요소 잡기, 타이머 id처럼 화면과 상관없는 값 보관
+export function useRef(initial) {
+  const [component, i] = nextHook();
+  if (!(i in component.hooks)) component.hooks[i] = { current: initial };
+  return component.hooks[i];
+}
+
 // 계산 결과 저장, 의존성이 그대로면 재사용
 export function useMemo(factory, deps) {
   const [component, i] = nextHook();

@@ -2,7 +2,7 @@
 
 import { h } from "../src/core/vdom.js";
 import { FunctionComponent } from "../src/core/component.js";
-import { useState, useEffect, useMemo } from "../src/core/hooks.js";
+import { useState, useEffect, useMemo, useRef } from "../src/core/hooks.js";
 
 const results = [];
 const tests = [];
@@ -335,6 +335,37 @@ test("useMemo: deps가 같으면 다시 계산하지 않고, 바뀌면 다시 �
   setN(3);
   await tick();
   assertEqual([c.textContent, calls], ["9/1", 2]);
+});
+
+test("자식 컴포넌트의 key: h(Item, { key })의 key는 결과 요소로 옮겨지고, 컴포넌트 props에는 안 들어감", () => {
+  let seenKey = "없음";
+  const Item = (props) => {
+    if ("key" in props) seenKey = props.key;
+    return h("li", null, props.text);
+  };
+  const [, inst] = mount(() => h("ul", null, h(Item, { key: "a", text: "A" })));
+  assertEqual([inst.vdom.children[0].props.key, seenKey], ["a", "없음"]);
+});
+
+// ── useRef ──
+
+test("useRef: 렌더링마다 같은 객체, current를 바꿔도 다시 렌더링 안 함, ref prop으로 DOM 요소 받기", async () => {
+  const refs = [];
+  let renders = 0;
+  let setN;
+  const [c] = mount(() => {
+    renders++;
+    const [n, set] = useState(0);
+    setN = set;
+    const inputRef = useRef(null);
+    const counter = useRef(0);
+    refs.push(inputRef);
+    counter.current++; // 화면과 상관없는 값 보관
+    return h("div", null, h("input", { ref: inputRef }), String(n));
+  });
+  setN(1);
+  await tick();
+  assertEqual([refs[0] === refs[1], refs[0].current === c.querySelector("input"), renders], [true, true, 2]);
 });
 
 // ── 제약 / 제어 컴포넌트 ──
