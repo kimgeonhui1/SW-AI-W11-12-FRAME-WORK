@@ -28,18 +28,20 @@
   <script type="module">
     // 테스트 파일을 불러오면 describe/test 가 등록되고, run() 이 차례로 실행한다.
     import { run } from "./runner.js";
-    // 테스트 항목 #001 ~ #315 (번호 순서)
+    // 테스트 항목 #001 ~ #357 (번호 순서)
     import "./cases-vdom.test.js"; //          #001~#080 h · DOM→VDOM · VDOM→DOM
     import "./cases-diff-patch.test.js"; //    #081~#170 Diff · Patch · Props
     import "./cases-history-html.test.js"; //  #171~#230 History · Serialize
     import "./cases-random.test.js"; //        #256~#290 랜덤 · 대량
     import "./cases-security.test.js"; //      #291~#315 안정성 · 보안
     import "./cases-invalid.test.js"; //       잘못된 VNode · Patch 입력
+    import "./cases-all-tags.test.js"; //      모든 HTML 태그 112개 (Phase 1 · Phase 2)
     // Phase 2: Component · State · Hooks
     import "./component.test.js";
     import "./hooks.test.js";
     // iframe 으로 실제 페이지를 여는 테스트는 시간이 걸려 맨 마지막
     import "./cases-page.test.js"; //          #231~#255 페이지 초기화 · 이벤트
+    import "./cases-examples.test.js"; //      #316~#357 Phase 1 예시 변경 버튼 · 테스트 카드
     import "./app.test.js"; //                 Phase 2 페이지 (app.html)
 
     const summary = document.getElementById("summary");

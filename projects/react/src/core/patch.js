@@ -1,6 +1,6 @@
 // [patch.js] Diff 결과(변경 목록)를 실제 DOM에 반영
 
-import { createElement, setProp, vdomChildNodes } from "./vdom.js";
+import { createElement, setProp, vdomChildNodes, childHost } from "./vdom.js";
 import { PATCH } from "./diff.js";
 
 /**
@@ -76,7 +76,7 @@ function applyOne({ patch: p, target, node }) {
   switch (p.type) {
     case PATCH.CREATE:
       // target = 부모 요소. diff 는 새 자식을 인덱스 오름차순으로 내보내므로 끝에 차례로 붙이면 원하는 위치가 된다.
-      target.appendChild(node);
+      childHost(target).appendChild(node); // 부모가 <template> 이면 content 에
       return node;
     case PATCH.REMOVE:
       target.remove();
@@ -114,8 +114,8 @@ function resolvePath(container, path, cache) {
   for (const index of path) {
     let children = cache.get(node);
     if (!children) {
-      // <template> 은 내용이 content 안에 있다 (domToVdom 과 같은 규칙)
-      children = vdomChildNodes(node.tagName === "TEMPLATE" ? node.content : node);
+      // <template> 은 내용이 content 안에 있다 (domToVdom 과 같은 규칙 — childHost)
+      children = vdomChildNodes(childHost(node));
       cache.set(node, children);
     }
     node = children[index];

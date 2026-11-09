@@ -8,13 +8,19 @@
   <link rel="stylesheet" href="./src/styles/style.css" />
 </head>
 <body class="phase1">
-  <header class="page-header">
-    <h1>Phase 1 · Virtual DOM / Diff / Patch</h1>
-    <p>
-      오른쪽 <strong>테스트 영역</strong>을 고친 뒤 <strong>Patch</strong>를 누르면,
-      Diff로 찾은 변경점만 왼쪽 <strong>실제 영역</strong>에 반영됩니다.
-      바뀐 노드는 잠깐 강조됩니다.
-    </p>
+  <!-- 머리말: app.html 과 같은 모양 (style.css 의 .site-*) -->
+  <header class="site-header">
+    <div>
+      <h1 class="site-eyebrow">Mini React · Phase 1</h1>
+      <p class="site-desc">Virtual DOM · Diff · Patch.
+        오른쪽 <strong>테스트 영역</strong>을 고친 뒤 <strong>Patch</strong>를 누르면,
+        Diff로 찾은 변경점만 왼쪽 <strong>실제 영역</strong>에 반영됩니다. 바뀐 노드는 잠깐 강조됩니다.</p>
+    </div>
+    <!-- 두 페이지 공용 이동 메뉴: 지금 페이지에 aria-current="page" -->
+    <nav class="site-nav" aria-label="페이지 이동">
+      <a href="./index.html" aria-current="page">Phase 1 · Diff / Patch</a>
+      <a href="./app.html">Phase 2 · Hooks 앱</a>
+    </nav>
   </header>
 
   <main>
@@ -40,6 +46,77 @@
             </ul>
             <p class="note" style="font-size: 0.9em;">테스트 영역에서 자유롭게 고쳐 보세요.</p>
           </section>
+          <!--
+            테스트 카드: 버튼 · 입력 · 선택 · 표 · 접기 · 대화상자 · 측정 · 글자 꾸미기 요소를 한곳에.
+            - id 는 쓰지 않는다 (실제 영역과 테스트 영역에 똑같이 그려지므로 id 가 겹친다). label 은 감싸는 방식.
+            - <form> 으로 감싼 이유: 라디오 묶음(name="size")이 영역마다 따로 동작하도록 (폼이 다르면 다른 묶음).
+            - 제출 버튼을 눌러도 페이지가 이동하지 않게 main.js 가 두 영역의 submit 을 막는다.
+            - 예시 버튼(제목 · 부제 · 목록 …)은 querySelector 로 "처음 나오는" 요소를 고치므로, 이 모음은 위 카드 뒤에 둔다.
+          -->
+          <section class="showcase" data-id="html">
+            <h2>테스트</h2>
+            <form class="demo-form">
+              <fieldset>
+                <legend>입력 요소 (fieldset · legend · label)</legend>
+                <label>글자 <input type="text" name="name" value="홍길동" placeholder="이름"></label>
+                <label>이메일 <input type="email" name="email" value="mini@react.dev"></label>
+                <label>비밀번호 <input type="password" name="pw" value="1234"></label>
+                <label>숫자 <input type="number" name="count" value="3" min="0" max="10"></label>
+                <label>범위 <input type="range" name="level" value="60" min="0" max="100"></label>
+                <label>색 <input type="color" name="color" value="#2563eb"></label>
+                <label>날짜 <input type="date" name="date" value="2026-11-09"></label>
+                <label><input type="checkbox" name="agree" checked> 체크박스</label>
+                <label><input type="radio" name="size" value="s"> 라디오 작게</label>
+                <label><input type="radio" name="size" value="m" checked> 라디오 보통</label>
+                <label>선택 <select name="fruit"><optgroup label="빨강"><option value="apple" selected>사과</option><option value="cherry">체리</option></optgroup><optgroup label="노랑"><option value="banana">바나나</option></optgroup></select></label>
+                <label>여러 줄 <textarea name="memo" rows="2">textarea 내용</textarea></label>
+              </fieldset>
+              <p class="demo-row">
+                <button type="button">일반 버튼</button>
+                <button type="submit">제출 버튼</button>
+                <button type="reset">초기화 버튼</button>
+                <button type="button" disabled>꺼진 버튼</button>
+                <input type="button" value="input 버튼">
+              </p>
+            </form>
+            <details>
+              <summary>펼치기 (details · summary)</summary>
+              <p>접혀 있던 내용입니다.</p>
+            </details>
+            <dialog open>
+              <p>열린 대화상자 (dialog open)</p>
+            </dialog>
+            <p class="demo-row">진행률 <progress value="60" max="100">60%</progress> 측정값 <meter value="3" min="0" max="10" low="3" high="7" optimum="5">3</meter> 결과 <output>42</output></p>
+            <table>
+              <caption>표 (table · caption)</caption>
+              <thead>
+                <tr><th>태그</th><th>설명</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>button</td><td>누르는 버튼</td></tr>
+                <tr><td>input</td><td>입력 칸</td></tr>
+              </tbody>
+              <tfoot>
+                <tr><td colspan="2">합계 2개</td></tr>
+              </tfoot>
+            </table>
+            <ol>
+              <li>순서 있는 목록 (ol)</li>
+              <li>두 번째</li>
+            </ol>
+            <dl>
+              <dt>dl · dt</dt>
+              <dd>설명 목록 (dd)</dd>
+            </dl>
+            <blockquote cite="https://html.spec.whatwg.org/">인용 블록 — <q>짧은 인용</q> <cite>HTML 표준</cite></blockquote>
+            <p><abbr title="HyperText Markup Language">HTML</abbr> · <kbd>Ctrl</kbd>+<kbd>C</kbd> · H<sub>2</sub>O · x<sup>2</sup> · <mark>형광펜</mark> · <del>지운 글</del> <ins>넣은 글</ins> · <small>작은 글</small> · <s>취소선</s> · <u>밑줄</u> · <b>b</b> · <i>i</i> · <time datetime="2026-11-09">2026년 11월 9일</time><br>줄바꿈(br) 뒤 아주긴<wbr>단어</p>
+            <figure>
+              <figcaption>그림 설명 (figure · figcaption)</figcaption>
+              <pre>pre 안의   공백은   그대로</pre>
+            </figure>
+            <hr>
+            <address>주소 요소 (address)</address>
+          </section>
         </div>
       </section>
 
@@ -61,6 +138,12 @@
       <span id="position-label" class="position">현재 위치: - / -</span>
       <span id="status" class="status" role="status" aria-live="polite"></span>
     </div>
+
+    <!-- ②-1 예시 변경: 누르면 테스트 영역을 고치고 바로 Patch (버튼은 main.js 의 EXAMPLES 로 그린다) -->
+    <section class="panel" aria-labelledby="examples-title">
+      <h2 id="examples-title" class="panel-title">예시 변경 <small>(누르면 테스트 영역을 고치고 바로 Patch · 작은 글씨는 나올 패치)</small></h2>
+      <div id="examples" class="examples" role="group" aria-labelledby="examples-title"></div>
+    </section>
 
     <!-- ③ State History / 마지막 Diff 결과 -->
     <div class="grid">

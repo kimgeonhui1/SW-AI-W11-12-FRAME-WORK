@@ -8,13 +8,18 @@
   <link rel="stylesheet" href="./src/styles/style.css" />
 </head>
 <body class="phase2">
-  <header class="p2-header">
+  <!-- 머리말: index.html 과 같은 모양 (style.css 의 .site-*). 제목(h1)은 App 의 Header 컴포넌트가 그린다 -->
+  <header class="site-header">
     <div>
-      <p class="p2-eyebrow">Mini React · Phase 2</p>
-      <p class="p2-desc">함수형 컴포넌트 + <code>useState</code> · <code>useEffect</code> · <code>useMemo</code>.
+      <p class="site-eyebrow">Mini React · Phase 2</p>
+      <p class="site-desc">함수형 컴포넌트 + <code>useState</code> · <code>useEffect</code> · <code>useMemo</code>.
         상태가 바뀌면 새 Virtual DOM → Diff → Patch로 바뀐 노드만 실제 DOM에 반영합니다.</p>
     </div>
-    <a class="p2-link" href="./index.html">Phase 1 (Diff · Patch 검증) →</a>
+    <!-- 두 페이지 공용 이동 메뉴: 지금 페이지에 aria-current="page" -->
+    <nav class="site-nav" aria-label="페이지 이동">
+      <a href="./index.html">Phase 1 · Diff / Patch</a>
+      <a href="./app.html" aria-current="page">Phase 2 · Hooks 앱</a>
+    </nav>
   </header>
   <main class="p2-layout">
     <!-- App(루트 컴포넌트)이 그려지는 곳 -->

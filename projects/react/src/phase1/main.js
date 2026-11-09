@@ -27,7 +27,7 @@
  * 파일 구성
  *   1. VDOM → HTML 문자열 변환 (소스 편집기용. toHtml 은 테스트에서도 쓰도록 export)
  *   2. 화면: 필수 요소 검사 · 렌더링 · 강조 · 로그
- *   3. 버튼 동작
+ *   3. 버튼 동작 (+ 예시 변경 버튼: 테스트 영역을 미리 정한 방식으로 고친 뒤 바로 Patch)
  *   4. 시작 — 필수 요소가 모두 있는 페이지(index.html)에서만 실행
  * ─────────────────────────────────────────────────────────────────────
  */
@@ -157,6 +157,7 @@ const [positionLabel, statusEl, historyList, patchLog, logSummary, vdomJson] =
   ["position-label", "status", "history-list", "patch-log", "log-summary", "vdom-json"].map($);
 
 let patchCounter = 0; // "Patch #n" 라벨 번호
+let initialVdom = null; // 페이지를 처음 열었을 때의 VDOM ("처음 상태로" 예시가 쓴다)
 
 /**
  * 테스트 영역을 VDOM 으로 통째로 다시 그리고, 소스 편집기 내용도 맞춘다.
@@ -258,8 +259,11 @@ function renderHistoryUI() {
 // History 의 VDOM 은 저장될 때 diff 검사를 통과했으므로 diff 에 trustOld 를 주고,
 // 읽기만 하므로 복사 없는 history.peek() 을 쓴다 (최적화).
 
-/** [Patch] 테스트 영역의 변경 사항을 실제 영역에 반영하고 History 에 저장한다 */
-function onPatch() {
+/**
+ * [Patch] 테스트 영역의 변경 사항을 실제 영역에 반영하고 History 에 저장한다
+ * @param {string} [source] 어디서 온 Patch 인지 (예시 버튼 이름). History 라벨 뒤에 붙는다
+ */
+function onPatch(source) {
   const newVdom = containerToVdom(testArea); //                    사용자가 편집한 상태
   const patches = diff(history.peek(), newVdom, { trustOld: true }); // 지금 실제 영역에 그려진 상태와 비교
   renderPatchLog(patches, "Patch");
@@ -275,9 +279,213 @@ function onPatch() {
     return reportPatchError(err);
   }
   highlight(touched);
-  history.push(newVdom, { patchCount: patches.length, label: `Patch #${++patchCounter}` });
+  history.push(newVdom, { patchCount: patches.length, label: `Patch #${++patchCounter}${source ? ` · ${source}` : ""}` });
   renderHistoryUI();
   reportResult(`패치 ${patches.length}개 적용`);
+}
+
+// ── 3-1. 예시 변경 버튼 ─────────────────────────────────────────────
+// 버튼 하나 = "테스트 영역을 이렇게 고친다" 하나. 누르면 고친 뒤 바로 Patch 해서
+// 어떤 패치(TEXT · PROPS · CREATE · REMOVE · REPLACE)가 나오는지 로그와 강조로 보여 준다.
+// 대부분 다시 누르면 원래대로 돌아가는 토글이라 여러 번 눌러도 매번 변경이 생긴다.
+// edit(area, initial) 은 테스트 영역 DOM 을 직접 고치고, 고칠 대상이 없으면 false 를 돌려준다.
+
+/** 부제 색 바꾸기 예시가 차례로 돌리는 색 */
+const COLORS = ["#7c3aed", "#dc2626", "#059669"];
+
+/** area 와 같은 문서에서 글자를 가진 요소를 만든다 (테스트의 iframe 안에서도 맞는 문서를 쓰도록) */
+const make = (area, tag, text = "") => Object.assign(area.ownerDocument.createElement(tag), { textContent: text });
+
+/** 목록의 data-count 를 실제 항목 수와 맞춘다 (항목 추가 · 삭제 때 PROPS 패치가 함께 생긴다) */
+function syncCount(ul) {
+  if (ul.hasAttribute("data-count")) ul.setAttribute("data-count", String(ul.children.length));
+}
+
+/** 각 예시가 테스트 영역을 고치는 방법 (EXAMPLES 와 "여러 곳 한꺼번에" 가 함께 쓴다) */
+const edits = {
+  // TEXT: 글자 노드의 값만 바뀐다
+  title(area) {
+    const h1 = area.querySelector("h1");
+    if (!h1) return false;
+    h1.textContent = h1.textContent.endsWith(" ✓") ? h1.textContent.slice(0, -2) : `${h1.textContent} ✓`;
+  },
+  // PROPS(설정): style 속성 값만 바뀐다
+  color(area) {
+    const h2 = area.querySelector("h2");
+    if (!h2) return false;
+    const now = COLORS.findIndex((c) => (h2.getAttribute("style") ?? "").includes(c)); // 못 찾으면 -1 → 첫 색
+    h2.setAttribute("style", `color: ${COLORS[(now + 1) % COLORS.length]};`);
+  },
+  // PROPS(설정 ↔ 삭제): 속성이 생겼다 없어졌다 한다
+  tooltip(area) {
+    const h1 = area.querySelector("h1");
+    if (!h1) return false;
+    if (h1.hasAttribute("title")) h1.removeAttribute("title");
+    else h1.setAttribute("title", "마우스를 올리면 보이는 설명");
+  },
+  // PROPS × 여러 개: 항목마다 data-done 이 뒤집힌다
+  flipDone(area) {
+    const items = area.querySelectorAll("li[data-done]");
+    if (items.length === 0) return false;
+    for (const li of items) li.setAttribute("data-done", String(li.getAttribute("data-done") !== "true"));
+  },
+  // CREATE: 목록 끝에 새 자식 (+ data-count PROPS)
+  addItem(area) {
+    const ul = area.querySelector("ul, ol");
+    if (!ul) return false;
+    const li = make(area, "li", `새 항목 ${ul.children.length + 1}`);
+    li.setAttribute("data-done", "false");
+    ul.append(li);
+    syncCount(ul);
+  },
+  // PROPS(불리언 속성): 체크박스의 checked 를 넣었다 뺐다 → 실제 영역의 체크도 따라 바뀐다
+  checkbox(area) {
+    const box = area.querySelector('input[type="checkbox"]');
+    if (!box) return false;
+    box.toggleAttribute("checked");
+  },
+  // PROPS(불리언 속성): <details> 의 open → 실제 영역의 접기 상자가 열렸다 닫혔다
+  details(area) {
+    const box = area.querySelector("details");
+    if (!box) return false;
+    box.toggleAttribute("open");
+  },
+  // PROPS(불리언 속성): 첫 번째 <button> 의 disabled
+  disable(area) {
+    const btn = area.querySelector("button");
+    if (!btn) return false;
+    btn.toggleAttribute("disabled");
+  },
+  // PROPS(값): 글자 입력 칸의 value 속성 (patch 가 화면에 보이는 값도 함께 맞춘다)
+  inputValue(area) {
+    const input = area.querySelector('input[type="text"]');
+    if (!input) return false;
+    input.setAttribute("value", input.getAttribute("value") === "홍길동" ? "김철수" : "홍길동");
+  },
+  // REMOVE: 목록 마지막 자식 (+ data-count PROPS)
+  removeLast(area) {
+    const li = area.querySelector("li:last-child");
+    if (!li) return false;
+    const ul = li.parentElement;
+    li.remove();
+    syncCount(ul);
+  },
+  // key 없는 비교의 한계: 맨 앞을 지우면 뒤 항목들이 한 칸씩 "바뀐 것" 으로 나오고 마지막만 REMOVE
+  removeFirst(area) {
+    const li = area.querySelector("li");
+    if (!li) return false;
+    const ul = li.parentElement;
+    li.remove();
+    syncCount(ul);
+  },
+  // 순서만 바뀜: 같은 자리끼리 비교하므로 TEXT · PROPS 패치들로 나온다
+  reverse(area) {
+    const ul = area.querySelector("ul, ol");
+    if (!ul || ul.children.length < 2) return false;
+    ul.append(...[...ul.children].reverse()); // append 는 이미 있는 노드를 옮긴다
+  },
+  // REPLACE: 태그 이름이 다르면 그 노드를 통째로 바꾼다 (자식 · 속성은 그대로 옮김)
+  swapTag(area) {
+    const old = area.querySelector("em, i");
+    if (!old) return false;
+    const next = area.ownerDocument.createElement(old.tagName === "EM" ? "i" : "em");
+    for (const { name, value } of old.attributes) next.setAttribute(name, value);
+    next.append(...old.childNodes);
+    old.replaceWith(next);
+  },
+  // REPLACE(요소 → 글자): <strong> 을 같은 글자의 텍스트 노드로
+  unwrap(area) {
+    const strong = area.querySelector("strong, b");
+    if (!strong) return false;
+    strong.replaceWith(strong.textContent);
+  },
+  // CREATE + 보안: 태그처럼 생긴 글자도 텍스트 노드로만 들어가 실행되지 않는다
+  addUnsafe(area) {
+    const ul = area.querySelector("ul, ol");
+    if (!ul) return false;
+    ul.append(make(area, "li", `<img src=x onerror="alert(1)"> & "따옴표"`));
+    syncCount(ul);
+  },
+  // CREATE(하위 트리 통째로): 맨 끝에 카드 하나
+  addCard(area) {
+    const card = make(area, "section");
+    card.className = "card";
+    const n = area.querySelectorAll(".card").length + 1;
+    card.append(make(area, "h2", `새 카드 ${n}`), make(area, "p", "CREATE 패치 하나로 자식까지 한 번에 추가됩니다."));
+    area.append(card);
+  },
+  // REMOVE(하위 트리 통째로): 영역 맨 끝에 있는 카드 = "카드 추가" 로 붙인 카드.
+  // 맨 끝이 아닌 카드(처음 소개 카드)를 지우면 뒤의 테스트 카드가 한 칸씩 당겨져
+  // key 없는 비교 탓에 패치가 수십 개 나오므로, 끝에 있을 때만 지운다 (없으면 "대상 없음")
+  removeCard(area) {
+    const last = area.lastElementChild;
+    if (!last?.classList.contains("card")) return false;
+    last.remove();
+  },
+  // 섞인 경우: 한 번의 Patch 에 TEXT · PROPS · CREATE 가 함께
+  mixed(area) {
+    if (edits.title(area) === false || edits.color(area) === false || edits.addItem(area) === false) return false;
+  },
+  // REMOVE × 전부
+  clear(area) {
+    if (area.childNodes.length === 0) return false;
+    area.replaceChildren();
+  },
+  // 처음 상태로: 지금과 처음의 차이만큼만 패치가 나온다
+  reset(area, initial) {
+    if (!initial) return false;
+    area.replaceChildren(...initial.children.map((child) => area.ownerDocument.importNode(createElement(child), true)));
+  },
+};
+
+/**
+ * 예시 목록: [edits 의 이름, 버튼 글자, 나올 패치 (버튼 툴팁 · 작은 글씨로 보여 줌)]
+ * 테스트(cases-examples.test.js)가 각 예시의 실제 패치 종류가 hint 와 맞는지 검사한다.
+ */
+export const EXAMPLES = Object.freeze([
+  ["title", "제목 글자 바꾸기", "TEXT"],
+  ["color", "부제 색 바꾸기", "PROPS"],
+  ["tooltip", "제목 title 넣기/빼기", "PROPS"],
+  ["flipDone", "완료 표시 뒤집기", "PROPS × 항목 수"],
+  ["checkbox", "체크박스 checked 넣기/빼기", "PROPS"],
+  ["details", "details 열기/닫기", "PROPS"],
+  ["disable", "첫 버튼 끄기/켜기", "PROPS"],
+  ["inputValue", "입력 칸 값 바꾸기", "PROPS"],
+  ["addItem", "목록 끝에 추가", "CREATE + PROPS"],
+  ["removeLast", "마지막 항목 삭제", "REMOVE + PROPS"],
+  ["removeFirst", "맨 앞 항목 삭제", "key 없음 한계"],
+  ["reverse", "목록 순서 뒤집기", "TEXT · PROPS"],
+  ["swapTag", "em ↔ i 태그 바꾸기", "REPLACE"],
+  ["unwrap", "굵은 글씨 풀기", "REPLACE"],
+  ["addUnsafe", "HTML 같은 글자 넣기", "CREATE + PROPS · 보안"],
+  ["addCard", "카드 추가", "CREATE"],
+  ["removeCard", "추가한 카드 삭제", "REMOVE"],
+  ["mixed", "여러 곳 한꺼번에", "섞임"],
+  ["clear", "모두 비우기", "REMOVE"],
+  ["reset", "처음 상태로", "차이만큼"],
+].map(([key, label, hint]) => Object.freeze({ key, label, hint, edit: edits[key] })));
+
+/**
+ * 예시 하나 실행: 테스트 영역을 고치고 → 소스 편집기를 맞추고 → 바로 Patch.
+ * 고칠 대상이 없으면(예: 목록을 다 지운 뒤 "마지막 항목 삭제") 아무것도 바꾸지 않고 알린다.
+ */
+function runExample(example) {
+  if (example.edit(testArea, initialVdom) === false) return setStatus(`"${example.label}": 테스트 영역에 바꿀 대상이 없습니다.`, "warn");
+  testSource.value = toHtml(containerToVdom(testArea).children);
+  onPatch(example.label);
+}
+
+/** #examples 가 있으면 예시 버튼을 그린다 (선택 요소라 없어도 페이지는 동작) */
+function renderExamples() {
+  const box = $("examples");
+  if (!box) return;
+  box.replaceChildren(...EXAMPLES.map((example) => {
+    const btn = Object.assign(document.createElement("button"), { type: "button", className: "btn btn--example", title: `나올 패치: ${example.hint}` });
+    btn.dataset.example = example.key;
+    btn.append(example.label, Object.assign(document.createElement("small"), { textContent: example.hint }));
+    btn.addEventListener("click", () => runExample(example));
+    return btn;
+  }));
 }
 
 /**
@@ -338,11 +546,15 @@ function init() {
   // 소스 편집기를 고치면 → 브라우저 파서(innerHTML)에 맡겨 미리보기에 그린다 (덜 닫힌 태그는 파서가 보정)
   // 프로그램으로 value · innerHTML 을 바꾸면 input 이벤트가 생기지 않으므로 둘이 서로를 끝없이 갱신하지 않는다.
   testSource.addEventListener("input", () => (testArea.innerHTML = testSource.value));
-  patchBtn.addEventListener("click", onPatch);
+  patchBtn.addEventListener("click", () => onPatch()); // 클릭 이벤트 객체가 source 로 들어가지 않게
+  // 샘플의 <form> 에서 제출 버튼 · Enter 를 눌러도 페이지가 이동(새로고침)하지 않게 한다
+  for (const area of [realArea, testArea]) area.addEventListener("submit", (event) => event.preventDefault());
   undoBtn.addEventListener("click", () => moveTo(history.undo, "뒤로가기"));
   redoBtn.addEventListener("click", () => moveTo(history.redo, "앞으로가기"));
 
   const initial = containerToVdom(realArea);
+  initialVdom = initial;
+  renderExamples();
   renderTestArea(initial);
   history.push(initial, { patchCount: 0, label: "초기 상태" });
   renderPatchLog([], "초기 상태");
