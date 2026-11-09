@@ -3,11 +3,22 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Phase 2 - Component / State / Hooks</title>
   <link rel="stylesheet" href="./src/styles/style.css" />
 </head>
 <body>
-  <div id="root"></div>
+  <header class="site-header">
+    <div class="brand">Mini <span>React</span></div>
+    <nav class="site-nav">
+      <a href="./index.html">Phase 1 · VDOM</a>
+      <a href="./app.html" aria-current="page">Phase 2 · Hooks</a>
+    </nav>
+  </header>
+
+  <main class="page">
+    <div id="root"></div>
+  </main>
   <script type="module" src="./src/app/main.js"></script>
 </body>
 </html>
