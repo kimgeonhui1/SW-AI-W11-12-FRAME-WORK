@@ -14,6 +14,21 @@ from mini_redis.server import create_server
 from mini_redis.store import MiniRedis
 
 
+class _ClosedSocketFile:
+    def write(self, data):
+        raise BrokenPipeError("클라이언트가 연결을 끊음")
+
+
+def disconnected_handler(handler_class):
+    """소켓 없이 핸들러 객체만 만든다. 응답을 쓰는 순간 BrokenPipeError가 나는 "이미 끊긴 클라이언트" 상황"""
+    handler = handler_class.__new__(handler_class)
+    handler.request_version = "HTTP/1.1"
+    handler.requestline = "GET / HTTP/1.1"
+    handler.wfile = _ClosedSocketFile()
+    handler.close_connection = False
+    return handler
+
+
 class ServerTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -150,6 +165,12 @@ class ServerTest(unittest.TestCase):
         port = self.server.server_address[1]
         with self.assertRaises(OSError):
             create_server(MiniRedis(), port=port)
+
+    def test_send_to_disconnected_client_is_quiet(self):
+        # 클라이언트가 응답 전에 끊어도 _send가 예외를 밖으로 던지지 않고 연결만 정리해야 한다 (리눅스에서 traceback이 찍히던 것)
+        handler = disconnected_handler(server_module.make_handler(self.store))
+        handler._send(200, {"ok": True})
+        self.assertTrue(handler.close_connection)
 
     def test_body_too_large(self):
         raw = json.dumps({"value": "x" * (server_module.MAX_BODY + 1)}).encode()

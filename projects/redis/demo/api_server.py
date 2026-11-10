@@ -206,11 +206,16 @@ def make_handler():
 
         def _send(self, status, body):
             data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            except ConnectionError:
+                # 클라이언트가 응답을 다 받기 전에 연결을 끊었다. 보낼 곳이 없으니 조용히 정리한다
+                # (예전에는 이 에러를 500으로 다시 응답하려다 끊긴 연결에 또 써서 두 번째 에러가 났다)
+                self.close_connection = True
 
         def log_message(self, format, *args):
             pass

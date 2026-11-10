@@ -15,8 +15,9 @@
 #       (기본으로 data/dump.json에 60초마다 스냅샷을 저장하고, 켤 때 복구한다. --snapshot "" 로 끌 수 있다)
 
 import argparse
-import os
 import json
+import os
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote
@@ -147,7 +148,7 @@ def make_handler(store):
                 raise ApiError(413, "요청 본문이 너무 큽니다 (최대 1MB)")
             try:
                 raw = self.rfile.read(length)
-            except TimeoutError:
+            except (TimeoutError, socket.timeout):  # 파이썬 3.9(맥 기본 python3)까지는 socket.timeout이 TimeoutError가 아니라서 둘 다 잡는다
                 raise ApiError(408, "요청 본문을 제한 시간 안에 다 받지 못했습니다")
             try:
                 # parse_constant: 파이썬 json은 NaN / Infinity를 기본으로 받아들이는데, 표준 JSON이 아니라서
@@ -187,11 +188,16 @@ def make_handler(store):
             except UnicodeEncodeError:
                 # 파이썬 코드로 직접 저장된 반쪽 문자 등이 있어도 응답은 반드시 나가게: 모든 비ASCII를 \uXXXX로 적는 방식으로 다시 만든다
                 data = json.dumps(body).encode("ascii")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            except ConnectionError:
+                # 클라이언트가 응답을 다 받기 전에 연결을 끊었다 (BrokenPipe / ConnectionReset / ConnectionAborted).
+                # 보낼 곳이 없으니 조용히 연결만 정리한다 (에러로 취급해 로그를 남기거나 다시 응답하려 하지 않는다)
+                self.close_connection = True
 
         def log_message(self, format, *args):
             pass  # 요청마다 콘솔에 찍지 않는다 (성능 측정에 출력 비용이 섞이지 않게)

@@ -116,6 +116,14 @@ class DemoApiTest(unittest.TestCase):
             c.settimeout(5)
             self.assertIn(b" 404 ", c.recv(100))
 
+    def test_send_to_disconnected_client_is_quiet(self):
+        # 끊긴 클라이언트에 응답하다 에러 → 그 에러를 500으로 또 응답하려다 두 번째 에러가 나던 것 (리눅스에서 발견)
+        from tests.test_server import disconnected_handler
+
+        handler = disconnected_handler(api_server.make_handler())
+        handler._send(200, {"ok": True})
+        self.assertTrue(handler.close_connection)
+
     def swap_redis(self, client):
         """api_server가 쓰는 Redis 클라이언트를 잠시 바꾸고, 테스트가 끝나면 되돌린다"""
         original = api_server.redis
