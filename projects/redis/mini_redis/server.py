@@ -12,6 +12,7 @@
 # 에러 응답은 모두 {"error": "이유"} 모양이다 (400 잘못된 요청 / 404 없음 / 405 지원 안 하는 메서드 / 408 본문 수신 시간 초과 / 413 너무 큼 / 500 서버 오류)
 #
 # 실행: projects/redis 에서  python -m mini_redis.server --port 6380
+#       (기본으로 data/dump.json에 60초마다 스냅샷을 저장하고, 켤 때 복구한다. --snapshot "" 로 끌 수 있다)
 
 import argparse
 import json
@@ -19,6 +20,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote
 
+from .persistence import SnapshotError, load_snapshot, start_periodic_snapshot
 from .store import MiniRedis
 
 MAX_BODY = 1024 * 1024  # 요청 본문 최대 1MB. 너무 큰 요청으로 서버 메모리를 다 쓰는 것을 막는다
@@ -201,8 +203,22 @@ def main():
     parser = argparse.ArgumentParser(description="Mini Redis HTTP 서버")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=6380)
+    parser.add_argument("--snapshot", default="data/dump.json", help="스냅샷 파일 경로 (빈 문자열이면 저장 안 함)")
+    parser.add_argument("--snapshot-interval", type=float, default=60, help="스냅샷 저장 주기(초)")
     args = parser.parse_args()
-    server = create_server(MiniRedis(), args.host, args.port)
+
+    store = MiniRedis()
+    stop_snapshot = None
+    if args.snapshot:
+        try:
+            loaded = load_snapshot(store, args.snapshot)
+        except SnapshotError as e:
+            # 손상된 파일로 빈 서버를 띄우면 다음 저장 때 그 파일을 덮어써 데이터가 영영 사라진다 → 시작하지 않는다
+            raise SystemExit(f"[snapshot] {e}\n파일을 확인하거나 다른 경로(--snapshot)를 지정하세요.")
+        print(f"[snapshot] {args.snapshot}에서 키 {loaded}개 복구")
+        stop_snapshot = start_periodic_snapshot(store, args.snapshot, args.snapshot_interval)
+
+    server = create_server(store, args.host, args.port)
     print(f"Mini Redis listening on http://{args.host}:{args.port}")
     try:
         server.serve_forever()
@@ -210,6 +226,9 @@ def main():
         pass
     finally:
         server.server_close()
+        if stop_snapshot:
+            stop_snapshot()  # 종료 직전 상태까지 저장
+            print(f"[snapshot] 종료 전 저장 완료: {args.snapshot}")
 
 
 if __name__ == "__main__":
