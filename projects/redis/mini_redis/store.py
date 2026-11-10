@@ -129,5 +129,10 @@ MIN_TTL = 0.001
 
 # ttl은 MIN_TTL 이상의 유한한 숫자(초)만 허용. bool은 int의 하위 타입이라 True가 1초로 들어오는 것을 따로 막는다
 def _check_ttl(ttl):
-    if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not math.isfinite(ttl) or ttl < MIN_TTL:
-        raise ValueError(f"ttl은 {MIN_TTL}초 이상의 숫자여야 합니다")
+    valid = not isinstance(ttl, bool) and isinstance(ttl, (int, float))
+    try:
+        valid = valid and math.isfinite(ttl) and ttl >= MIN_TTL
+    except OverflowError:  # 9999...(수백 자리) 같은 너무 큰 정수는 float로 바꿀 수 없어 isfinite가 OverflowError를 낸다
+        valid = False
+    if not valid:
+        raise ValueError(f"ttl은 {MIN_TTL}초 이상의 유한한 숫자여야 합니다")

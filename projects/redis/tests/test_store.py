@@ -121,7 +121,7 @@ class TtlTest(unittest.TestCase):
 
     def test_invalid_ttl(self):
         # 1e-14: 시각에 더해도 부동소수점에서 사라져 바로 만료되던 값 → 최소 1ms로 막는다 (리뷰 반영)
-        for bad in [0, -1, True, "5", float("inf"), float("nan"), 1e-14, 0.0009]:
+        for bad in [0, -1, True, "5", float("inf"), float("nan"), 1e-14, 0.0009, 10**400]:
             with self.assertRaises(ValueError, msg=repr(bad)):
                 self.r.set("a", 1, ttl=bad)
         for bad in [0, -1, None, "5"]:

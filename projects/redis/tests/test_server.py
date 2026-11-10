@@ -1,6 +1,7 @@
 # [test_server.py] HTTP API 기능 테스트 — 실제 서버를 띄우고 외부 클라이언트처럼 요청한다
 
 import json
+import socket
 import threading
 import time
 import unittest
@@ -17,6 +18,7 @@ class ServerTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         server_module.SWEEP_INTERVAL = 0.05  # 주기 삭제를 빨리 돌려서 테스트 시간을 줄인다
+        server_module.REQUEST_TIMEOUT = 0.5  # 본문 수신 제한 시간도 짧게 (408 테스트용)
         cls.store = MiniRedis()
         cls.server = create_server(cls.store, port=0)  # 0 = 빈 포트 자동 선택
         cls.base = f"http://127.0.0.1:{cls.server.server_address[1]}"
@@ -105,6 +107,11 @@ class ServerTest(unittest.TestCase):
             ("한글".encode("cp949"), 400),  # UTF-8이 아닌 본문
             (('{"value": ' + "[" * 100000 + "]" * 100000 + "}").encode(), 400),  # 너무 깊은 중첩 (500이던 것, 리뷰 반영)
             (b'{"value": "\\ud800"}', 400),  # 짝 없는 반쪽 문자 (저장되면 이후 GET이 응답 없이 끊기던 것, 리뷰 반영)
+            # 자체 검토에서 찾은 것
+            (('{"value": 1, "ttl": ' + "9" * 400 + "}").encode(), 400),  # float로 못 바꾸는 큰 정수 (500이던 것)
+            (b'{"value": NaN}', 400),  # 표준 JSON이 아님 (저장 후 응답이 NaN으로 나가던 것)
+            (b'{"value": [1, Infinity]}', 400),
+            (b'{"value": 1, "ttl": -Infinity}', 400),
         ]
         for raw, status in cases:
             self.assertEqual(self.request("PUT", "/keys/bad", raw=raw)[0], status, raw)
@@ -120,6 +127,18 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.request("PUT", "/keys/a/ttl", {})[0], 405)
         self.assertEqual(self.request("GET", "/keys/a/expire")[0], 405)
         self.assertEqual(self.request("DELETE", "/health")[0], 405)
+        # 표준 라이브러리 기본값이면 HTML 501이던 메서드도 JSON 405로 (자체 검토)
+        for method in ["PATCH", "OPTIONS"]:
+            status, body = self.request(method, "/keys/a")
+            self.assertEqual((status, "error" in body), (405, True), method)
+
+    def test_slow_client_gets_408_and_does_not_hang(self):
+        # Content-Length보다 적게 보내고 멈춘 클라이언트 → 제한 시간 뒤 408로 끝나야 한다 (전에는 스레드가 영원히 대기)
+        port = self.server.server_address[1]
+        with socket.create_connection(("127.0.0.1", port)) as c:
+            c.sendall(b"PUT /keys/slow HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n{")
+            c.settimeout(5)
+            self.assertIn(b" 408 ", c.recv(200))
 
     def test_response_survives_unencodable_value(self):
         # 파이썬 코드로 저장소에 직접 넣은 반쪽 문자도, 응답은 끊기지 않고 \uXXXX 형태의 올바른 JSON으로 나가야 한다

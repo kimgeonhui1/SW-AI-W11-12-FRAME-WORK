@@ -9,7 +9,7 @@
 #
 # 키에 "/" 같은 특수문자가 있으면 URL 인코딩해서 보낸다 (예: "char:a/b" → /keys/char%3Aa%2Fb)
 # 빈 문자열 키는 HTTP API에서 지원하지 않는다 (/keys/ 는 404). 저장소(MiniRedis) 자체는 빈 키도 받는다
-# 에러 응답은 모두 {"error": "이유"} 모양이다 (400 잘못된 요청 / 404 없음 / 405 지원 안 하는 메서드 / 413 너무 큼 / 500 서버 오류)
+# 에러 응답은 모두 {"error": "이유"} 모양이다 (400 잘못된 요청 / 404 없음 / 405 지원 안 하는 메서드 / 408 본문 수신 시간 초과 / 413 너무 큼 / 500 서버 오류)
 #
 # 실행: projects/redis 에서  python -m mini_redis.server --port 6380
 
@@ -22,6 +22,7 @@ from urllib.parse import unquote
 from .store import MiniRedis
 
 MAX_BODY = 1024 * 1024  # 요청 본문 최대 1MB. 너무 큰 요청으로 서버 메모리를 다 쓰는 것을 막는다
+REQUEST_TIMEOUT = 10  # 요청을 다 받을 때까지 기다리는 최대 시간(초). 본문을 덜 보내고 멈춘 클라이언트가 스레드를 영원히 붙잡지 못하게 한다
 SWEEP_INTERVAL = 1.0  # 만료 키 정리(주기 삭제) 간격(초)
 
 
@@ -37,8 +38,17 @@ def make_handler(store):
     # 요청 하나마다 Handler 객체가 새로 만들어진다 (ThreadingHTTPServer라서 요청마다 스레드도 하나씩)
     # → 저장소 store는 여러 스레드가 함께 쓰지만, store 안의 락이 명령을 하나씩만 실행되게 한다
     class Handler(BaseHTTPRequestHandler):
+        timeout = REQUEST_TIMEOUT  # 소켓 읽기 제한 시간 (BaseHTTPRequestHandler가 연결 소켓에 적용한다)
+
         def do_GET(self):
             self._dispatch("GET")
+
+        # 지원하지 않는 메서드도 기본 HTML 501 대신 JSON 405로 답한다 (모든 응답은 JSON이라는 약속)
+        def do_PATCH(self):
+            self._dispatch("PATCH")
+
+        def do_OPTIONS(self):
+            self._dispatch("OPTIONS")
 
         def do_PUT(self):
             self._dispatch("PUT")
@@ -122,9 +132,15 @@ def make_handler(store):
             if length > MAX_BODY:
                 raise ApiError(413, "요청 본문이 너무 큽니다 (최대 1MB)")
             try:
-                body = json.loads(self.rfile.read(length) or b"{}")
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                raise ApiError(400, "본문이 올바른 JSON이 아닙니다")
+                raw = self.rfile.read(length)
+            except TimeoutError:
+                raise ApiError(408, "요청 본문을 제한 시간 안에 다 받지 못했습니다")
+            try:
+                # parse_constant: 파이썬 json은 NaN / Infinity를 기본으로 받아들이는데, 표준 JSON이 아니라서
+                # 저장 후 응답에 그대로 나가면 다른 언어의 클라이언트가 응답을 읽지 못한다 → 처음부터 거부
+                body = json.loads(raw or b"{}", parse_constant=_reject_constant)
+            except ValueError:  # JSONDecodeError, UnicodeDecodeError, _reject_constant 모두 ValueError 계열
+                raise ApiError(400, "본문이 올바른 JSON이 아닙니다 (NaN / Infinity 불가)")
             except RecursionError:  # [[[[...]]]]처럼 너무 깊게 중첩되면 파서가 재귀 한도를 넘는다 → 서버 오류가 아니라 잘못된 요청
                 raise ApiError(400, "JSON이 너무 깊게 중첩되어 있습니다")
             if not isinstance(body, dict):
@@ -152,6 +168,10 @@ def make_handler(store):
             pass  # 요청마다 콘솔에 찍지 않는다 (성능 측정에 출력 비용이 섞이지 않게)
 
     return Handler
+
+
+def _reject_constant(name):
+    raise ValueError(f"{name}은(는) 표준 JSON 값이 아닙니다")
 
 
 # 저장소를 감싼 HTTP 서버 객체 생성 (port=0이면 빈 포트를 자동으로 고른다 → 테스트용)
