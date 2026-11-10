@@ -3,6 +3,7 @@
 import json
 import os
 import tempfile
+import threading
 import time
 import unittest
 
@@ -17,6 +18,17 @@ class FakeClock:
 
     def __call__(self):
         return self.now
+
+
+def read_keys(path):
+    """스냅샷 파일의 키 목록. 백그라운드 저장이 파일을 교체하는 순간에는 Windows에서 열기가 잠깐 실패해서 다시 시도한다"""
+    for _ in range(20):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return [e["key"] for e in json.load(f)["entries"]]
+        except PermissionError:
+            time.sleep(0.01)
+    raise AssertionError("스냅샷 파일을 열 수 없음")
 
 
 class PersistenceTest(unittest.TestCase):
@@ -76,6 +88,64 @@ class PersistenceTest(unittest.TestCase):
             with open(self.path, encoding="utf-8") as f:
                 self.assertEqual(f.read(), content)  # 파일은 그대로
 
+    def test_bad_entries_raise_and_restore_nothing(self):
+        # 항목 하나라도 잘못되면 SnapshotError, 그리고 아무것도 복구하지 않는다 (전에는 TypeError + 앞쪽 항목만 복구됨)
+        os.makedirs(os.path.dirname(self.path))
+        bad_entry_lists = [
+            [{"key": "ok", "value": 1, "ttl": None}, {"key": 2, "value": 1, "ttl": None}],  # 숫자 키
+            [{"key": "a", "value": 1, "ttl": "5"}],  # 문자열 ttl
+            [{"key": "a", "value": 1, "ttl": True}],
+            [{"key": "a", "value": 1}],  # ttl 필드 없음
+        ]
+        for entries in bad_entry_lists:
+            with open(self.path, "w", encoding="utf-8") as f:
+                json.dump({"format": 1, "saved_at": self.wall.now, "entries": entries}, f)
+            r = MiniRedis()
+            with self.assertRaises(SnapshotError, msg=entries):
+                load_snapshot(r, self.path)
+            self.assertEqual(len(r), 0, entries)
+
+    def test_lone_surrogate_value_round_trip(self):
+        # 파이썬 코드로 직접 넣은 반쪽 문자도 저장·복구된다 (전에는 UnicodeEncodeError로 저장 실패)
+        r = MiniRedis()
+        r.set("x", "\ud800")
+        save_snapshot(r, self.path)
+        restored = MiniRedis()
+        load_snapshot(restored, self.path)
+        self.assertEqual(restored.get("x"), "\ud800")
+
+    def test_save_survives_concurrent_readers(self):
+        # Windows: 다른 프로그램이 파일을 읽는 중이면 교체가 실패하던 것 → 재시도로 저장이 끝까지 성공해야 한다
+        r = MiniRedis()
+        r.set("a", 1)
+        save_snapshot(r, self.path)
+        stop = threading.Event()
+
+        def reader():
+            # 백신·백업 도구처럼 수시로 파일을 열었다 닫는 프로그램 흉내
+            while not stop.is_set():
+                try:
+                    with open(self.path, encoding="utf-8") as f:
+                        f.read()
+                except PermissionError:
+                    pass
+                time.sleep(0.001)
+
+        t = threading.Thread(target=reader)
+        t.start()
+        try:
+            for _ in range(50):
+                save_snapshot(r, self.path)  # 한 번도 예외가 나면 안 된다
+        finally:
+            stop.set()
+            t.join()
+
+    def test_invalid_interval(self):
+        # 0 이하면 쉬지 않고 저장을 반복하던 것 (0.2초에 수십만 번)
+        for bad in [0, -1, float("nan"), float("inf"), True]:
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                start_periodic_snapshot(MiniRedis(), self.path, bad)
+
     def test_failed_save_keeps_previous_snapshot(self):
         # JSON으로 못 바꾸는 값이 있어 저장이 실패해도 → 이전 스냅샷은 온전하고 임시 파일도 남지 않는다
         r = MiniRedis()
@@ -93,8 +163,7 @@ class PersistenceTest(unittest.TestCase):
         stop = start_periodic_snapshot(r, self.path, interval=0.05)
         r.set("a", 1)
         time.sleep(0.2)  # 주기 저장이 몇 번 돈다
-        with open(self.path, encoding="utf-8") as f:
-            self.assertIn("a", [e["key"] for e in json.load(f)["entries"]])
+        self.assertIn("a", read_keys(self.path))
         r.set("b", 2)  # 다음 주기 전에 종료
         stop()
         restored = MiniRedis()

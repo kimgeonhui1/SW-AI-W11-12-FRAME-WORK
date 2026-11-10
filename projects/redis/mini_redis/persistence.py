@@ -16,6 +16,7 @@
 #   저장 도중 서버가 죽어도 기존 스냅샷 파일은 온전히 남는다 (반쯤 쓰인 파일이 생기지 않는다)
 
 import json
+import math
 import os
 import threading
 import time
@@ -40,16 +41,31 @@ def save_snapshot(store, path):
     tmp_path = f"{path}.tmp"
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
+            # ensure_ascii(기본값): 한글 등 비ASCII를 \uXXXX로 적는다. 파이썬 코드로 직접 넣은 "\ud800" 같은 반쪽 문자도
+            # 이렇게 하면 파일에 쓸 수 있고, 읽을 때 그대로 돌아온다 (ensure_ascii=False면 UTF-8로 못 바꿔 저장이 실패한다)
+            json.dump(data, f)
             f.flush()
             os.fsync(f.fileno())  # 운영체제 버퍼에만 있지 않고 디스크에 실제로 쓰였는지 확인
-        os.replace(tmp_path, path)  # 같은 폴더 안의 이름 바꾸기는 한 번에 일어난다 → 반쯤 바뀐 상태가 없다
+        _replace_with_retry(tmp_path, path)  # 같은 폴더 안의 이름 바꾸기는 한 번에 일어난다 → 반쯤 바뀐 상태가 없다
     except BaseException:
         # 쓰다가 실패하면(JSON으로 못 바꾸는 값 등) 임시 파일만 지우고, 기존 스냅샷은 그대로 둔다
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
         raise
     return len(entries)
+
+
+# Windows에서는 다른 프로그램(백신, 백업 도구, 파일을 열어 본 사람)이 스냅샷 파일을 열고 있는 동안 교체가
+# PermissionError로 실패한다 (리눅스·맥은 열려 있어도 교체된다). 보통 아주 잠깐이라 짧게 기다렸다 다시 시도한다
+def _replace_with_retry(src, dst, attempts=10, wait=0.05):
+    for attempt in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(wait)
 
 
 # 파일에서 데이터를 읽어 저장소에 복구 → 복구한 키 수 (파일이 없으면 0: 처음 켜는 서버)
@@ -63,9 +79,15 @@ def load_snapshot(store, path):
             raise SnapshotError("스냅샷 형식이 다릅니다")
         elapsed = max(0.0, _wall_clock() - float(data["saved_at"]))  # 서버가 꺼져 있던 시간 (시계가 뒤로 갔으면 0)
         entries = [(e["key"], e["value"], e["ttl"]) for e in data["entries"]]
+        # 저장소에 넣기 "전에" 모든 항목을 검사한다. 넣다가 중간에 실패하면 일부만 복구된 어정쩡한 상태가 되기 때문이다
+        for key, _, ttl in entries:
+            if not isinstance(key, str):
+                raise SnapshotError(f"키가 문자열이 아닙니다: {key!r}")
+            if ttl is not None and (isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not math.isfinite(ttl)):
+                raise SnapshotError(f"ttl이 올바르지 않습니다: {key!r} → {ttl!r}")
     except SnapshotError:
         raise
-    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError) as e:
         raise SnapshotError(f"스냅샷 파일을 읽을 수 없습니다: {path} ({e})") from e
 
     loaded = 0
@@ -81,6 +103,9 @@ def load_snapshot(store, path):
 
 # interval초마다 스냅샷을 저장하는 스레드 시작 → 멈출 때 쓸 함수 stop() (멈출 때 마지막으로 한 번 더 저장한다)
 def start_periodic_snapshot(store, path, interval):
+    # 0 이하이면 wait()가 바로 돌아와 쉬지 않고 저장을 반복한다 (0.2초에 수십만 번 → CPU·디스크 낭비)
+    if isinstance(interval, bool) or not isinstance(interval, (int, float)) or not math.isfinite(interval) or interval <= 0:
+        raise ValueError("스냅샷 주기(interval)는 0보다 큰 숫자(초)여야 합니다")
     stop_event = threading.Event()
 
     def loop():

@@ -24,10 +24,12 @@ import json
 import math
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlsplit
 from urllib.request import Request, urlopen
+
+from mini_redis.server import SafeThreadingHTTPServer
 
 SLOW_DELAY = 0.2  # 원본 조회에 걸리는 시간(초). 실제 DB 쿼리나 외부 API 호출을 흉내 낸다
 CACHE_TTL = 60  # 캐시 보관 시간(초). 원본이 바뀌었는데 무효화를 놓쳐도 최대 60초 뒤에는 새 값이 보인다
@@ -224,7 +226,7 @@ def _reject_constant(name):
 def create_demo_server(redis_url, host="127.0.0.1", port=8000):
     global redis
     redis = RedisClient(redis_url)
-    return ThreadingHTTPServer((host, port), make_handler())
+    return SafeThreadingHTTPServer((host, port), make_handler())
 
 
 # 명령줄 실행 시작점

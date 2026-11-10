@@ -15,6 +15,7 @@
 #       (기본으로 data/dump.json에 60초마다 스냅샷을 저장하고, 켤 때 복구한다. --snapshot "" 로 끌 수 있다)
 
 import argparse
+import os
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -24,8 +25,18 @@ from .persistence import SnapshotError, load_snapshot, start_periodic_snapshot
 from .store import MiniRedis
 
 MAX_BODY = 1024 * 1024  # 요청 본문 최대 1MB. 너무 큰 요청으로 서버 메모리를 다 쓰는 것을 막는다
+DISCARD_LIMIT = 16 * 1024 * 1024  # 413 응답 전에 읽어서 버려 줄 최대 크기 (아래 _discard_body 참고)
 REQUEST_TIMEOUT = 10  # 요청을 다 받을 때까지 기다리는 최대 시간(초). 본문을 덜 보내고 멈춘 클라이언트가 스레드를 영원히 붙잡지 못하게 한다
 SWEEP_INTERVAL = 1.0  # 만료 키 정리(주기 삭제) 간격(초)
+
+
+class SafeThreadingHTTPServer(ThreadingHTTPServer):
+    """요청마다 스레드를 쓰는 HTTP 서버. Windows에서만 SO_REUSEADDR를 끈다.
+    Windows의 SO_REUSEADDR는 "이미 다른 서버가 쓰는 포트에도 또 묶기"를 허용해서, 같은 포트로 서버를 두 번 켜면
+    에러 없이 둘 다 떠 버린다(요청이 어느 쪽으로 갈지 모름). 끄면 두 번째 서버는 "포트 사용 중" 에러로 멈춘다.
+    리눅스·맥에서는 SO_REUSEADDR가 "방금 끈 서버의 포트를 바로 다시 쓰기"만 허용하므로 그대로 둔다."""
+
+    allow_reuse_address = os.name != "nt"
 
 
 class ApiError(Exception):
@@ -132,6 +143,7 @@ def make_handler(store):
             if length < 0:
                 raise ApiError(400, "Content-Length가 올바르지 않습니다")
             if length > MAX_BODY:
+                self._discard_body(length)
                 raise ApiError(413, "요청 본문이 너무 큽니다 (최대 1MB)")
             try:
                 raw = self.rfile.read(length)
@@ -153,6 +165,21 @@ def make_handler(store):
             except UnicodeEncodeError:
                 raise ApiError(400, "UTF-8로 표현할 수 없는 문자(짝 없는 서로게이트)가 들어 있습니다")
             return body
+
+        # 너무 큰 본문을 "읽어서 버린다" (메모리에 모으지 않고 64KB씩). 안 읽고 바로 413을 보내고 연결을 닫으면,
+        # 아직 본문을 보내던 클라이언트 쪽 연결이 끊겨(Windows에서 자주) 413 응답을 못 받는 경우가 생긴다.
+        # 버리는 양은 DISCARD_LIMIT까지만: 그보다 크면 끝까지 읽어 주지 않고 연결을 닫는다 (거대한 요청에 시간을 쓰지 않게)
+        def _discard_body(self, length):
+            self.close_connection = True
+            remaining = min(length, DISCARD_LIMIT)
+            try:
+                while remaining > 0:
+                    chunk = self.rfile.read(min(65536, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+            except (TimeoutError, OSError):
+                pass
 
         def _send(self, status, body):
             try:
@@ -179,7 +206,7 @@ def _reject_constant(name):
 # 저장소를 감싼 HTTP 서버 객체 생성 (port=0이면 빈 포트를 자동으로 고른다 → 테스트용)
 # 주기 삭제 스레드도 함께 시작하고, server_close() 때 같이 멈춘다
 def create_server(store, host="127.0.0.1", port=6380):
-    server = ThreadingHTTPServer((host, port), make_handler(store))
+    server = SafeThreadingHTTPServer((host, port), make_handler(store))
     stop = threading.Event()
 
     def sweeper():
@@ -206,9 +233,10 @@ def main():
     parser.add_argument("--snapshot", default="data/dump.json", help="스냅샷 파일 경로 (빈 문자열이면 저장 안 함)")
     parser.add_argument("--snapshot-interval", type=float, default=60, help="스냅샷 저장 주기(초)")
     args = parser.parse_args()
+    if args.snapshot and not 0 < args.snapshot_interval < float("inf"):  # NaN도 이 비교에서 걸러진다
+        parser.error("--snapshot-interval은 0보다 큰 유한한 숫자여야 합니다")
 
     store = MiniRedis()
-    stop_snapshot = None
     if args.snapshot:
         try:
             loaded = load_snapshot(store, args.snapshot)
@@ -216,9 +244,14 @@ def main():
             # 손상된 파일로 빈 서버를 띄우면 다음 저장 때 그 파일을 덮어써 데이터가 영영 사라진다 → 시작하지 않는다
             raise SystemExit(f"[snapshot] {e}\n파일을 확인하거나 다른 경로(--snapshot)를 지정하세요.")
         print(f"[snapshot] {args.snapshot}에서 키 {loaded}개 복구")
-        stop_snapshot = start_periodic_snapshot(store, args.snapshot, args.snapshot_interval)
 
-    server = create_server(store, args.host, args.port)
+    # 서버(포트)를 먼저 연다. 포트가 이미 쓰이는 중이면 여기서 끝나고, 스냅샷 스레드는 아직 켜지지 않는다
+    try:
+        server = create_server(store, args.host, args.port)
+    except OSError as e:
+        raise SystemExit(f"{args.host}:{args.port}에서 서버를 열 수 없습니다: {e}")
+    stop_snapshot = start_periodic_snapshot(store, args.snapshot, args.snapshot_interval) if args.snapshot else None
+
     print(f"Mini Redis listening on http://{args.host}:{args.port}")
     try:
         server.serve_forever()
@@ -227,8 +260,11 @@ def main():
     finally:
         server.server_close()
         if stop_snapshot:
-            stop_snapshot()  # 종료 직전 상태까지 저장
-            print(f"[snapshot] 종료 전 저장 완료: {args.snapshot}")
+            try:
+                stop_snapshot()  # 종료 직전 상태까지 저장
+                print(f"[snapshot] 종료 전 저장 완료: {args.snapshot}")
+            except Exception as e:  # 저장에 실패해도 마지막 주기 저장 파일은 남아 있다
+                print(f"[snapshot] 종료 전 저장 실패 (마지막 주기 저장본은 그대로): {e}")
 
 
 if __name__ == "__main__":

@@ -145,6 +145,12 @@ class ServerTest(unittest.TestCase):
         self.store.set("raw", "\ud800")
         self.assertEqual(self.request("GET", "/keys/raw"), (200, {"key": "raw", "value": "\ud800", "ttl": -1}))
 
+    def test_second_server_on_same_port_fails(self):
+        # Windows에서 같은 포트로 서버가 두 개 떠서 요청이 어디로 갈지 모르던 문제 → 두 번째는 OSError로 실패해야 한다
+        port = self.server.server_address[1]
+        with self.assertRaises(OSError):
+            create_server(MiniRedis(), port=port)
+
     def test_body_too_large(self):
         raw = json.dumps({"value": "x" * (server_module.MAX_BODY + 1)}).encode()
         self.assertEqual(self.request("PUT", "/keys/big", raw=raw)[0], 413)
