@@ -48,6 +48,16 @@ class MiniRedis:
                 return None
             return self._data.get(key)
 
+    # 값과 남은 만료 시간을 "한 번에" 조회 → (값, ttl). 없거나 만료됐으면 (None, -2)
+    # get과 ttl을 따로 부르면 그 사이에 다른 요청이 저장·삭제를 끼워 넣어 "값은 있는데 ttl은 -2" 같은 어긋난 조합이 나온다
+    def get_with_ttl(self, key):
+        with self._lock:
+            if self._expire_if_needed(key) or key not in self._data:
+                return None, -2
+            expire_at = self._expires.get(key)
+            ttl = -1 if expire_at is None else math.ceil(expire_at - self._clock())
+            return self._data.get(key), ttl
+
     # 삭제(무효화). 지웠으면 True (이미 만료된 키는 없는 것으로 본다)
     def delete(self, key):
         with self._lock:

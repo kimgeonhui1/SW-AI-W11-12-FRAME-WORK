@@ -143,6 +143,14 @@ class TtlTest(unittest.TestCase):
         self.clock.advance(10)
         self.assertEqual((self.r.get("long"), self.r.get("short")), (1, None))
 
+    def test_get_with_ttl(self):
+        # 값과 ttl을 한 번에 (서버의 GET이 사용. 따로 읽으면 사이에 끼어든 요청 때문에 어긋날 수 있다)
+        self.r.set("a", 1, ttl=10)
+        self.r.set("b", 2)
+        self.assertEqual((self.r.get_with_ttl("a"), self.r.get_with_ttl("b"), self.r.get_with_ttl("없음")), ((1, 10), (2, -1), (None, -2)))
+        self.clock.advance(10)
+        self.assertEqual(self.r.get_with_ttl("a"), (None, -2))
+
     def test_float_ttl(self):
         self.r.set("a", 1, ttl=0.5)
         self.clock.advance(0.4)
