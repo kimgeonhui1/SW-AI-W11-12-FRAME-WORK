@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 560" width="980" height="560" font-family="Pretendard, 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 740" width="980" height="740" font-family="Pretendard, 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif">
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#8b93a7"/>
@@ -7,99 +7,111 @@
       <path d="M0,0 L10,5 L0,10 z" fill="#d97706"/>
     </marker>
   </defs>
-  <rect width="980" height="560" rx="16" fill="#ffffff"/>
-  <rect x="0.5" y="0.5" width="979" height="559" rx="16" fill="none" stroke="#e5e7eb"/>
+  <rect width="980" height="740" rx="16" fill="#ffffff"/>
+  <rect x="0.5" y="0.5" width="979" height="739" rx="16" fill="none" stroke="#e5e7eb"/>
 
-  <text x="24" y="38" font-size="16" font-weight="700" fill="#1f2430">State가 바뀌면 화면이 바뀌기까지 (Phase 2)</text>
+  <text x="24" y="40" font-size="18" font-weight="800" fill="#1f2430">화면이 그려지는 과정</text>
 
-  <!-- 1행: 왼쪽 → 오른쪽 -->
-  <g font-size="13">
-    <rect x="24" y="60" width="210" height="72" rx="12" fill="#fff7ed" stroke="#fdba74"/>
-    <text x="42" y="88" font-size="14.5" font-weight="700" fill="#c2410c">① 클릭 → setState</text>
-    <text x="42" y="112" fill="#4b5263">값만 저장, 바로 그리지 않음</text>
-
-    <rect x="266" y="60" width="210" height="72" rx="12" fill="#f8fafc" stroke="#d6dae3"/>
-    <text x="284" y="88" font-size="14.5" font-weight="700" fill="#1f2430">② Batching</text>
-    <text x="284" y="112" fill="#4b5263">queueMicrotask로 1번만 예약</text>
-
-    <rect x="508" y="60" width="210" height="72" rx="12" fill="#eef1ff" stroke="#c7cff9"/>
-    <text x="526" y="88" font-size="14.5" font-weight="700" fill="#3b4cca">③ App() 다시 실행</text>
-    <text x="526" y="112" fill="#4b5263">= 렌더링, Hook이 값을 꺼냄</text>
-
-    <rect x="750" y="60" width="206" height="72" rx="12" fill="#eef1ff" stroke="#c7cff9"/>
-    <text x="768" y="88" font-size="14.5" font-weight="700" fill="#3b4cca">④ 새 VDOM + 검사</text>
-    <text x="768" y="112" fill="#4b5263">validateVNode (위치까지 알림)</text>
-  </g>
-  <line x1="234" y1="96" x2="262" y2="96" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
-  <line x1="476" y1="96" x2="504" y2="96" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
-  <line x1="718" y1="96" x2="746" y2="96" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
-  <line x1="853" y1="132" x2="853" y2="164" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
-
-  <!-- 2행: 오른쪽 → 왼쪽 -->
-  <g font-size="13">
-    <rect x="750" y="168" width="206" height="72" rx="12" fill="#ecfdf3" stroke="#a7e3bf"/>
-    <text x="768" y="196" font-size="14.5" font-weight="700" fill="#15803d">⑤ diff(이전, 새)</text>
-    <text x="768" y="220" fill="#4b5263">바뀐 곳만 담은 패치 트리</text>
-
-    <rect x="508" y="168" width="210" height="72" rx="12" fill="#ecfdf3" stroke="#a7e3bf"/>
-    <text x="526" y="196" font-size="14.5" font-weight="700" fill="#15803d">⑥ patch</text>
-    <text x="526" y="220" fill="#4b5263">실제 DOM은 바뀐 곳만 수정</text>
-
-    <rect x="266" y="168" width="210" height="72" rx="12" fill="#f8fafc" stroke="#d6dae3"/>
-    <text x="284" y="196" font-size="14.5" font-weight="700" fill="#1f2430">⑦ 화면 반영</text>
-    <text x="284" y="220" fill="#4b5263">입력값 · 포커스는 그대로</text>
-
-    <rect x="24" y="168" width="210" height="72" rx="12" fill="#fff7ed" stroke="#fdba74"/>
-    <text x="42" y="196" font-size="14.5" font-weight="700" fill="#c2410c">⑧ useEffect 실행</text>
-    <text x="42" y="220" fill="#4b5263">cleanup 전부 → effect 전부</text>
-  </g>
-  <line x1="750" y1="204" x2="722" y2="204" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
-  <line x1="508" y1="204" x2="480" y2="204" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
-  <line x1="266" y1="204" x2="238" y2="204" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
-  <path d="M129 168 L129 136" stroke="#d97706" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#b)"/>
-  <text x="138" y="156" font-size="12" fill="#c2410c">effect 안의 setState → 다시 ① (50번 연속이면 멈춤)</text>
-
-  <!-- 파일 구성 -->
-  <text x="24" y="290" font-size="16" font-weight="700" fill="#1f2430">파일 구성</text>
-  <rect x="24" y="304" width="932" height="128" rx="14" fill="#f8fafc" stroke="#d6dae3"/>
-  <text x="44" y="330" font-size="14" font-weight="700" fill="#1f2430">src/core/  <tspan font-weight="400" fill="#6b7280">엔진 (팀 공통 인터페이스)</tspan></text>
+  <!-- ── A. 처음 한 번 그리기 ── -->
+  <text x="24" y="76" font-size="14.5" font-weight="700" fill="#1f2430">A. 처음 한 번 그리기 <tspan font-weight="400" fill="#6b7280">(mount)</tspan></text>
   <g font-size="12.5">
-    <rect x="44" y="344" width="168" height="72" rx="10" fill="#ffffff" stroke="#c7cff9"/>
-    <text x="58" y="368" font-size="14" font-weight="700" fill="#3b4cca" font-family="Consolas, monospace">vdom.js</text>
-    <text x="58" y="388" fill="#4b5263">h · createElement</text>
-    <text x="58" y="405" fill="#4b5263">domToVdom · 검사</text>
+    <rect x="24" y="90" width="212" height="60" rx="12" fill="#eef1ff" stroke="#c7cff9"/>
+    <text x="40" y="115" font-size="14" font-weight="700" fill="#3b4cca" font-family="Consolas, monospace">App() 호출</text>
+    <text x="40" y="136" fill="#4b5263">VDOM을 돌려주는 함수</text>
 
-    <rect x="226" y="344" width="168" height="72" rx="10" fill="#ffffff" stroke="#a7e3bf"/>
-    <text x="240" y="368" font-size="14" font-weight="700" fill="#15803d" font-family="Consolas, monospace">diff.js</text>
-    <text x="240" y="388" fill="#4b5263">두 VDOM 비교</text>
-    <text x="240" y="405" fill="#4b5263">→ 패치 트리 (key 지원)</text>
+    <rect x="264" y="90" width="212" height="60" rx="12" fill="#f8fafc" stroke="#d6dae3"/>
+    <text x="280" y="115" font-size="14" font-weight="700" fill="#1f2430">VDOM</text>
+    <text x="280" y="136" fill="#4b5263" font-family="Consolas, monospace">{ type, props, children }</text>
 
-    <rect x="408" y="344" width="168" height="72" rx="10" fill="#ffffff" stroke="#a7e3bf"/>
-    <text x="422" y="368" font-size="14" font-weight="700" fill="#15803d" font-family="Consolas, monospace">patch.js</text>
-    <text x="422" y="388" fill="#4b5263">패치 트리를 따라</text>
-    <text x="422" y="405" fill="#4b5263">실제 DOM 수정</text>
+    <rect x="504" y="90" width="212" height="60" rx="12" fill="#f8fafc" stroke="#d6dae3"/>
+    <text x="520" y="115" font-size="14" font-weight="700" fill="#1f2430" font-family="Consolas, monospace">createElement(VDOM)</text>
+    <text x="520" y="136" fill="#4b5263">VDOM 전체를 실제 DOM으로</text>
 
-    <rect x="590" y="344" width="168" height="72" rx="10" fill="#ffffff" stroke="#fdba74"/>
-    <text x="604" y="368" font-size="14" font-weight="700" fill="#c2410c" font-family="Consolas, monospace">component.js</text>
-    <text x="604" y="388" fill="#4b5263">FunctionComponent</text>
-    <text x="604" y="405" fill="#4b5263">mount · update · Batching</text>
+    <rect x="744" y="90" width="212" height="60" rx="12" fill="#f8fafc" stroke="#d6dae3"/>
+    <text x="760" y="115" font-size="14" font-weight="700" fill="#1f2430">화면 표시</text>
+    <text x="760" y="136" fill="#4b5263">이 VDOM은 기억해 둔다</text>
+  </g>
+  <line x1="236" y1="120" x2="260" y2="120" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="476" y1="120" x2="500" y2="120" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="716" y1="120" x2="740" y2="120" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
 
-    <rect x="772" y="344" width="168" height="72" rx="10" fill="#ffffff" stroke="#fdba74"/>
-    <text x="786" y="368" font-size="14" font-weight="700" fill="#c2410c" font-family="Consolas, monospace">hooks.js</text>
-    <text x="786" y="388" fill="#4b5263">useState · useEffect</text>
-    <text x="786" y="405" fill="#4b5263">useMemo · useRef</text>
+  <!-- ── B. 클릭할 때마다 ── -->
+  <text x="24" y="196" font-size="14.5" font-weight="700" fill="#1f2430">B. 클릭할 때마다 다시 그리기 <tspan font-weight="400" fill="#6b7280">(update) — 화면 전체를 새로 만들지 않고, 바뀐 곳만 고친다</tspan></text>
+  <g font-size="12.5">
+    <!-- 1행 -->
+    <rect x="24" y="210" width="292" height="84" rx="12" fill="#fff7ed" stroke="#fdba74"/>
+    <text x="42" y="238" font-size="14.5" font-weight="700" fill="#c2410c">① 클릭 → <tspan font-family="Consolas, monospace">setState(새 값)</tspan></text>
+    <text x="42" y="261" fill="#4b5263">새 값을 컴포넌트의 hooks 배열에 저장</text>
+    <text x="42" y="280" fill="#4b5263">바로 그리지는 않는다</text>
+
+    <rect x="344" y="210" width="292" height="84" rx="12" fill="#f8fafc" stroke="#d6dae3"/>
+    <text x="362" y="238" font-size="14.5" font-weight="700" fill="#1f2430">② 다시 그리기 예약 <tspan font-weight="400" fill="#6b7280">(Batching)</tspan></text>
+    <text x="362" y="261" fill="#4b5263">setState를 연달아 여러 번 불러도 모아서</text>
+    <text x="362" y="280" fill="#4b5263">이번 클릭 처리가 끝난 직후 <tspan font-weight="700" fill="#1f2430">1번만</tspan> 그림</text>
+
+    <rect x="664" y="210" width="292" height="84" rx="12" fill="#eef1ff" stroke="#c7cff9"/>
+    <text x="682" y="238" font-size="14.5" font-weight="700" fill="#3b4cca">③ <tspan font-family="Consolas, monospace">App()</tspan> 다시 호출 <tspan font-weight="400" fill="#6b7280">(렌더링)</tspan></text>
+    <text x="682" y="261" fill="#4b5263">A에서 부른 App 함수를 한 번 더 부름</text>
+    <text x="682" y="280" fill="#4b5263">useState가 새 값을 돌려줌 → 새 VDOM</text>
+
+    <!-- 2행 -->
+    <rect x="24" y="336" width="292" height="84" rx="12" fill="#ecfdf3" stroke="#a7e3bf"/>
+    <text x="42" y="364" font-size="14.5" font-weight="700" fill="#15803d">④ <tspan font-family="Consolas, monospace">diff(이전 VDOM, 새 VDOM)</tspan></text>
+    <text x="42" y="387" fill="#4b5263">두 VDOM(자바스크립트 객체)을 비교해</text>
+    <text x="42" y="406" fill="#4b5263">바뀐 곳만 담은 <tspan font-weight="700" fill="#1f2430">패치 트리</tspan>를 만듦</text>
+
+    <rect x="344" y="336" width="292" height="84" rx="12" fill="#ecfdf3" stroke="#a7e3bf"/>
+    <text x="362" y="364" font-size="14.5" font-weight="700" fill="#15803d">⑤ <tspan font-family="Consolas, monospace">patch(실제 DOM, 패치 트리)</tspan></text>
+    <text x="362" y="387" fill="#4b5263">실제 DOM에서 바뀐 곳만 고침</text>
+    <text x="362" y="406" fill="#4b5263">입력 중인 값 · 포커스는 그대로 남음</text>
+
+    <rect x="664" y="336" width="292" height="84" rx="12" fill="#fff7ed" stroke="#fdba74"/>
+    <text x="682" y="364" font-size="14.5" font-weight="700" fill="#c2410c">⑥ <tspan font-family="Consolas, monospace">useEffect</tspan> 실행</text>
+    <text x="682" y="387" fill="#4b5263">화면이 바뀐 "뒤"에 할 일</text>
+    <text x="682" y="406" fill="#4b5263">(탭 제목 바꾸기, 기보 스크롤 등)</text>
+  </g>
+  <line x1="316" y1="252" x2="340" y2="252" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="636" y1="252" x2="660" y2="252" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
+  <path d="M810 294 L810 314 L170 314 L170 332" fill="none" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="316" y1="378" x2="340" y2="378" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="636" y1="378" x2="660" y2="378" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
+
+  <g font-size="12.5" fill="#4b5263">
+    <text x="24" y="450">· ③의 새 VDOM은 다음 클릭 때 ④의 <tspan font-weight="700" fill="#1f2430">"이전 VDOM"</tspan>이 된다 (화면의 DOM을 다시 읽지 않는다)</text>
+    <text x="24" y="472"><tspan fill="#c2410c">· ⑥에서 또 setState를 부르면 다시 ①부터.</tspan> 사용자 입력 없이 50번 연속이면 무한 반복으로 보고 멈추고 에러를 낸다</text>
+    <text x="24" y="494">· ③에서 VDOM이 잘못 만들어졌으면(validateVNode) ④ · ⑤를 하지 않아 화면이 반쯤 바뀌지 않는다</text>
   </g>
 
-  <line x1="250" y1="476" x2="250" y2="438" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
-  <line x1="730" y1="476" x2="730" y2="438" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
-  <text x="262" y="462" font-size="12" fill="#6b7280">사용</text>
-  <text x="742" y="462" font-size="12" fill="#6b7280">사용</text>
+  <!-- ── 파일 구성 ── -->
+  <line x1="24" y1="520" x2="956" y2="520" stroke="#eef0f4" stroke-width="2"/>
+  <text x="24" y="552" font-size="14.5" font-weight="700" fill="#1f2430">파일 구성</text>
+  <rect x="24" y="564" width="932" height="100" rx="14" fill="#f8fafc" stroke="#d6dae3"/>
+  <text x="44" y="588" font-size="13.5" font-weight="700" fill="#1f2430">src/core/  <tspan font-weight="400" fill="#6b7280">엔진 (팀 공통 인터페이스)</tspan></text>
+  <g font-size="12">
+    <rect x="44" y="598" width="168" height="54" rx="10" fill="#ffffff" stroke="#c7cff9"/>
+    <text x="58" y="619" font-size="13.5" font-weight="700" fill="#3b4cca" font-family="Consolas, monospace">vdom.js</text>
+    <text x="58" y="639" fill="#4b5263">h · createElement · 검사</text>
 
-  <rect x="24" y="480" width="452" height="58" rx="12" fill="#ffffff" stroke="#d6dae3"/>
-  <text x="44" y="504" font-size="14" font-weight="700" fill="#1f2430">src/phase1/  <tspan font-weight="400" fill="#6b7280">index.html</tspan></text>
-  <text x="44" y="525" font-size="12.5" fill="#4b5263">실제 영역 · 테스트 영역 · Patch · 뒤로/앞으로 (History)</text>
+    <rect x="226" y="598" width="168" height="54" rx="10" fill="#ffffff" stroke="#a7e3bf"/>
+    <text x="240" y="619" font-size="13.5" font-weight="700" fill="#15803d" font-family="Consolas, monospace">diff.js</text>
+    <text x="240" y="639" fill="#4b5263">④ 두 VDOM 비교 (key)</text>
 
-  <rect x="504" y="480" width="452" height="58" rx="12" fill="#ffffff" stroke="#d6dae3"/>
-  <text x="524" y="504" font-size="14" font-weight="700" fill="#1f2430">src/app/  <tspan font-weight="400" fill="#6b7280">app.html</tspan></text>
-  <text x="524" y="525" font-size="12.5" fill="#4b5263">초능력 윷놀이 — State(일어난 일 목록)는 App에만, 자식은 props만</text>
+    <rect x="408" y="598" width="168" height="54" rx="10" fill="#ffffff" stroke="#a7e3bf"/>
+    <text x="422" y="619" font-size="13.5" font-weight="700" fill="#15803d" font-family="Consolas, monospace">patch.js</text>
+    <text x="422" y="639" fill="#4b5263">⑤ 실제 DOM 고치기</text>
+
+    <rect x="590" y="598" width="168" height="54" rx="10" fill="#ffffff" stroke="#fdba74"/>
+    <text x="604" y="619" font-size="13.5" font-weight="700" fill="#c2410c" font-family="Consolas, monospace">component.js</text>
+    <text x="604" y="639" fill="#4b5263">A · ②③ mount · update</text>
+
+    <rect x="772" y="598" width="168" height="54" rx="10" fill="#ffffff" stroke="#fdba74"/>
+    <text x="786" y="619" font-size="13.5" font-weight="700" fill="#c2410c" font-family="Consolas, monospace">hooks.js</text>
+    <text x="786" y="639" fill="#4b5263">①⑥ useState · useEffect …</text>
+  </g>
+  <rect x="24" y="676" width="452" height="48" rx="12" fill="#ffffff" stroke="#d6dae3"/>
+  <text x="44" y="697" font-size="13.5" font-weight="700" fill="#1f2430">src/phase1/  <tspan font-weight="400" fill="#6b7280">index.html</tspan></text>
+  <text x="44" y="715" font-size="12" fill="#4b5263">실제 영역 · 테스트 영역 · Patch · 뒤로/앞으로 — core를 직접 사용</text>
+  <rect x="504" y="676" width="452" height="48" rx="12" fill="#ffffff" stroke="#d6dae3"/>
+  <text x="524" y="697" font-size="13.5" font-weight="700" fill="#1f2430">src/app/  <tspan font-weight="400" fill="#6b7280">app.html</tspan></text>
+  <text x="524" y="715" font-size="12" fill="#4b5263">초능력 윷놀이 — State는 App에만, 자식은 props만 받아 그림</text>
 </svg>

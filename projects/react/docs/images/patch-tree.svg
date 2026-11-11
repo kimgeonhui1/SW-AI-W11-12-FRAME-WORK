@@ -22,7 +22,7 @@
   <rect x="122" y="150" width="80" height="34" rx="8" fill="#f8fafc" stroke="#d6dae3"/>
   <text x="162" y="172" font-size="13" text-anchor="middle" fill="#1f2430" font-family="Consolas, monospace">li "B"</text>
 
-  <text x="232" y="140" font-size="22" fill="#8b93a7">+</text>
+  <text x="236" y="140" font-size="14" font-weight="700" fill="#8b93a7">vs</text>
 
   <!-- 새 VDOM -->
   <text x="270" y="74" font-size="13.5" font-weight="700" fill="#6b7280">새 VDOM</text>

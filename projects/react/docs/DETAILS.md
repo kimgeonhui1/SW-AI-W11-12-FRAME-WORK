@@ -61,11 +61,10 @@ projects/react/
 │   ├── app/
 │   │   ├── App.js               루트 컴포넌트 (모든 State가 여기에)
 │   │   ├── main.js              App을 #root에 mount
-│   │   └── yut.js               윷놀이 규칙 + 초능력 (순수 함수: action 목록 → 판 · 차례 · 승자)
-│   │   ├── games.js             두 게임을 같은 모양(size · cols · play · check)으로 묶은 목록
+│   │   ├── yut.js               윷놀이 규칙 + 초능력 (순수 함수: action 목록 → 판 · 차례 · 승자)
 │   │   └── components/          PowerPick, YutBoard, ThrowPanel, TeamPanel, YutLog, ConfirmDialog (전부 Stateless)
 │   └── styles/style.css
-└── tests/                       *.test.html / *.test.js
+└── tests/                       *.test.html / *.test.js (단위 테스트), bench.html / bench.js (성능 측정)
 ```
 
 ---
@@ -330,7 +329,7 @@ sequenceDiagram
   F->>A: useEffect 실행 (탭 제목, 기보 스크롤)
 ```
 
-**전체를 다시 그리지 않습니다.** App은 화면 전체(요소 112개)를 매번 새 VDOM으로 만들지만, 말 하나를 옮길 때 실제 DOM 작업은 **노드 7개 생성 + 값 19개 수정**뿐인 것을 `MutationObserver`로 확인했습니다 (도착 칸의 말, 갈 칸 표시 해제, 상황 글자, 기보 한 줄, 팀 패널의 말 수). 렌더링 한 번(App 실행 + diff + patch)은 1.2~2.6 ms입니다 (`tests/bench.html`).
+**전체를 다시 그리지 않습니다.** App은 화면 전체(요소 112개)를 매번 새 VDOM으로 만들지만, 말 하나를 옮길 때 실제 DOM 작업은 **노드 7개 생성 + 값 19개 수정**뿐인 것을 `MutationObserver`로 확인했습니다 (도착 칸의 말, 갈 칸 표시 해제, 상황 글자, 기보 한 줄, 팀 패널의 말 수). 렌더링 한 번(App 호출 + diff + patch)은 약 2~3 ms입니다 (`tests/bench.html`).
 
 ---
 
@@ -341,13 +340,17 @@ sequenceDiagram
 | 파일 | 개수 | 내용 |
 |---|---|---|
 | `vdom.test` | 39 | h, domToVdom, createElement, 속성 적용, 이벤트, SVG, ref |
-| `diff.test` | 40 | 5가지 케이스, patch, key, **약속 테스트** |
-| `hooks.test` | 24 | FunctionComponent, useState(Batching), useEffect, useMemo, useRef, Hook 규칙 |
+| `diff.test` | 56 | 5가지 케이스, patch, key, **모든 쌍 테스트**, 무작위(퍼즈) 테스트 |
+| `hooks.test` | 37 | FunctionComponent, useState(Batching), useEffect, useMemo, useRef, Hook 규칙, 무작위 state 변경 |
 | `htmlText.test` | 7 | HTML ↔ VDOM 왕복 |
 | `history.test` | 6 | 뒤로 / 앞으로 / 기록 자르기 |
-| **합계** | **116** | |
+| `yut.test` | 24 | 윷놀이 규칙 (지름길 · 업기 · 잡기 · 나기 · 초능력), 앱 화면 흐름 |
+| `ported.test` | 106 | 팀원(김준우 님) 테스트 중 형식만 달라 실패한 것을 같은 상황 그대로 옮긴 것 |
+| **합계** | **275** | |
 
-### 약속 테스트: "patch한 결과 = 처음부터 새로 그린 결과"
+성능 측정(`tests/bench.html`)은 테스트와 따로 있습니다. 결과는 README의 "핵심 설계 ④"에 있습니다.
+
+### 모든 쌍 테스트: "patch한 결과 = 처음부터 새로 그린 결과"
 
 사례를 하나씩 적는 대신, **VDOM 샘플 36개의 모든 쌍**(36 × 36 = 1,296가지 전환)에 대해 아래를 자동으로 확인합니다.
 

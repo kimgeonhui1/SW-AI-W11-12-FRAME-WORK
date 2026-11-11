@@ -56,10 +56,11 @@ function scenario(name, before, after, { keyed = true } = {}) {
   document.body.appendChild(box);
   const oldV = view(before, keyed);
   const newV = view(after, keyed);
+  const newHtml = html(after); // 세 방법 모두 "새 화면 데이터(VDOM · 문자열)는 이미 있음"에서 시작한다
   const methods = {
     "diff + patch": () => patch(box, diff(oldV, newV)),
     "createElement 통째로": () => box.replaceChildren(createElement(newV)),
-    "innerHTML 통째로": () => (box.innerHTML = html(after)),
+    "innerHTML 통째로": () => (box.innerHTML = newHtml),
   };
   const result = { name, ms: {}, mutations: {} };
   for (const [m, run] of Object.entries(methods)) {
