@@ -7,11 +7,16 @@
   <link rel="stylesheet" href="./src/styles/style.css" />
 </head>
 <body>
+  <h1>Mini React — History</h1>
+  <p>테스트 영역의 내용을 편집한 후 Patch를 누르세요. 뒤로가기·앞으로가기는 편집 중인 내용도 해당 기록으로 되돌립니다.</p>
+  <h2>실제 영역</h2>
   <div id="real-area"></div>
+  <h2>테스트 영역 (편집 가능)</h2>
   <div id="test-area"></div>
   <button id="patch-btn">Patch</button>
-  <button id="undo-btn">뒤로가기</button>
-  <button id="redo-btn">앞으로가기</button>
+  <button id="undo-btn" disabled>뒤로가기</button>
+  <button id="redo-btn" disabled>앞으로가기</button>
+  <p id="history-status" role="status"></p>
   <script type="module" src="./src/phase1/main.js"></script>
 </body>
 </html>

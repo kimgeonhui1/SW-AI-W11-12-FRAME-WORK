@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<title>Phase 1 화면 통합 테스트</title>
+<h1>Phase 1 화면 통합 테스트</h1>
+<p id="summary">실행 대기 중</p>
+<ol id="results"></ol>
+<iframe id="app" title="실제 Phase 1 페이지" style="width:100%;height:500px"></iframe>
+<script type="module">
+  const frame = document.querySelector("#app");
+  const results = document.querySelector("#results");
+  let passed = 0;
+  const assert = (value, message) => { if (!value) throw new Error(message); };
+  async function test(name, run) {
+    const item = document.createElement("li");
+    try {
+      const loaded = new Promise(resolve => { frame.onload = resolve; });
+      frame.src = `../index.html?case=${results.children.length}`;
+      await loaded;
+      const doc = frame.contentDocument;
+      const real = doc.querySelector("#real-area");
+      const editor = doc.querySelector("#test-area");
+      const patch = doc.querySelector("#patch-btn");
+      const undo = doc.querySelector("#undo-btn");
+      const redo = doc.querySelector("#redo-btn");
+      const edit = html => { editor.firstChild.innerHTML = html; };
+      const same = value => {
+        assert(real.textContent === value && editor.textContent === value, "두 영역/기록 불일치");
+        assert(editor.firstChild.isContentEditable && !real.firstChild.isContentEditable, "편집 영역 권한 오류");
+        assert(!real.firstChild.hasAttribute("contenteditable"), "UI 속성이 기록에 포함됨");
+      };
+      run({ doc, real, editor, patch, undo, redo, edit, same });
+      passed++;
+      item.textContent = `PASS — ${name}`;
+    } catch (error) { item.textContent = `FAIL — ${name}: ${error.message}`; }
+    results.appendChild(item);
+  }
+  await test("실제 버튼: A → B → C → Undo B → Redo C, 양쪽 화면 일치", ({ patch, undo, redo, edit, same }) => {
+    same("A");
+    assert(undo.disabled && redo.disabled, "초기 버튼 경계 오류");
+    edit("<p>B</p>"); patch.click(); same("B");
+    edit("<p>C</p>"); patch.click(); same("C");
+    undo.click(); same("B");
+    assert(!undo.disabled && !redo.disabled, "중간 버튼 상태 오류");
+    redo.click(); same("C");
+    assert(redo.disabled, "끝에서 Redo 활성화");
+  });
+  await test("Undo 후 D Patch: C 폐기, 새 분기와 첫/끝 버튼 경계", ({ patch, undo, redo, edit, same }) => {
+    edit("<p>B</p>"); patch.click();
+    edit("<p>C</p>"); patch.click();
+    undo.click(); edit("<p>D</p>"); patch.click();
+    assert(redo.disabled, "새 분기 뒤 Redo 활성화");
+    redo.click(); same("D");
+    undo.click(); same("B"); undo.click(); same("A");
+    assert(undo.disabled, "처음에서 Undo 활성화");
+    undo.click(); same("A"); redo.click(); same("B"); redo.click(); same("D");
+  });
+  await test("미반영 초안은 실제 화면/기록을 오염하지 않으며 Undo/Redo로 폐기", ({ real, patch, undo, redo, edit, same }) => {
+    edit("<p>B</p>"); patch.click();
+    edit("<p>draft</p>");
+    assert(real.textContent === "B", "초안이 실제 화면에 반영됨");
+    undo.click(); same("A");
+    edit("<p>another draft</p>"); redo.click(); same("B");
+  });
+  await test("동일 Patch는 기록을 추가하거나 Redo 분기를 폐기하지 않음", ({ real, patch, undo, redo, edit, same }) => {
+    const observer = new MutationObserver(() => {});
+    observer.observe(real, { subtree: true, childList: true, characterData: true, attributes: true });
+    patch.click();
+    assert(undo.disabled && observer.takeRecords().length === 0, "동일 Patch가 기록/DOM을 변경");
+    observer.disconnect();
+    edit("<p>B</p>"); patch.click(); undo.click(); patch.click();
+    assert(!redo.disabled, "동일 Patch가 미래 기록 삭제");
+    redo.click(); same("B"); undo.click(); same("A");
+    assert(undo.disabled, "중복 기록 생성");
+  });
+  await test("화면 갱신도 기존 실제 p와 Text identity를 유지", ({ real, patch, undo, redo, edit, same }) => {
+    const root = real.firstChild;
+    const p = root.firstChild;
+    const text = p.firstChild;
+    edit("<p>B</p>"); patch.click(); undo.click(); redo.click(); same("B");
+    assert(real.firstChild === root && root.firstChild === p && p.firstChild === text, "화면에서 전체 재생성 발생");
+  });
+  await test("빈 초안과 중첩 속성/자식 변경도 기록과 복원", ({ real, editor, patch, undo, redo, edit, same }) => {
+    edit('<p title="new">B<b>C</b></p><i>D</i>'); patch.click(); same("BCD");
+    const expected = real.firstChild.innerHTML;
+    edit(""); patch.click(); same("");
+    undo.click(); same("BCD");
+    assert(real.firstChild.innerHTML === expected && editor.firstChild.innerHTML === expected, "중첩/속성 복원 오류");
+    redo.click(); same(""); undo.click(); undo.click(); same("A");
+  });
+  const summary = document.querySelector("#summary");
+  summary.textContent = `${passed}/${results.children.length} PASS`;
+  summary.dataset.status = passed === results.children.length ? "pass" : "fail";
+</script>
+</html>

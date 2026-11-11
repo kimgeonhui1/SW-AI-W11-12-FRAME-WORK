@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<title>App 화면 테스트</title>
+<h1>App 화면 테스트</h1>
+<p id="summary">실행 대기 중</p>
+<ol id="results"></ol>
+<iframe id="app" title="실제 App" style="width:100%;height:650px"></iframe>
+<script type="module">
+  const frame = document.querySelector("#app");
+  const results = document.querySelector("#results");
+  const assert = (value, message) => { if (!value) throw new Error(message); };
+  let passed = 0;
+  async function test(name, run) {
+    const item = document.createElement("li");
+    try {
+      const loaded = new Promise(resolve => { frame.onload = resolve; });
+      frame.src = `../app.html?case=${results.children.length}`;
+      await loaded;
+      const doc = frame.contentDocument;
+      const click = action => doc.querySelector(`[data-action="${action}"]`).click();
+      const text = id => doc.getElementById(id).textContent;
+      run({ doc, click, text });
+      passed++;
+      item.textContent = `PASS — ${name}`;
+    } catch (error) { item.textContent = `FAIL — ${name}: ${error.message}`; }
+    results.appendChild(item);
+  }
+  await test("실제 App 초기 렌더와 Effect", ({ doc, text }) => {
+    assert(text("count") === "0" && text("doubled") === "0" && text("label") === "A", "초기 화면 불일치");
+    assert(text("effect-status") === "카운트 0 반영 완료" && doc.querySelector("#effect-log").children.length === 1, "최초 Effect 누락/중복");
+  });
+  await test("+1 버튼의 함수형 갱신, Memo 값, Effect cleanup 순서, DOM identity", ({ doc, click, text }) => {
+    const span = doc.getElementById("count");
+    const node = span.firstChild;
+    const button = doc.querySelector('[data-action="increment"]');
+    click("increment"); click("increment");
+    assert(text("count") === "2" && text("doubled") === "4", "State/Memo 화면 불일치");
+    assert(doc.getElementById("count") === span && span.firstChild === node &&
+      doc.querySelector('[data-action="increment"]') === button, "App DOM 객체 교체");
+    const log = Array.from(doc.querySelector("#effect-log").children, item => item.textContent);
+    assert(log.join() === "Effect: 0,Cleanup: 0,Effect: 1,Cleanup: 1,Effect: 2", "Effect/cleanup 순서 오류");
+  });
+  await test("다른 State 갱신은 count Effect를 실행하지 않음; 이벤트 중복 없음", ({ doc, click, text }) => {
+    for (let i = 0; i < 5; i++) click("label");
+    assert(text("label") === "B" && text("count") === "0" && text("doubled") === "0", "State 간 간섭");
+    assert(doc.querySelector("#effect-log").children.length === 1, "무관한 의존성으로 Effect 재실행");
+    click("increment");
+    assert(text("count") === "1" && text("doubled") === "2" && text("label") === "B", "이벤트 중복/State 초기화");
+  });
+  await test("같은 값 버튼은 DOM 조작과 Effect 실행 없음", ({ doc, click }) => {
+    const observer = new MutationObserver(() => {});
+    observer.observe(doc.body, { subtree: true, childList: true, characterData: true, attributes: true });
+    click("same");
+    assert(observer.takeRecords().length === 0, "동일 값의 불필요한 DOM 조작");
+    observer.disconnect();
+  });
+  const summary = document.querySelector("#summary");
+  summary.textContent = `${passed}/${results.children.length} PASS`;
+  summary.dataset.status = passed === results.children.length ? "pass" : "fail";
+</script>
+</html>

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<title>History 테스트</title>
+<h1>History 테스트</h1>
+<p id="summary">실행 대기 중</p>
+<ol id="results"></ol>
+<script type="module">
+  import { h } from "../src/core/vdom.js";
+  const results = document.querySelector("#results");
+  let passed = 0;
+  let caseId = 0;
+  const assert = (value, message) => { if (!value) throw new Error(message); };
+  const state = value => h("section", {}, h("p", { title: value }, value));
+  const value = result => result.vdom.children[0].children[0];
+  async function test(name, run) {
+    const item = document.createElement("li");
+    try {
+      // A fresh module instance isolates each test without adding a reset API.
+      const history = await import(`../src/phase1/history.js?case=${caseId++}`);
+      run(history);
+      passed++;
+      item.textContent = `PASS — ${name}`;
+    } catch (error) { item.textContent = `FAIL — ${name}: ${error.message}`; }
+    results.appendChild(item);
+  }
+  await test("빈 History와 첫/끝 경계", ({ push, undo, redo }) => {
+    assert(undo() === null && redo() === null, "빈 기록 경계 오류");
+    const first = push(state("A"));
+    assert(!first.canUndo && !first.canRedo, "첫 기록 버튼 상태 오류");
+    assert(value(undo()) === "A" && value(undo()) === "A", "첫 상태에서 벗어남");
+    assert(value(redo()) === "A" && !redo().canRedo, "끝 상태에서 벗어남");
+  });
+  await test("A → B → C → Undo B → Redo C", ({ push, undo, redo }) => {
+    for (const v of ["A", "B", "C"]) push(state(v));
+    const b = undo();
+    assert(value(b) === "B" && b.canUndo && b.canRedo, "Undo B 실패");
+    const c = redo();
+    assert(value(c) === "C" && c.canUndo && !c.canRedo, "Redo C 실패");
+    assert(value(redo()) === "C", "끝 경계 오류");
+  });
+  await test("Undo 뒤 D push는 미래 C 폐기", ({ push, undo, redo }) => {
+    for (const v of ["A", "B", "C"]) push(state(v));
+    undo();
+    assert(!push(state("D")).canRedo, "미래 기록이 남음");
+    assert(value(redo()) === "D", "C로 Redo됨");
+    assert(value(undo()) === "B" && value(redo()) === "D", "새 분기 오류");
+  });
+  await test("입력 및 push/undo/redo 반환값의 깊은 변경으로부터 보호", ({ push, undo, redo }) => {
+    const original = state("A");
+    const returned = push(original);
+    original.children[0].children[0] = "external";
+    original.children[0].props.title = "external";
+    returned.vdom.children.length = 0;
+    push(state("B"));
+    const a = undo();
+    assert(value(a) === "A" && a.vdom.children[0].props.title === "A", "입력/반환 객체와 기록 공유");
+    a.vdom.children[0].children[0] = "changed";
+    const b = redo();
+    b.vdom.children[0].props.title = "changed";
+    assert(value(undo()) === "A" && redo().vdom.children[0].props.title === "B", "이동 반환값이 기록을 오염");
+  });
+  await test("복사 실패 시 현재 위치와 미래 기록 보존", ({ push, undo, redo }) => {
+    push(state("A")); push(state("B")); undo();
+    let rejected = false;
+    try { push({ callback() {} }); } catch { rejected = true; }
+    assert(rejected && value(redo()) === "B", "복사 실패가 미래 기록을 삭제함");
+  });
+  await test("빈 문자열/null도 기록이며 경계 null 반환과 구분", ({ push, undo, redo }) => {
+    push(null); push("");
+    assert(undo().vdom === null && redo().vdom === "", "빈 상태 유실");
+  });
+  const summary = document.querySelector("#summary");
+  summary.textContent = `${passed}/${results.children.length} PASS`;
+  summary.dataset.status = passed === results.children.length ? "pass" : "fail";
+</script>
+</html>
