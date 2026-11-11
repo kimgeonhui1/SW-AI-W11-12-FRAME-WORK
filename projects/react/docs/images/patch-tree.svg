@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 470" width="980" height="470" font-family="Pretendard, 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8b93a7"/>
+    </marker>
+    <marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/>
+    </marker>
+  </defs>
+  <rect width="980" height="470" rx="16" fill="#ffffff"/>
+  <rect x="0.5" y="0.5" width="979" height="469" rx="16" fill="none" stroke="#e5e7eb"/>
+
+  <text x="24" y="38" font-size="16" font-weight="700" fill="#1f2430">diff 결과 = "패치 트리" (VDOM과 같은 모양, 바뀐 곳만 표시)</text>
+
+  <!-- 이전 VDOM -->
+  <text x="40" y="74" font-size="13.5" font-weight="700" fill="#6b7280">이전 VDOM</text>
+  <rect x="70" y="86" width="96" height="34" rx="8" fill="#f8fafc" stroke="#d6dae3"/>
+  <text x="118" y="108" font-size="13" text-anchor="middle" fill="#1f2430" font-family="Consolas, monospace">ul</text>
+  <path d="M118 120 L74 150 M118 120 L162 150" stroke="#c4c9d4" stroke-width="1.6" fill="none"/>
+  <rect x="34" y="150" width="80" height="34" rx="8" fill="#f8fafc" stroke="#d6dae3"/>
+  <text x="74" y="172" font-size="13" text-anchor="middle" fill="#1f2430" font-family="Consolas, monospace">li "A"</text>
+  <rect x="122" y="150" width="80" height="34" rx="8" fill="#f8fafc" stroke="#d6dae3"/>
+  <text x="162" y="172" font-size="13" text-anchor="middle" fill="#1f2430" font-family="Consolas, monospace">li "B"</text>
+
+  <text x="232" y="140" font-size="22" fill="#8b93a7">+</text>
+
+  <!-- 새 VDOM -->
+  <text x="270" y="74" font-size="13.5" font-weight="700" fill="#6b7280">새 VDOM</text>
+  <rect x="318" y="86" width="132" height="34" rx="8" fill="#f8fafc" stroke="#d6dae3"/>
+  <text x="384" y="108" font-size="13" text-anchor="middle" fill="#1f2430" font-family="Consolas, monospace">ul.list</text>
+  <path d="M384 120 L310 150 M384 120 L398 150 M384 120 L486 150" stroke="#c4c9d4" stroke-width="1.6" fill="none"/>
+  <rect x="270" y="150" width="80" height="34" rx="8" fill="#f8fafc" stroke="#d6dae3"/>
+  <text x="310" y="172" font-size="13" text-anchor="middle" fill="#1f2430" font-family="Consolas, monospace">li "A"</text>
+  <rect x="358" y="150" width="80" height="34" rx="8" fill="#f8fafc" stroke="#d6dae3"/>
+  <text x="398" y="172" font-size="13" text-anchor="middle" fill="#1f2430" font-family="Consolas, monospace">li "C"</text>
+  <rect x="446" y="150" width="80" height="34" rx="8" fill="#f8fafc" stroke="#d6dae3"/>
+  <text x="486" y="172" font-size="13" text-anchor="middle" fill="#1f2430" font-family="Consolas, monospace">li "D"</text>
+
+  <line x1="546" y1="135" x2="586" y2="135" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
+  <text x="548" y="124" font-size="12" fill="#6b7280">diff</text>
+
+  <!-- 패치 트리 -->
+  <text x="606" y="74" font-size="13.5" font-weight="700" fill="#15803d">패치 트리</text>
+  <rect x="660" y="86" width="210" height="34" rx="8" fill="#fef9c3" stroke="#facc15"/>
+  <text x="765" y="108" font-size="12.5" text-anchor="middle" fill="#854d0e" font-family="Consolas, monospace">UPDATE  class="list"</text>
+  <path d="M765 120 L650 150 M765 120 L758 150 M765 120 L888 150" stroke="#c4c9d4" stroke-width="1.6" fill="none"/>
+  <rect x="610" y="150" width="80" height="34" rx="8" fill="#f8fafc" stroke="#e5e7eb" stroke-dasharray="4 3"/>
+  <text x="650" y="172" font-size="13" text-anchor="middle" fill="#9ca3af" font-family="Consolas, monospace">null</text>
+  <rect x="704" y="150" width="108" height="34" rx="8" fill="#dbeafe" stroke="#60a5fa"/>
+  <text x="758" y="172" font-size="12.5" text-anchor="middle" fill="#1e40af" font-family="Consolas, monospace">TEXT "C"</text>
+  <rect x="826" y="150" width="124" height="34" rx="8" fill="#dcfce7" stroke="#4ade80"/>
+  <text x="888" y="172" font-size="12.5" text-anchor="middle" fill="#166534" font-family="Consolas, monospace">CREATE li "D"</text>
+
+  <g font-size="12.5" fill="#4b5263">
+    <text x="606" y="214">· 그대로인 곳은 <tspan font-family="Consolas, monospace" fill="#6b7280">null</tspan> → patch가 건너뜀</text>
+    <text x="606" y="234">· patch는 DOM을 같은 인덱스로 따라 내려가기만 하면 됨</text>
+  </g>
+
+  <!-- key 이동 -->
+  <line x1="24" y1="262" x2="956" y2="262" stroke="#eef0f4" stroke-width="2"/>
+  <text x="24" y="296" font-size="16" font-weight="700" fill="#1f2430">key 리스트: 노드는 재사용하고, 꼭 필요한 것만 옮긴다</text>
+
+  <text x="40" y="336" font-size="13" font-weight="700" fill="#6b7280">이전</text>
+  <g font-family="Consolas, monospace" font-size="15" text-anchor="middle">
+    <rect x="90" y="314" width="52" height="38" rx="8" fill="#fee2e2" stroke="#f87171"/><text x="116" y="339" fill="#991b1b">A</text>
+    <rect x="152" y="314" width="52" height="38" rx="8" fill="#f8fafc" stroke="#d6dae3"/><text x="178" y="339" fill="#1f2430">B</text>
+    <rect x="214" y="314" width="52" height="38" rx="8" fill="#eef1ff" stroke="#4f63e7"/><text x="240" y="339" fill="#3b4cca">C</text>
+    <rect x="276" y="314" width="52" height="38" rx="8" fill="#f8fafc" stroke="#d6dae3"/><text x="302" y="339" fill="#1f2430">D</text>
+
+    <rect x="152" y="396" width="52" height="38" rx="8" fill="#f8fafc" stroke="#d6dae3"/><text x="178" y="421" fill="#1f2430">B</text>
+    <rect x="214" y="396" width="52" height="38" rx="8" fill="#eef1ff" stroke="#4f63e7"/><text x="240" y="421" fill="#3b4cca">C</text>
+    <rect x="276" y="396" width="52" height="38" rx="8" fill="#f8fafc" stroke="#d6dae3"/><text x="302" y="421" fill="#1f2430">D</text>
+    <rect x="338" y="396" width="52" height="38" rx="8" fill="#fee2e2" stroke="#f87171"/><text x="364" y="421" fill="#991b1b">A</text>
+  </g>
+  <text x="40" y="420" font-size="13" font-weight="700" fill="#6b7280">새 순서</text>
+  <path d="M116 352 C 116 380, 364 368, 364 392" fill="none" stroke="#dc2626" stroke-width="2" marker-end="url(#m)"/>
+  <text x="404" y="372" font-size="12.5" fill="#991b1b">A만 이동 (1번)</text>
+
+  <g font-size="13" fill="#1f2430">
+    <rect x="540" y="310" width="416" height="128" rx="12" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="560" y="338" font-weight="700">React와 같은 규칙 (lastPlaced)</text>
+    <text x="560" y="362" fill="#4b5263">B · C · D는 순서가 이미 맞으므로 그대로 두고,</text>
+    <text x="560" y="382" fill="#4b5263">순서가 어긋난 A만 맨 뒤로 옮긴다.</text>
+    <text x="560" y="410" fill="#3b4cca">→ C 입력창에 글자를 치던 중이어도 포커스 · 입력값 유지</text>
+    <text x="560" y="428" font-size="12" fill="#9ca3af">(처음 방식은 B · C · D 3개를 옮겨서 포커스가 풀렸다)</text>
+  </g>
+</svg>

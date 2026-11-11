@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 560" width="980" height="560" font-family="Pretendard, 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8b93a7"/>
+    </marker>
+    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#d97706"/>
+    </marker>
+  </defs>
+  <rect width="980" height="560" rx="16" fill="#ffffff"/>
+  <rect x="0.5" y="0.5" width="979" height="559" rx="16" fill="none" stroke="#e5e7eb"/>
+
+  <text x="24" y="38" font-size="16" font-weight="700" fill="#1f2430">State가 바뀌면 화면이 바뀌기까지 (Phase 2)</text>
+
+  <!-- 1행: 왼쪽 → 오른쪽 -->
+  <g font-size="13">
+    <rect x="24" y="60" width="210" height="72" rx="12" fill="#fff7ed" stroke="#fdba74"/>
+    <text x="42" y="88" font-size="14.5" font-weight="700" fill="#c2410c">① 클릭 → setState</text>
+    <text x="42" y="112" fill="#4b5263">값만 저장, 바로 그리지 않음</text>
+
+    <rect x="266" y="60" width="210" height="72" rx="12" fill="#f8fafc" stroke="#d6dae3"/>
+    <text x="284" y="88" font-size="14.5" font-weight="700" fill="#1f2430">② Batching</text>
+    <text x="284" y="112" fill="#4b5263">queueMicrotask로 1번만 예약</text>
+
+    <rect x="508" y="60" width="210" height="72" rx="12" fill="#eef1ff" stroke="#c7cff9"/>
+    <text x="526" y="88" font-size="14.5" font-weight="700" fill="#3b4cca">③ App() 다시 실행</text>
+    <text x="526" y="112" fill="#4b5263">= 렌더링, Hook이 값을 꺼냄</text>
+
+    <rect x="750" y="60" width="206" height="72" rx="12" fill="#eef1ff" stroke="#c7cff9"/>
+    <text x="768" y="88" font-size="14.5" font-weight="700" fill="#3b4cca">④ 새 VDOM + 검사</text>
+    <text x="768" y="112" fill="#4b5263">validateVNode (위치까지 알림)</text>
+  </g>
+  <line x1="234" y1="96" x2="262" y2="96" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="476" y1="96" x2="504" y2="96" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="718" y1="96" x2="746" y2="96" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="853" y1="132" x2="853" y2="164" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
+
+  <!-- 2행: 오른쪽 → 왼쪽 -->
+  <g font-size="13">
+    <rect x="750" y="168" width="206" height="72" rx="12" fill="#ecfdf3" stroke="#a7e3bf"/>
+    <text x="768" y="196" font-size="14.5" font-weight="700" fill="#15803d">⑤ diff(이전, 새)</text>
+    <text x="768" y="220" fill="#4b5263">바뀐 곳만 담은 패치 트리</text>
+
+    <rect x="508" y="168" width="210" height="72" rx="12" fill="#ecfdf3" stroke="#a7e3bf"/>
+    <text x="526" y="196" font-size="14.5" font-weight="700" fill="#15803d">⑥ patch</text>
+    <text x="526" y="220" fill="#4b5263">실제 DOM은 바뀐 곳만 수정</text>
+
+    <rect x="266" y="168" width="210" height="72" rx="12" fill="#f8fafc" stroke="#d6dae3"/>
+    <text x="284" y="196" font-size="14.5" font-weight="700" fill="#1f2430">⑦ 화면 반영</text>
+    <text x="284" y="220" fill="#4b5263">입력값 · 포커스는 그대로</text>
+
+    <rect x="24" y="168" width="210" height="72" rx="12" fill="#fff7ed" stroke="#fdba74"/>
+    <text x="42" y="196" font-size="14.5" font-weight="700" fill="#c2410c">⑧ useEffect 실행</text>
+    <text x="42" y="220" fill="#4b5263">cleanup 전부 → effect 전부</text>
+  </g>
+  <line x1="750" y1="204" x2="722" y2="204" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="508" y1="204" x2="480" y2="204" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="266" y1="204" x2="238" y2="204" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
+  <path d="M129 168 L129 136" stroke="#d97706" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#b)"/>
+  <text x="138" y="156" font-size="12" fill="#c2410c">effect 안의 setState → 다시 ① (50번 연속이면 멈춤)</text>
+
+  <!-- 파일 구성 -->
+  <text x="24" y="290" font-size="16" font-weight="700" fill="#1f2430">파일 구성</text>
+  <rect x="24" y="304" width="932" height="128" rx="14" fill="#f8fafc" stroke="#d6dae3"/>
+  <text x="44" y="330" font-size="14" font-weight="700" fill="#1f2430">src/core/  <tspan font-weight="400" fill="#6b7280">엔진 (팀 공통 인터페이스)</tspan></text>
+  <g font-size="12.5">
+    <rect x="44" y="344" width="168" height="72" rx="10" fill="#ffffff" stroke="#c7cff9"/>
+    <text x="58" y="368" font-size="14" font-weight="700" fill="#3b4cca" font-family="Consolas, monospace">vdom.js</text>
+    <text x="58" y="388" fill="#4b5263">h · createElement</text>
+    <text x="58" y="405" fill="#4b5263">domToVdom · 검사</text>
+
+    <rect x="226" y="344" width="168" height="72" rx="10" fill="#ffffff" stroke="#a7e3bf"/>
+    <text x="240" y="368" font-size="14" font-weight="700" fill="#15803d" font-family="Consolas, monospace">diff.js</text>
+    <text x="240" y="388" fill="#4b5263">두 VDOM 비교</text>
+    <text x="240" y="405" fill="#4b5263">→ 패치 트리 (key 지원)</text>
+
+    <rect x="408" y="344" width="168" height="72" rx="10" fill="#ffffff" stroke="#a7e3bf"/>
+    <text x="422" y="368" font-size="14" font-weight="700" fill="#15803d" font-family="Consolas, monospace">patch.js</text>
+    <text x="422" y="388" fill="#4b5263">패치 트리를 따라</text>
+    <text x="422" y="405" fill="#4b5263">실제 DOM 수정</text>
+
+    <rect x="590" y="344" width="168" height="72" rx="10" fill="#ffffff" stroke="#fdba74"/>
+    <text x="604" y="368" font-size="14" font-weight="700" fill="#c2410c" font-family="Consolas, monospace">component.js</text>
+    <text x="604" y="388" fill="#4b5263">FunctionComponent</text>
+    <text x="604" y="405" fill="#4b5263">mount · update · Batching</text>
+
+    <rect x="772" y="344" width="168" height="72" rx="10" fill="#ffffff" stroke="#fdba74"/>
+    <text x="786" y="368" font-size="14" font-weight="700" fill="#c2410c" font-family="Consolas, monospace">hooks.js</text>
+    <text x="786" y="388" fill="#4b5263">useState · useEffect</text>
+    <text x="786" y="405" fill="#4b5263">useMemo · useRef</text>
+  </g>
+
+  <line x1="250" y1="476" x2="250" y2="438" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="730" y1="476" x2="730" y2="438" stroke="#8b93a7" stroke-width="2" marker-end="url(#a)"/>
+  <text x="262" y="462" font-size="12" fill="#6b7280">사용</text>
+  <text x="742" y="462" font-size="12" fill="#6b7280">사용</text>
+
+  <rect x="24" y="480" width="452" height="58" rx="12" fill="#ffffff" stroke="#d6dae3"/>
+  <text x="44" y="504" font-size="14" font-weight="700" fill="#1f2430">src/phase1/  <tspan font-weight="400" fill="#6b7280">index.html</tspan></text>
+  <text x="44" y="525" font-size="12.5" fill="#4b5263">실제 영역 · 테스트 영역 · Patch · 뒤로/앞으로 (History)</text>
+
+  <rect x="504" y="480" width="452" height="58" rx="12" fill="#ffffff" stroke="#d6dae3"/>
+  <text x="524" y="504" font-size="14" font-weight="700" fill="#1f2430">src/app/  <tspan font-weight="400" fill="#6b7280">app.html</tspan></text>
+  <text x="524" y="525" font-size="12.5" fill="#4b5263">Todo 앱 — State는 App 하나에만, 자식은 props만 받음</text>
+</svg>

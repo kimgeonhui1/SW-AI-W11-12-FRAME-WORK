@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 330" width="980" height="330" font-family="Pretendard, 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8b93a7"/>
+    </marker>
+  </defs>
+  <rect width="980" height="330" rx="16" fill="#ffffff"/>
+  <rect x="0.5" y="0.5" width="979" height="329" rx="16" fill="none" stroke="#e5e7eb"/>
+
+  <!-- ① 인터페이스 합의 -->
+  <rect x="24" y="64" width="190" height="112" rx="12" fill="#eef1ff" stroke="#c7cff9"/>
+  <text x="44" y="94" font-size="15" font-weight="700" fill="#3b4cca">① 인터페이스 합의</text>
+  <text x="44" y="120" font-size="13" fill="#1f2430">VDOM 형식</text>
+  <text x="44" y="139" font-size="12.5" fill="#4b5263" font-family="Consolas, monospace">{ type, props, children }</text>
+  <text x="44" y="160" font-size="13" fill="#1f2430">파일 · 함수 이름 고정</text>
+
+  <line x1="214" y1="120" x2="246" y2="120" stroke="#8b93a7" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- ② dev 뼈대 -->
+  <rect x="250" y="84" width="150" height="72" rx="12" fill="#f8fafc" stroke="#d6dae3"/>
+  <text x="270" y="114" font-size="15" font-weight="700" fill="#1f2430">② dev에 뼈대</text>
+  <text x="270" y="137" font-size="12.5" fill="#6b7280">함수 껍데기 + 규칙</text>
+
+  <!-- 브랜치 3개 -->
+  <path d="M400 120 C 415 120, 415 58, 430 58" fill="none" stroke="#8b93a7" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="400" y1="120" x2="428" y2="120" stroke="#8b93a7" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M400 120 C 415 120, 415 182, 430 182" fill="none" stroke="#8b93a7" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="434" y="36" width="220" height="44" rx="10" fill="#ffffff" stroke="#4f63e7" stroke-width="1.6"/>
+  <text x="452" y="63" font-size="13.5" font-weight="700" fill="#3b4cca" font-family="Consolas, monospace">feat/Kimgeonhui-React</text>
+  <rect x="434" y="98" width="220" height="44" rx="10" fill="#ffffff" stroke="#d6dae3"/>
+  <text x="452" y="125" font-size="13.5" fill="#1f2430" font-family="Consolas, monospace">feat/Kimjeonghee-React</text>
+  <rect x="434" y="160" width="220" height="44" rx="10" fill="#ffffff" stroke="#d6dae3"/>
+  <text x="452" y="187" font-size="13.5" fill="#1f2430" font-family="Consolas, monospace">feat/Kimjunwoo-React</text>
+  <text x="434" y="226" font-size="12" fill="#6b7280">각자 같은 과제를 처음부터 구현</text>
+
+  <!-- 모으기 -->
+  <path d="M654 58 C 680 58, 680 120, 706 120" fill="none" stroke="#8b93a7" stroke-width="2"/>
+  <line x1="654" y1="120" x2="706" y2="120" stroke="#8b93a7" stroke-width="2"/>
+  <path d="M654 182 C 680 182, 680 120, 706 120" fill="none" stroke="#8b93a7" stroke-width="2"/>
+  <line x1="706" y1="120" x2="724" y2="120" stroke="#8b93a7" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- ③ 비교 -->
+  <rect x="728" y="64" width="228" height="112" rx="12" fill="#ecfdf3" stroke="#a7e3bf"/>
+  <text x="748" y="94" font-size="15" font-weight="700" fill="#15803d">③ 서로 비교 → dev로</text>
+  <text x="748" y="120" font-size="13" fill="#1f2430">인터페이스가 같아서</text>
+  <text x="748" y="139" font-size="13" fill="#1f2430">코드 · 테스트를 바꿔 끼워 비교</text>
+  <text x="748" y="160" font-size="13" fill="#1f2430">좋은 점은 서로 가져오기</text>
+
+  <!-- 하단 도구 -->
+  <rect x="24" y="252" width="452" height="54" rx="10" fill="#f8fafc" stroke="#e5e7eb"/>
+  <text x="44" y="276" font-size="13.5" font-weight="700" fill="#1f2430">GitHub Project</text>
+  <text x="44" y="295" font-size="12.5" fill="#4b5263">Phase별 이슈 + 체크리스트로 진행 상황 공유</text>
+  <rect x="504" y="252" width="452" height="54" rx="10" fill="#f8fafc" stroke="#e5e7eb"/>
+  <text x="524" y="276" font-size="13.5" font-weight="700" fill="#1f2430">AI 교차 검증</text>
+  <text x="524" y="295" font-size="12.5" fill="#4b5263">Claude로 구현 → Gemini로 리뷰 → 테스트로 재현된 것만 수정</text>
+</svg>
