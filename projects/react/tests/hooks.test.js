@@ -1,6 +1,6 @@
 // [hooks.test.js] FunctionComponent / useState / useEffect / useMemo 단위 테스트 (브라우저에서 hooks.test.html로 실행)
 
-import { h } from "../src/core/vdom.js";
+import { h, domToVdom } from "../src/core/vdom.js";
 import { FunctionComponent } from "../src/core/component.js";
 import { useState, useEffect, useMemo, useRef } from "../src/core/hooks.js";
 
@@ -557,6 +557,54 @@ test("3차 개선: 같은 이벤트의 핸들러 하나(onInput)가 에러를 �
   window.removeEventListener("error", onError);
   assertEqual(log, ["onChange"]);
   if (!errors.some((m) => m.includes("onInput 실패"))) throw new Error("에러가 알려지지 않음");
+});
+
+test("퍼즈 1,000회 (Phase 2): 사용자 입력과 setState를 섞어도, 제어 컴포넌트 화면은 항상 state를 새로 그린 것과 같음", async () => {
+  let seed = 31337;
+  const r = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const pick = (a) => a[Math.floor(r() * a.length)];
+  // state → 화면. 모든 폼은 제어 컴포넌트(value / checked prop이 있음)
+  const view = (s) =>
+    h(
+      "div",
+      null,
+      h("ul", null, ...s.items.map((it) => h("li", { key: it.id, className: it.done ? "done" : "" }, h("input", { type: "checkbox", checked: it.done }), h("input", { value: it.text }), it.text))),
+      h("select", { value: s.sel }, ...["o1", "o2", "o3"].map((o) => h("option", { value: o }, o))),
+      h("textarea", { value: s.ta }),
+      h("input", { type: "range", max: s.max, value: s.range }),
+      s.flag ? h("p", null, "켜짐") : "꺼짐"
+    );
+  const randomState = () => ({
+    items: [1, 2, 3, 4, 5].filter(() => r() < 0.6).sort(() => r() - 0.5).map((id) => ({ id, text: `t${id}${pick(["", "x"])}`, done: r() < 0.5 })),
+    sel: pick(["o1", "o2", "o3"]),
+    ta: pick(["", "aa", "bb"]),
+    max: pick(["50", "500"]),
+    range: pick(["10", "40", "300"]),
+    flag: r() < 0.5,
+  });
+  const screen = (el) => JSON.stringify(domToVdom(el.firstChild)) + [...el.querySelectorAll("input, textarea, select")].map((f) => (f.type === "checkbox" ? f.checked : f.value)).join("|");
+
+  let setS;
+  const [c] = mount(() => {
+    const [s, set] = useState(randomState);
+    setS = set;
+    return view(s);
+  });
+  for (let n = 0; n < 1000; n++) {
+    // 사용자가 화면을 건드린다 (state는 그대로)
+    for (const f of c.querySelectorAll("input, textarea, select")) {
+      if (r() >= 0.3) continue;
+      if (f.type === "checkbox") f.checked = !f.checked;
+      else if (f.tagName === "SELECT") f.value = pick(["o1", "o2", "o3"]);
+      else f.value = pick(["zz", "7", ""]);
+    }
+    const next = randomState();
+    setS(next);
+    await Promise.resolve();
+    await Promise.resolve();
+    const [fresh] = mount(() => view(next));
+    if (screen(c) !== screen(fresh)) throw new Error(`${n}번째: 화면이 state와 다름 ${JSON.stringify(next)}`);
+  }
 });
 
 test("Todo 앱: 저장된 목록에 깨진 항목([null] 등)이 있어도 앱이 뜨고, 올바른 항목만 보여 줌", async () => {

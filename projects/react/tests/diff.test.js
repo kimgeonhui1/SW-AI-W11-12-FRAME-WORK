@@ -553,6 +553,102 @@ test("Phase 1 흐름: 사용자가 select 선택을 바꾼 뒤 Patch해도 새�
   assertEqual(container.querySelector("select").value, fresh.querySelector("select").value, "선택된 값");
 });
 
+// ── 무작위(퍼즈) 테스트: 사람이 떠올리지 못한 조합을 찾는다. 시드를 고정해서 매번 같은 화면 쌍으로 돈다 ──
+
+function makeRandom(seed) {
+  let s = seed;
+  const r = () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const pick = (a) => a[Math.floor(r() * a.length)];
+  function formProps(tag) {
+    const p = {};
+    if (r() < 0.3) p.className = pick(["c1", "c2", ""]);
+    if (r() < 0.2) p.style = pick([{ color: "red" }, { color: "blue", width: 10 }, { "--g": "2px" }, "margin: 1px"]);
+    if (tag === "input") {
+      p.type = pick(["text", "checkbox", "range", "radio"]);
+      if (p.type === "checkbox" || p.type === "radio") {
+        if (r() < 0.6) p.checked = true;
+        if (p.type === "radio") p.name = "fuzz";
+      } else {
+        if (r() < 0.7) p.value = pick(["", "v", "30", "200"]);
+        if (p.type === "range" && r() < 0.5) p.max = pick(["50", "500"]);
+      }
+    }
+    if (tag === "textarea" && r() < 0.5) p.value = pick(["", "tv"]);
+    if (tag === "select" && r() < 0.3) p.multiple = true;
+    if (tag === "option" && r() < 0.4) p.selected = true;
+    return p;
+  }
+  function node(depth) {
+    if (depth > 2 || r() < 0.2) return pick(["a", "글", " "]);
+    const tag = pick(["div", "p", "input", "textarea", "select", "ul", "pre", "svg", "template"]);
+    if (tag === "input") return h("input", formProps(tag));
+    if (tag === "textarea") return h("textarea", formProps(tag), r() < 0.5 ? "ta" : null);
+    if (tag === "select") return h("select", formProps(tag), ...["o1", "o2", "o3"].filter(() => r() < 0.8).map((o) => h("option", { ...formProps("option"), value: o }, o)));
+    if (tag === "pre") return h("pre", null, pick(["\n\nx", " y ", "z\n"]));
+    if (tag === "svg") return h("svg", { viewBox: "0 0 9 9" }, ...Array.from({ length: Math.floor(r() * 3) }, () => h(pick(["circle", "rect"]), { r: pick(["1", "2"]) })));
+    if (tag === "ul") {
+      const keyed = r() < 0.7;
+      const keys = [..."abcde"].filter(() => r() < 0.6).sort(() => r() - 0.5);
+      return h("ul", null, ...keys.map((k) => h(pick(["li", "li", "p"]), keyed ? { key: k } : {}, k, r() < 0.4 ? h("input", { value: k }) : null)));
+    }
+    return h(tag, formProps(tag), ...Array.from({ length: Math.floor(r() * 3) }, () => node(depth + 1)));
+  }
+  // 사용자가 화면을 건드린다 (입력, 체크, 선택 변경)
+  function touch(el) {
+    for (const f of el.querySelectorAll("input, textarea, select")) {
+      if (r() < 0.5) continue;
+      if (f.type === "checkbox" || f.type === "radio") f.checked = !f.checked;
+      else if (f.tagName === "SELECT") for (const o of f.options) o.selected = r() < 0.5;
+      else f.value = pick(["typed", "77", ""]);
+    }
+  }
+  return { tree: () => h("div", null, node(0), node(0)), touch };
+}
+
+// 화면 비교용: VDOM(속성 순서 무시) + 폼의 현재 상태 + template 내용 + SVG 이름공간
+function screenOf(el) {
+  const forms = [...el.querySelectorAll("input, textarea, select")].map((f) =>
+    f.tagName === "SELECT" ? [...f.options].map((o) => o.selected).join() : f.type === "checkbox" || f.type === "radio" ? String(f.checked) : f.value
+  );
+  const templates = [...el.querySelectorAll("template")].map((t) => t.innerHTML);
+  const namespaces = [...el.querySelectorAll("*")].map((e) => e.namespaceURI.slice(-3));
+  return stableStringify(domToVdom(el)) + JSON.stringify([forms, templates, namespaces]);
+}
+
+// 한 쌍 검사. container는 문서에 붙여서 검사한다(라디오 그룹·포커스가 실제처럼 동작). 둘을 동시에 붙이면 라디오 그룹이 섞이므로 하나씩
+function fuzzPair(a, b, prepare) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  container.appendChild(createElement(a));
+  // prepare가 없으면 그린 VDOM(a) 그대로, 있으면 사용자가 건드린 화면을 다시 읽은 VDOM으로 diff (Phase 1 흐름)
+  const old = prepare ? prepare(container) : a;
+  patch(container, diff(old, b));
+  const got = screenOf(container.firstChild);
+  container.remove();
+  const fresh = document.createElement("div");
+  document.body.appendChild(fresh);
+  fresh.appendChild(createElement(b));
+  const want = screenOf(fresh.firstChild);
+  fresh.remove();
+  if (got !== want) throw new Error(`patch 결과가 새로 그린 화면과 다름\n  이전: ${stableStringify(a)}\n  새: ${stableStringify(b)}`);
+}
+
+test("퍼즈 3,000쌍: key · 폼 · SVG · template을 섞은 무작위 화면 A → B, patch 결과 = 새로 그린 결과", () => {
+  const { tree } = makeRandom(12345);
+  for (let n = 0; n < 3000; n++) fuzzPair(tree(), tree());
+});
+
+test("퍼즈 3,000쌍 (Phase 1 흐름): 사용자가 입력 · 체크 · 선택을 바꾼 뒤 화면을 다시 읽어 Patch해도 결과가 같음", () => {
+  const { tree, touch } = makeRandom(999);
+  for (let n = 0; n < 3000; n++) {
+    fuzzPair(tree(), tree(), (container) => {
+      touch(container);
+      commitLiveState(container.firstChild);
+      return domToVdom(container.firstChild);
+    });
+  }
+});
+
 const escape = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const passed = results.filter((r) => r.ok).length;
 document.getElementById("results").innerHTML =
