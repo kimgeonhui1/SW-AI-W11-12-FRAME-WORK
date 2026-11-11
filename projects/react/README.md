@@ -5,9 +5,9 @@
 
 | 언어 | 외부 라이브러리 | 단위 테스트 | 무작위(퍼즈) 테스트 |
 |:---:|:---:|:---:|:---:|
-| JavaScript (ES Modules) | **0개** | **252개** 통과 | 실행마다 **7,000건** 통과 |
+| JavaScript (ES Modules) | **0개** | **275개** 통과 | 실행마다 **7,000건** 통과 |
 
-**실행**: `projects/react` 폴더를 VS Code **Live Server**로 열기 → `index.html` (Phase 1) · `app.html` (Phase 2 Todo) · `tests/*.test.html` (테스트)
+**실행**: `projects/react` 폴더를 VS Code **Live Server**로 열기 → `index.html` (Phase 1) · `app.html` (Phase 2 초능력 윷놀이) · `tests/*.test.html` (테스트)
 
 **발표 순서**: [1. 협업 방식](#1-협업-방식) → [2. 구현](#2-구현) → [3. 회고](#3-회고)
 
@@ -43,11 +43,11 @@ AI는 구현에 활용하고 다른 AI로 교차 검증했는데, 지적을 그�
 <table>
   <tr>
     <td width="50%"><img src="docs/images/phase1.png" alt="Phase 1 화면: 실제 영역, 테스트 영역, Patch / 뒤로가기 / 앞으로가기"></td>
-    <td width="50%"><img src="docs/images/todo.png" alt="Phase 2 화면: Todo 앱"></td>
+    <td width="50%"><img src="docs/images/yut.png" alt="Phase 2 화면: 초능력 윷놀이 — 윷판, 윷 던지기, 팀별 초능력, 기보"></td>
   </tr>
   <tr>
     <td align="center"><b>Phase 1</b> · HTML을 고치고 Patch → 바뀐 곳만 반영</td>
-    <td align="center"><b>Phase 2</b> · Hooks로 만든 Todo 앱</td>
+    <td align="center"><b>Phase 2</b> · Hooks로 만든 초능력 윷놀이 (팀마다 윷의 힘 · 말의 힘)</td>
   </tr>
 </table>
 
@@ -90,9 +90,9 @@ diff 결과는 VDOM과 같은 모양의 **패치 트리**로 만들었습니다.
 
 ```js
 // 컴포넌트 객체가 hooks 배열을 들고 있고, Hook은 "몇 번째로 불렸는지"로 자기 칸을 찾는다
-const [todos, setTodos] = useState([]);   // hooks[0]
-const [text, setText]   = useState("");   // hooks[1]
-const counts = useMemo(() => ..., [todos]); // hooks[2]
+const [actions, setActions] = useState(start);            // hooks[0]  일어난 일의 목록 (던지기 · 옮기기 · 초능력)
+const [selected, setSelected] = useState(0);               // hooks[1]  이번에 쓸 윷 결과
+const state = useMemo(() => replay(actions), [actions]);   // hooks[…]  판 · 차례 · 승자는 목록에서 계산
 ```
 
 Hook은 컴포넌트의 hooks 배열에 값을 저장하고, **호출 순서로 자기 칸**을 찾습니다.
@@ -107,11 +107,11 @@ Hook은 컴포넌트의 hooks 배열에 값을 저장하고, **호출 순서로 
 ### 핵심 설계 ③ 검증: "patch한 화면 = 새로 그린 화면"
 
 검증은 **"patch한 화면이 새로 그린 화면과 같은가"**라는 규칙 하나로 했습니다.
-단위 테스트 252개와, 무작위로 만든 화면 **7천 건**으로 이 규칙을 확인합니다.
+단위 테스트 275개와, 무작위로 만든 화면 **7천 건**으로 이 규칙을 확인합니다.
 
 | 테스트 | 내용 | 결과 |
 |---|---|---|
-| 단위 테스트 (`tests/*.test.html`) | vdom 39 · diff 56 · hooks 38 · htmlText 7 · history 6 · ported 106 | **252 / 252** |
+| 단위 테스트 (`tests/*.test.html`) | vdom 39 · diff 56 · hooks 37 · htmlText 7 · history 6 · yut 24 · ported 106 | **275 / 275** |
 | 팀원 테스트 옮김 (`tests/ported.test.html`) | 김준우 님 테스트 중 형식만 달라 실패한 것을 같은 상황 그대로 내 형식으로 옮긴 106개 | 위에 포함 |
 | 약속 테스트 | 샘플 36개의 모든 쌍 (1,296가지 전환) | 통과 |
 | 무작위(퍼즈) 테스트 | key 목록 · 폼 · SVG · template을 섞은 화면 3,000쌍 + 사용자가 입력을 건드린 뒤 Patch 3,000쌍 + Phase 2 state 변경 1,000회 (시드 고정) | 통과 |
@@ -152,7 +152,7 @@ projects/react/
 │  ├─ component.js  FunctionComponent (mount · update · unmount · Batching)
 │  └─ hooks.js      useState · useEffect · useMemo · useRef
 ├─ src/phase1/                  ← 실제 영역 / 테스트 영역 / History
-├─ src/app/                     ← Todo 앱 (App만 State, 자식은 props만)
+├─ src/app/                     ← 초능력 윷놀이 (App만 State, 자식 PowerPick · YutBoard · ThrowPanel · TeamPanel · YutLog는 props만, 규칙은 yut.js)
 ├─ tests/                       ← *.test.html 을 열면 결과 표시
 └─ docs/                        ← DETAILS.md (이론 · 엣지 케이스), images/
 ```

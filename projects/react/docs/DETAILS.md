@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Phase 1** | 실제 DOM → Virtual DOM 변환, 두 VDOM을 비교하는 Diff, 바뀐 곳만 고치는 Patch, 뒤로/앞으로 가기 |
-| **Phase 2** | 함수형 컴포넌트(`FunctionComponent`), `useState` · `useEffect` · `useMemo` (+ `useRef`), Todo 데모 앱 |
+| **Phase 2** | 함수형 컴포넌트(`FunctionComponent`), `useState` · `useEffect` · `useMemo` (+ `useRef`), 초능력 윷놀이 데모 앱 (둘이 번갈아 던지기, 지름길 · 업기 · 잡기 · 한 번 더, 팀마다 윷의 힘 · 말의 힘 1개씩, 기보) |
 | **추가 구현** | key 기반 리스트 비교, SVG, ref, 상태 변경 Batching, Hook 규칙 위반 감지 |
 | **테스트** | 단위 테스트 **116개** (브라우저에서 실행) |
 
@@ -34,7 +34,7 @@
 | 페이지 | 내용 |
 |---|---|
 | `index.html` | **Phase 1** — 실제 영역 / 테스트 영역, Patch · 뒤로가기 · 앞으로가기 |
-| `app.html` | **Phase 2** — Todo 데모 앱 |
+| `app.html` | **Phase 2** — 초능력 윷놀이 데모 앱 |
 | `tests/*.test.html` | 단위 테스트. 열면 맨 위에 `N / N passed` 표시 |
 
 > 💡 Windows에서는 주소를 `localhost` 대신 `127.0.0.1`로 열면 더 빠릅니다.
@@ -60,7 +60,9 @@ projects/react/
 │   ├── app/
 │   │   ├── App.js               루트 컴포넌트 (모든 State가 여기에)
 │   │   ├── main.js              App을 #root에 mount
-│   │   └── components/          TodoForm, TodoList, TodoItem, FilterBar (전부 Stateless)
+│   │   └── yut.js               윷놀이 규칙 + 초능력 (순수 함수: action 목록 → 판 · 차례 · 승자)
+│   │   ├── games.js             두 게임을 같은 모양(size · cols · play · check)으로 묶은 목록
+│   │   └── components/          PowerPick, YutBoard, ThrowPanel, TeamPanel, YutLog, ConfirmDialog (전부 Stateless)
 │   └── styles/style.css
 └── tests/                       *.test.html / *.test.js
 ```
@@ -198,7 +200,7 @@ key 없음 (위치 비교) → 0번 A를 B로 글자 변경, 1번 B를 C로 글�
 key 있음 (이름 비교) → A 노드만 삭제. B, C 노드는 그대로 재사용 ✅
 ```
 
-`h("li", { key: todo.id }, ...)`처럼 key를 주면, 같은 key끼리 짝지어 노드를 재사용하고 `insertBefore`로 **자리만 옮깁니다** (이미 문서에 있는 노드를 `insertBefore`하면 복사가 아니라 이동이라서 상태가 함께 따라감).
+`h("li", { key: item.id }, ...)`처럼 key를 주면, 같은 key끼리 짝지어 노드를 재사용하고 `insertBefore`로 **자리만 옮깁니다** (이미 문서에 있는 노드를 `insertBefore`하면 복사가 아니라 이동이라서 상태가 함께 따라감).
 
 ### 4-5. Phase 1 페이지 흐름 (`phase1/main.js`)
 
@@ -275,10 +277,9 @@ App() 1번째 실행                          App() 2번째 실행 (setState 후
 #### Batching: 여러 상태 변경을 한 번에 (선택 과제)
 
 ```js
-const addTodo = () => {
-  setTodos(prev => [...prev, newTodo]);
-  setText("");          // 두 번 불러도 다시 그리기는 1번
-};
+set((c) => c + 1);
+set((c) => c + 1);
+set((c) => c + 1);    // 세 번 불러도 다시 그리기는 1번 (결과는 +3)
 ```
 
 `setState`는 바로 그리지 않고 `queueMicrotask`로 **"지금 하던 일이 끝난 직후"에 한 번만** 그리도록 예약합니다. 중간 상태가 화면에 보이지 않고, diff · patch도 한 번만 일어납니다.
@@ -287,44 +288,47 @@ const addTodo = () => {
 
 ```mermaid
 flowchart TD
-  App["App (루트)<br/>State: todos, text, filter<br/>useMemo: counts, visible<br/>useEffect: 저장, 탭 제목<br/>useRef: 입력창"]
-  App -->|text, onTextChange, onAdd| TodoForm
-  App -->|filter, counts, onFilterChange| FilterBar
-  App -->|todos, onToggle, onRemove| TodoList
-  TodoList -->|todo, onToggle, onRemove| TodoItem
+  App["App (루트)<br/>State: actions (일어난 일 목록), selected, targeting, hoverFrom, notice, confirming<br/>useMemo: state = replay(actions)<br/>useEffect: 탭 제목, 기보 스크롤, 팝업 포커스<br/>useRef: 기보 목록, 팝업 취소 버튼"]
+  App -->|team, offers, selected, onSelect, onConfirm| PowerPick
+  App -->|state, clickable, preview, onNode, onHover| YutBoard
+  App -->|state, selected, onThrow, onSelect, onChoose| ThrowPanel
+  App -->|team, state, onEnter, onArm, onMal| TeamPanel
+  App -->|log, logRef| YutLog
 ```
 
 - **State는 루트(`App`)에만** 둡니다. 자식은 **props만 받아 그리는 순수 함수**(Stateless)입니다.
-- 자식이 상태를 바꾸고 싶으면 부모가 넘겨준 함수(`onToggle` 등)를 부릅니다 → 부모의 `setState` → 다시 렌더링.
+- 자식이 상태를 바꾸고 싶으면 부모가 넘겨준 함수(`onNode`, `onThrow` 등)를 부릅니다 → 부모의 `setState` → 다시 렌더링.
+- 게임의 State는 **"일어난 일(action)의 목록"** 하나입니다. 판 · 차례 · 승자는 `useMemo` 안에서 목록을 처음부터 다시 적용해서(replay) 만듭니다.
+- 윷처럼 무작위인 일은 App이 결과를 정해 action에 담습니다 (`{ type: "throw", name: "걸" }`). 그래서 같은 목록이면 언제 다시 계산해도 같은 판이고, 규칙 테스트도 주사위 없이 할 수 있습니다.
 - 과제 제약을 **코드로 강제**합니다: 자식 컴포넌트 안에서 Hook을 부르면 에러가 납니다.
 
-**UI를 나눈 기준**: 화면에서 **역할이 하나인 덩어리**마다 컴포넌트 하나 (입력 폼 / 필터 / 목록 / 한 줄).
+**UI를 나눈 기준**: 화면에서 **역할이 하나인 덩어리**마다 컴포넌트 하나 (초능력 고르기 / 윷판 / 윷 던지기 / 팀 / 기보 / 확인 팝업).
 
 ---
 
 ## 6. Phase 1 ↔ Phase 2 연결: 상태가 바뀌면 일어나는 일
 
-할 일을 하나 체크했을 때의 전체 흐름입니다.
+윷을 던진 뒤 옮길 말(칸)을 눌렀을 때의 전체 흐름입니다.
 
 ```mermaid
 sequenceDiagram
   participant U as 사용자
-  participant I as TodoItem (자식)
+  participant I as YutBoard (자식)
   participant A as App (루트)
   participant F as FunctionComponent
   participant D as diff / patch (Phase 1)
 
-  U->>I: 체크박스 클릭
-  I->>A: onToggle(id) (부모가 준 함수)
-  A->>F: setTodos(...) → 값 저장 + 다시 그리기 예약
+  U->>I: 말이 있는 칸 클릭
+  I->>A: onNode(pos) (부모가 준 함수)
+  A->>F: setActions(...) → 값 저장 + 다시 그리기 예약
   Note over F: 마이크로태스크 (Batching)
   F->>A: App() 다시 실행 → 새 VDOM
   F->>D: diff(이전 VDOM, 새 VDOM)
-  D->>D: patch → 그 <li>의 class와 checked만 수정
-  F->>A: useEffect 실행 (localStorage 저장, 탭 제목)
+  D->>D: patch → 출발 칸 · 도착 칸의 말, 기보 한 줄만 고침 (나머지는 그대로)
+  F->>A: useEffect 실행 (탭 제목, 기보 스크롤)
 ```
 
-**전체를 다시 그리지 않습니다.** 입력창에 한 글자를 칠 때 실제 DOM 변경은 **2개**(input 값, 추가 버튼의 `disabled`)뿐인 것을, 개발 중 브라우저 콘솔에서 `MutationObserver`로 확인했습니다.
+**전체를 다시 그리지 않습니다.** App은 화면 전체(약 130개 요소)를 매번 새 VDOM으로 만들지만, 말 하나를 옮길 때 실제 DOM 변경은 **12~19개**뿐인 것을 `MutationObserver`로 확인했습니다 (출발 · 도착 칸의 말, 누를 수 있는 칸 강조, 상황 글자, 기보 한 줄, 팀 패널의 말 수).
 
 ---
 

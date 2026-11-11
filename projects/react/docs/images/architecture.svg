@@ -101,5 +101,5 @@
 
   <rect x="504" y="480" width="452" height="58" rx="12" fill="#ffffff" stroke="#d6dae3"/>
   <text x="524" y="504" font-size="14" font-weight="700" fill="#1f2430">src/app/  <tspan font-weight="400" fill="#6b7280">app.html</tspan></text>
-  <text x="524" y="525" font-size="12.5" fill="#4b5263">Todo 앱 — State는 App 하나에만, 자식은 props만 받음</text>
+  <text x="524" y="525" font-size="12.5" fill="#4b5263">초능력 윷놀이 — State(일어난 일 목록)는 App에만, 자식은 props만</text>
 </svg>

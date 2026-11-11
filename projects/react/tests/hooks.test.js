@@ -659,20 +659,6 @@ test("4차 리뷰: 첫 mount가 실패하면 그때 만든 Hook 칸을 버림 (�
   assertEqual(inits, 2, "다시 mount할 때 초기값 함수가 다시 실행돼야 함");
 });
 
-test("Todo 앱: 저장된 목록에 깨진 항목([null] 등)이 있어도 앱이 뜨고, 올바른 항목만 보여 줌", async () => {
-  const { App } = await import("../src/app/App.js");
-  const KEY = "mini-react-todos";
-  const backup = localStorage.getItem(KEY);
-  try {
-    localStorage.setItem(KEY, JSON.stringify([null, 3, { id: 1 }, { id: 2, text: "정상", done: true }]));
-    const [c] = mount(App);
-    assertEqual([...c.querySelectorAll("li")].map((li) => li.textContent.replace("×", "").trim()), ["정상"]);
-  } finally {
-    if (backup === null) localStorage.removeItem(KEY);
-    else localStorage.setItem(KEY, backup);
-  }
-});
-
 for (const { name, fn } of tests) {
   try {
     await fn();
