@@ -1,17 +1,28 @@
+<div align="center">
+
 # Mini React
 
-> 외부 라이브러리 없이 **Vanilla JavaScript**로 직접 만든 미니 React
-> Phase 1 · Virtual DOM / Diff / Patch  ·  Phase 2 · Component / State / Hooks
+**외부 라이브러리 없이 Vanilla JavaScript로 직접 만든 미니 React**
 
-| 언어 | 외부 라이브러리 | 단위 테스트 | 무작위(퍼즈) 테스트 |
+Phase 1 · Virtual DOM / Diff / Patch &nbsp;|&nbsp; Phase 2 · Component / State / Hooks
+
+![JavaScript](https://img.shields.io/badge/JavaScript-ES%20Modules-f7df1e?logo=javascript&logoColor=black)
+![dependencies](https://img.shields.io/badge/dependencies-0-2ea44f)
+![tests](https://img.shields.io/badge/unit%20tests-275%20passed-2ea44f)
+![fuzz](https://img.shields.io/badge/fuzz-7%2C000%20cases-3b6fe0)
+![browsers](https://img.shields.io/badge/tested-Chrome%20%C2%B7%20Edge-555)
+
+| 🧩 외부 라이브러리 | ✅ 단위 테스트 | 🎲 무작위(퍼즈) 테스트 | ⚡ 1,000줄 중 1줄 바꾸기 |
 |:---:|:---:|:---:|:---:|
-| JavaScript (ES Modules) | **0개** | **275개** 통과 | 실행마다 **7,000건** 통과 |
+| **0개** | **275개** 통과 | 실행마다 **7,000건** 통과 | 통째로 다시 그리기보다 **약 12배 빠름** |
 
-**실행**: `projects/react` 폴더를 VS Code **Live Server**로 열기 → `index.html` (Phase 1) · `app.html` (Phase 2 초능력 윷놀이) · `tests/*.test.html` (테스트)
+</div>
+
+**실행**: `projects/react` 폴더를 VS Code **Live Server**로 열기 → `index.html` (Phase 1) · `app.html` (Phase 2 초능력 윷놀이) · `tests/*.test.html` (테스트) · `tests/bench.html` (성능 측정)
 
 **발표 순서**: [1. 협업 방식](#1-협업-방식) → [2. 구현](#2-구현) → [3. 회고](#3-회고)
 
-> 🎤 각 섹션의 **본문 문단**을 순서대로 읽으면 약 3분 30초입니다. 표와 그림은 화면으로 보여 주기만 합니다.
+> 🎤 각 섹션의 **본문 문단**을 순서대로 읽으면 약 3분 40초입니다 (핵심 설계 ④ 문단을 빼면 약 3분 30초). 표와 그림은 화면으로 보여 주기만 합니다.
 
 ---
 
@@ -59,8 +70,8 @@ AI는 구현에 활용하고 다른 AI로 교차 검증했는데, 지적을 그�
 | 실행 | **Live Server** (빌드 도구 없음) | 브라우저가 모듈을 직접 읽음 |
 | 테스트 | **브라우저용 테스트 도구를 직접 만듦** | DOM이 필요해서 `*.test.html`을 열면 바로 결과가 나오게 함 |
 
-언어는 자바스크립트를 활용했고, 외부 라이브러리 없이 ES 모듈로 파일을 나눴습니다. 실행은 VS Code 확장 프로그램인 Live Server를 활용했습니다.
-테스트는 보통 Jest를 쓰는데, Node.js에서 돌아가서 DOM을 바로 쓸 수 없어서 **브라우저에서 돌아가는 테스트 도구를 직접** 만들었습니다.
+외부 라이브러리 없이 ES 모듈로 파일을 나누고, Live Server로 실행했습니다.
+테스트는 DOM이 필요해서 **브라우저에서 돌아가는 테스트 도구를 직접** 만들었습니다.
 
 <details>
 <summary>용어 설명 (ES 모듈 · Live Server · Jest)</summary>
@@ -91,8 +102,10 @@ diff 결과는 VDOM과 같은 모양의 **패치 트리**로 만들었습니다.
 ```js
 // 컴포넌트 객체가 hooks 배열을 들고 있고, Hook은 "몇 번째로 불렸는지"로 자기 칸을 찾는다
 const [actions, setActions] = useState(start);            // hooks[0]  일어난 일의 목록 (던지기 · 옮기기 · 초능력)
-const [selected, setSelected] = useState(0);               // hooks[1]  이번에 쓸 윷 결과
-const state = useMemo(() => replay(actions), [actions]);   // hooks[…]  판 · 차례 · 승자는 목록에서 계산
+const [pickSel, setPickSel] = useState(empty);            // hooks[1]  초능력 고르기 화면에서 고른 것
+const [chosen, setChosen] = useState(null);                // hooks[2]  옮기려고 고른 말 → 판에 갈 수 있는 칸 표시
+//                                                            hooks[3~7] targeting · notice · confirming · logRef · cancelRef
+const state = useMemo(() => replay(actions), [actions]);   // hooks[8]  판 · 차례 · 승자는 목록에서 계산
 ```
 
 Hook은 컴포넌트의 hooks 배열에 값을 저장하고, **호출 순서로 자기 칸**을 찾습니다.
@@ -115,6 +128,37 @@ Hook은 컴포넌트의 hooks 배열에 값을 저장하고, **호출 순서로 
 | 팀원 테스트 옮김 (`tests/ported.test.html`) | 김준우 님 테스트 중 형식만 달라 실패한 것을 같은 상황 그대로 내 형식으로 옮긴 106개 | 위에 포함 |
 | 약속 테스트 | 샘플 36개의 모든 쌍 (1,296가지 전환) | 통과 |
 | 무작위(퍼즈) 테스트 | key 목록 · 폼 · SVG · template을 섞은 화면 3,000쌍 + 사용자가 입력을 건드린 뒤 Patch 3,000쌍 + Phase 2 state 변경 1,000회 (시드 고정) | 통과 |
+
+### 핵심 설계 ④ 성능: 바뀐 곳만 고치면 얼마나 빠른가
+
+1,000줄 목록을 바꾸는 같은 작업을 세 방법으로 반영하고, **걸린 시간**과 **실제 DOM 작업량**을 쟀습니다.
+
+| 1,000줄 목록에서 | **diff + patch** (이 프로젝트) | createElement 통째로 | innerHTML 통째로 |
+|---|---|---|---|
+| 1줄 글자 바꾸기 | **2.1 ms** · 글자 1개 수정 | 27.7 ms · 노드 7,001개 생성 | 25.1 ms · 7,001개 생성 |
+| 끝에 1줄 추가 | **2.1 ms** · 7개 생성 | 27.9 ms · 7,008개 생성 | 23.7 ms · 7,008개 생성 |
+| 맨 앞에 1줄 추가 (key 있음) | **2.3 ms** · 7개 생성 | 29.0 ms | 26.4 ms |
+| 맨 앞에 1줄 추가 (key 없음) | 13.3 ms · 7개 생성 + 글자 1,999개 수정 | 29.3 ms | 27.4 ms |
+| 멀리 떨어진 2줄 자리 바꾸기 | 30.5 ms · 997줄 이동 ⚠️ | 28.6 ms | 28.8 ms |
+| 입력 중인 값 · 포커스 | **유지** | 사라짐 | 사라짐 |
+
+| 그 밖에 잰 것 | 결과 |
+|---|---|
+| Batching | 클릭 한 번에 `setState` 100번 → **렌더링 1번** (값은 정확히 +100) |
+| 실제 앱 (윷놀이 말 1개 옮기기) | 화면 요소 112개 중 **노드 7개 생성 + 값 19개 수정**, 렌더링(App 실행 + diff + patch) **1.2~2.6 ms** |
+
+1줄만 바꿀 때 통째로 다시 그리는 것보다 **약 12배 빠르고**, 입력 중인 값과 포커스도 남습니다.
+key가 없으면 6배 느려져서 **key가 왜 필요한지** 숫자로 확인했고, 멀리 떨어진 두 줄 바꾸기처럼 React와 같은 **약점**도 찾았습니다.
+
+<details>
+<summary>측정 방법</summary>
+
+- `tests/bench.html`을 열면 직접 잴 수 있습니다. 위 숫자는 Edge 157 (Windows 11), 방법마다 25번 반복한 중앙값을 3번 측정해 다시 중앙값을 낸 값입니다.
+- 시간에는 **레이아웃까지** 포함했습니다 (`offsetHeight`로 강제). 시간은 기기마다 다르지만, DOM 작업량(`MutationObserver`로 센 생성 · 이동 · 수정 수)은 어디서 재도 같습니다.
+- 한 줄 = `<li><span>이름</span><b>점수</b><button>삭제</button></li>` (텍스트 포함 노드 7개).
+- 두 줄 바꾸기의 약점: React의 key 정렬은 "앞에서부터 보며, 이전 위치보다 뒤로 간 것만 옮기는" 방식이라 뒤쪽 항목이 맨 앞으로 오면 사이 항목이 전부 옮겨집니다. Vue는 최장 증가 부분 수열(LIS)로 이 경우를 줄입니다.
+
+</details>
 
 ---
 
@@ -153,7 +197,7 @@ projects/react/
 │  └─ hooks.js      useState · useEffect · useMemo · useRef
 ├─ src/phase1/                  ← 실제 영역 / 테스트 영역 / History
 ├─ src/app/                     ← 초능력 윷놀이 (App만 State, 자식 PowerPick · YutBoard · ThrowPanel · TeamPanel · YutLog는 props만, 규칙은 yut.js)
-├─ tests/                       ← *.test.html 을 열면 결과 표시
+├─ tests/                       ← *.test.html 을 열면 결과 표시, bench.html 은 성능 측정
 └─ docs/                        ← DETAILS.md (이론 · 엣지 케이스), images/
 ```
 

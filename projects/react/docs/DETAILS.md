@@ -36,6 +36,7 @@
 | `index.html` | **Phase 1** — 실제 영역 / 테스트 영역, Patch · 뒤로가기 · 앞으로가기 |
 | `app.html` | **Phase 2** — 초능력 윷놀이 데모 앱 |
 | `tests/*.test.html` | 단위 테스트. 열면 맨 위에 `N / N passed` 표시 |
+| `tests/bench.html` | 성능 측정. diff + patch vs 통째로 다시 그리기 (시간 · DOM 작업량) |
 
 > 💡 Windows에서는 주소를 `localhost` 대신 `127.0.0.1`로 열면 더 빠릅니다.
 
@@ -288,12 +289,13 @@ set((c) => c + 1);    // 세 번 불러도 다시 그리기는 1번 (결과는 +
 
 ```mermaid
 flowchart TD
-  App["App (루트)<br/>State: actions (일어난 일 목록), selected, targeting, hoverFrom, notice, confirming<br/>useMemo: state = replay(actions)<br/>useEffect: 탭 제목, 기보 스크롤, 팝업 포커스<br/>useRef: 기보 목록, 팝업 취소 버튼"]
+  App["App (루트)<br/>State: actions (일어난 일 목록), pickSel, chosen (고른 말), targeting, notice, confirming<br/>useMemo: state = replay(actions)<br/>useEffect: 탭 제목, 기보 스크롤, 팝업 포커스<br/>useRef: 기보 목록, 팝업 취소 버튼"]
   App -->|team, offers, selected, onSelect, onConfirm| PowerPick
-  App -->|state, clickable, preview, onNode, onHover| YutBoard
-  App -->|state, selected, onThrow, onSelect, onChoose| ThrowPanel
-  App -->|team, state, onEnter, onArm, onMal| TeamPanel
+  App -->|state, clickable, chosen, dests, targeting, onNode| YutBoard
+  App -->|state, onThrow, onChoose| ThrowPanel
+  App -->|team, state, canEnter, entering, targeting, onEnter, onArm, onMal| TeamPanel
   App -->|log, logRef| YutLog
+  App -->|message, confirmLabel, cancelRef, onConfirm, onCancel| ConfirmDialog
 ```
 
 - **State는 루트(`App`)에만** 둡니다. 자식은 **props만 받아 그리는 순수 함수**(Stateless)입니다.
@@ -328,7 +330,7 @@ sequenceDiagram
   F->>A: useEffect 실행 (탭 제목, 기보 스크롤)
 ```
 
-**전체를 다시 그리지 않습니다.** App은 화면 전체(약 130개 요소)를 매번 새 VDOM으로 만들지만, 말 하나를 옮길 때 실제 DOM 변경은 **12~19개**뿐인 것을 `MutationObserver`로 확인했습니다 (출발 · 도착 칸의 말, 누를 수 있는 칸 강조, 상황 글자, 기보 한 줄, 팀 패널의 말 수).
+**전체를 다시 그리지 않습니다.** App은 화면 전체(요소 112개)를 매번 새 VDOM으로 만들지만, 말 하나를 옮길 때 실제 DOM 작업은 **노드 7개 생성 + 값 19개 수정**뿐인 것을 `MutationObserver`로 확인했습니다 (도착 칸의 말, 갈 칸 표시 해제, 상황 글자, 기보 한 줄, 팀 패널의 말 수). 렌더링 한 번(App 실행 + diff + patch)은 1.2~2.6 ms입니다 (`tests/bench.html`).
 
 ---
 
