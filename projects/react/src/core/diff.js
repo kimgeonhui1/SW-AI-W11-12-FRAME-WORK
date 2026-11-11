@@ -90,7 +90,9 @@ function diffProps(oldProps, newProps) {
   for (const [name, value] of Object.entries(newProps)) {
     // key는 짝짓기용 표시일 뿐 DOM에 반영할 속성이 아니다
     if (name === "key") continue;
-    if (!sameValue(oldProps[name], value)) changes.push({ name, value, oldValue: oldProps[name] });
+    // 키별(얕은) 비교는 style에만. ref 같은 다른 객체까지 얕게 비교하면, current가 우연히 같은 다른 ref로 바꿔도 "같음"이 되어 새 ref가 연결되지 않는다
+    const same = name === "style" ? sameValue(oldProps[name], value) : oldProps[name] === value;
+    if (!same) changes.push({ name, value, oldValue: oldProps[name] });
   }
   // 이전 props 기준: 이번엔 없는 속성 → value: undefined (= 삭제)
   for (const name of Object.keys(oldProps)) {

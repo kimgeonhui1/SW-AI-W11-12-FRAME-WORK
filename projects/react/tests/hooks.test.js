@@ -392,6 +392,187 @@ test("제어 컴포넌트: State가 그대로면 사용자가 바꾼 화면 값�
 });
 
 // ── 실행 ──
+// ── 개선 1~5 (팀 코드 비교 후 보완) ──
+
+test("개선 1: 무한 렌더링(effect 안에서 deps 없이 setState)은 50번에서 멈추고 에러, 탭이 굳지 않음", async () => {
+  let renders = 0;
+  const errors = [];
+  // 마이크로태스크에서 던진 에러는 window의 error 이벤트로 온다. preventDefault로 콘솔에 빨간 줄이 남지 않게 한다
+  const onError = (e) => {
+    errors.push(e.message);
+    e.preventDefault();
+  };
+  window.addEventListener("error", onError);
+  try {
+    mount(() => {
+      const [n, setN] = useState(0);
+      renders++;
+      useEffect(() => setN(n + 1));
+      return h("p", null, String(n));
+    });
+    // 멈추지 않으면 마이크로태스크가 끝없이 이어져 이 setTimeout(tick)이 영영 실행되지 않는다
+    await tick();
+    await tick();
+  } finally {
+    window.removeEventListener("error", onError);
+  }
+  if (!errors.some((m) => m.includes("연달아"))) throw new Error(`무한 렌더링 에러가 안 남: ${errors}`);
+  assertEqual(renders, 51, "mount 1번 + update 50번에서 멈춰야 함");
+});
+
+test("개선 1 보완: await를 끼운 정상 반복문에서 setState 60번은 막지 않음 (무한 렌더링으로 오해 금지)", async () => {
+  let set;
+  const [c] = mount(() => {
+    const [n, s] = useState(0);
+    set = s;
+    return h("p", null, String(n));
+  });
+  // 마이크로태스크만 사이에 끼므로 setTimeout 기준으로 세면 50번에서 멈춘다 (실제로 그랬던 버그)
+  for (let i = 1; i <= 60; i++) {
+    set(i);
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+  await tick();
+  assertEqual(c.textContent, "60");
+});
+
+test("개선 2: Hook 개수는 같고 종류만 바뀌어도 에러 (useState 자리에 useMemo)", () => {
+  let mode = "state";
+  const inst = new FunctionComponent(() => {
+    useState("유지돼야 할 값");
+    if (mode === "state") useState(0);
+    else useMemo(() => 1, []);
+    return h("p", null, "x");
+  }, document.createElement("div"));
+  inst.mount();
+  mode = "memo";
+  try {
+    inst.update();
+  } catch (e) {
+    if (!e.message.includes("2번째 Hook") || !e.message.includes("useState") || !e.message.includes("useMemo")) throw new Error(`메시지가 이상함: ${e.message}`);
+    return;
+  }
+  throw new Error("에러가 나야 함");
+});
+
+test("개선 3: patch가 중간에 실패해도 화면과 VDOM이 어긋나지 않음 (마지막 성공 상태로 복구)", () => {
+  let label = "A";
+  let fileValue = "";
+  // file input에 빈 값이 아닌 value를 넣으면 브라우저가 InvalidStateError를 던진다 (검사로는 못 막는 실패)
+  const [c, inst] = mount(() => h("div", null, h("p", null, label), h("input", { type: "file", value: fileValue })));
+  label = "B";
+  fileValue = "x";
+  assertThrows(() => inst.update(), "file input에 value");
+  // 실패 전에 p는 이미 "B"로 바뀌었었다. 복구하지 않으면 DOM은 "B", 기억한 VDOM은 "A"로 어긋난다
+  assertEqual(c.querySelector("p").textContent, "A", "마지막 성공 상태로 복구");
+  // 어긋나 있었다면 A → A 는 "변경 없음"이라 화면에 B가 남는다
+  label = "A";
+  fileValue = "";
+  inst.update();
+  assertEqual(c.querySelector("p").textContent, "A");
+});
+
+test("개선 4: 잘못된 VNode는 화면을 건드리기 전에, 위치가 담긴 에러", () => {
+  const cases = [
+    [() => h("ul", null, h("li", null, {})), "루트.children[0].children[0]"],
+    [() => h("p", { title: { a: 1 } }), "title"],
+    [() => h("button", { onClick: "alert(1)" }), "onClick"],
+    [() => h("a b"), "태그 이름"],
+    [() => h("p", { "a b": "1" }), "속성 이름"],
+  ];
+  for (const [App, word] of cases) {
+    const c = document.createElement("div");
+    c.innerHTML = "<i>원래 화면</i>";
+    try {
+      new FunctionComponent(App, c).mount();
+    } catch (e) {
+      if (!e.message.includes(word)) throw new Error(`메시지에 "${word}"가 없음: ${e.message}`);
+      assertEqual(c.innerHTML, "<i>원래 화면</i>", "DOM은 그대로");
+      continue;
+    }
+    throw new Error(`에러가 나야 함: ${word}`);
+  }
+});
+
+test("개선 5: unmount — effect cleanup 실행, ref 해제, DOM 비움, 이후 setState는 무시", async () => {
+  const log = [];
+  let setN;
+  let ref;
+  const [c, inst] = mount(() => {
+    const [n, set] = useState(0);
+    setN = set;
+    ref = useRef(null);
+    useEffect(() => () => log.push("cleanup"), []);
+    return h("p", { ref }, String(n));
+  });
+  inst.unmount();
+  assertEqual(log, ["cleanup"]);
+  assertEqual(c.innerHTML, "");
+  if (ref.current !== null) throw new Error("ref가 지운 요소를 계속 가리킴");
+  setN(1);
+  await tick();
+  assertEqual(c.innerHTML, "", "unmount 후에는 다시 그리지 않음");
+});
+
+test("3차 개선: key는 문자열·숫자만, ref는 함수·객체만 (잘못 넣으면 화면을 건드리기 전에 에러)", () => {
+  for (const [props, word] of [[{ key: { id: 1 } }, "key"], [{ ref: "abc" }, "ref"]]) {
+    const c = document.createElement("div");
+    try {
+      new FunctionComponent(() => h("ul", null, h("li", props)), c).mount();
+    } catch (e) {
+      if (!e.message.includes(word)) throw new Error(`메시지에 "${word}"가 없음: ${e.message}`);
+      assertEqual(c.innerHTML, "", "DOM은 그대로");
+      continue;
+    }
+    throw new Error(`에러가 나야 함: ${word}`);
+  }
+});
+
+test("3차 개선: 이미 mount된 컴포넌트를 또 mount하면 에러, unmount 후에는 다시 mount 가능", () => {
+  const [c, inst] = mount(() => h("p", null, "x"));
+  assertThrows(() => inst.mount(), "두 번째 mount");
+  inst.unmount();
+  inst.mount();
+  assertEqual(c.innerHTML, "<p>x</p>");
+});
+
+test("3차 개선: 같은 이벤트의 핸들러 하나(onInput)가 에러를 내도 다른 핸들러(onChange)는 실행됨", () => {
+  const log = [];
+  const [c] = mount(() =>
+    h("input", {
+      onInput: () => {
+        throw new Error("onInput 실패");
+      },
+      onChange: () => log.push("onChange"),
+    })
+  );
+  const errors = [];
+  const onError = (e) => {
+    errors.push(e.message);
+    e.preventDefault();
+  };
+  window.addEventListener("error", onError);
+  c.firstChild.dispatchEvent(new Event("input"));
+  window.removeEventListener("error", onError);
+  assertEqual(log, ["onChange"]);
+  if (!errors.some((m) => m.includes("onInput 실패"))) throw new Error("에러가 알려지지 않음");
+});
+
+test("Todo 앱: 저장된 목록에 깨진 항목([null] 등)이 있어도 앱이 뜨고, 올바른 항목만 보여 줌", async () => {
+  const { App } = await import("../src/app/App.js");
+  const KEY = "mini-react-todos";
+  const backup = localStorage.getItem(KEY);
+  try {
+    localStorage.setItem(KEY, JSON.stringify([null, 3, { id: 1 }, { id: 2, text: "정상", done: true }]));
+    const [c] = mount(App);
+    assertEqual([...c.querySelectorAll("li")].map((li) => li.textContent.replace("×", "").trim()), ["정상"]);
+  } finally {
+    if (backup === null) localStorage.removeItem(KEY);
+    else localStorage.setItem(KEY, backup);
+  }
+});
+
 for (const { name, fn } of tests) {
   try {
     await fn();

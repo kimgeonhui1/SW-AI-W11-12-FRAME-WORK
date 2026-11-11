@@ -8,10 +8,20 @@
 import { getCurrentComponent, runWithoutHooks } from "./component.js";
 
 // 이번 Hook의 컴포넌트와 칸 번호. 부를 때마다 번호가 1씩 늘어나서 Hook마다 다른 칸을 쓴다
-function nextHook() {
+// kind: Hook 종류. 칸마다 처음 쓴 종류를 기억해 두고, 다음 렌더링에서 다른 종류가 같은 칸을 쓰면 에러를 낸다.
+// 개수 검사(component.js의 hookCount)만으로는 "if (a) useState() else useMemo()"처럼 개수는 같고 종류만 바뀐 경우를 못 잡는다.
+// 그대로 두면 useMemo가 useState의 칸을 덮어써서 상태가 조용히 사라진다
+function nextHook(kind) {
   const component = getCurrentComponent();
-  return [component, component.hookIndex++];
+  const i = component.hookIndex++;
+  const prev = component.hookKinds[i];
+  if (prev === undefined) component.hookKinds[i] = kind;
+  else if (prev !== kind) {
+    throw new Error(`${i + 1}번째 Hook이 이전 렌더링에서는 ${hookName(prev)}였는데 이번에는 ${hookName(kind)}입니다. Hook 호출 순서가 바뀌었습니다 (조건문 안에서 Hook을 부르지 마세요).`);
+  }
+  return [component, i];
 }
+const hookName = (kind) => `use${kind[0].toUpperCase()}${kind.slice(1)}`;
 
 // 의존성 배열이 바뀌었는지. deps가 없으면(undefined) 매번 "바뀜"
 function depsChanged(prevDeps, deps) {
@@ -23,7 +33,7 @@ function depsChanged(prevDeps, deps) {
 
 // 상태 저장 + 변경 시 재렌더링
 export function useState(initial) {
-  const [component, i] = nextHook();
+  const [component, i] = nextHook("state");
   // 첫 렌더링에만 초기값을 넣는다. 함수면 실행 결과를 쓴다 (무거운 초기 계산을 매번 하지 않게)
   if (!(i in component.hooks)) {
     const hook = { state: typeof initial === "function" ? runWithoutHooks(initial) : initial };
@@ -45,7 +55,7 @@ export function useState(initial) {
 
 // 렌더링 후 부수효과 실행 (의존성이 바뀔 때만)
 export function useEffect(callback, deps) {
-  const [component, i] = nextHook();
+  const [component, i] = nextHook("effect");
   const hook = component.hooks[i] ?? (component.hooks[i] = { deps: undefined, cleanup: undefined, ran: false });
   // 비교 기준은 "마지막으로 실제 실행된" deps. 실행 기록(ran, deps)은 runEffects가 실행할 때 남긴다
   if (hook.ran && !depsChanged(hook.deps, deps)) return;
@@ -57,14 +67,14 @@ export function useEffect(callback, deps) {
 // 렌더링마다 "같은 { current } 객체"를 돌려준다. current를 바꿔도 다시 그리지 않는다
 // 쓰임: h("input", { ref }) 로 실제 DOM 요소 잡기, 타이머 id처럼 화면과 상관없는 값 보관
 export function useRef(initial) {
-  const [component, i] = nextHook();
+  const [component, i] = nextHook("ref");
   if (!(i in component.hooks)) component.hooks[i] = { current: initial };
   return component.hooks[i];
 }
 
 // 계산 결과 저장, 의존성이 그대로면 재사용
 export function useMemo(factory, deps) {
-  const [component, i] = nextHook();
+  const [component, i] = nextHook("memo");
   const hook = component.hooks[i];
   if (hook && !depsChanged(hook.deps, deps)) return hook.value;
   const value = runWithoutHooks(factory);

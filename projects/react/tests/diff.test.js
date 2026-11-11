@@ -1,7 +1,7 @@
 // [diff.test.js] diff / patch 단위 테스트 (브라우저에서 diff.test.html로 실행)
 // 테스트 도구(test / assertEqual / 결과 출력)는 vdom.test.js와 같은 방식이다.
 
-import { h, domToVdom, createElement } from "../src/core/vdom.js";
+import { h, domToVdom, createElement, commitLiveState } from "../src/core/vdom.js";
 import { diff } from "../src/core/diff.js";
 import { patch } from "../src/core/patch.js";
 
@@ -467,6 +467,90 @@ test("key 섞임: 앞에 key 항목이 추가돼도 key 없는 자식은 재사�
   const span = container.querySelector("span");
   patch(container, diff(v1, v2));
   assertEqual([container.querySelector("span") === span, domToVdom(container.firstChild)], [true, domToVdom(createElement(v2))]);
+});
+
+// ── 2차 개선 (버그 검거 후 보완) ──
+
+const keyedList = (keys) => h("ul", null, ...keys.map((k) => h("li", { key: k }, h("input", { id: `in-${k}` }), k)));
+
+test("key 이동 최소화: 첫 항목을 맨 뒤로 → 1개만 옮기고, 입력 중인 다른 항목의 포커스 유지", () => {
+  const container = document.createElement("div");
+  document.body.appendChild(container); // 포커스는 문서에 붙은 요소에서만 동작한다
+  try {
+    const v1 = keyedList(["A", "B", "C", "D"]);
+    container.appendChild(createElement(v1));
+    const ul = container.firstChild;
+    let moves = 0;
+    const insertBefore = ul.insertBefore.bind(ul);
+    ul.insertBefore = (n, r) => (moves++, insertBefore(n, r));
+    container.querySelector("#in-C").focus();
+    patch(container, diff(v1, keyedList(["B", "C", "D", "A"])));
+    assertEqual([moves, document.activeElement?.id, domToVdom(ul)], [1, "in-C", domToVdom(createElement(keyedList(["B", "C", "D", "A"])))]);
+  } finally {
+    container.remove();
+  }
+});
+
+test("key 무작위 300회: 삽입·삭제·섞기를 섞어도 patch 결과 = 새로 그린 결과, 남은 항목은 같은 노드 재사용", () => {
+  let seed = 7;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const randomKeys = () => {
+    const keys = [..."abcdefgh"].filter(() => rand() < 0.6);
+    for (let i = keys.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [keys[i], keys[j]] = [keys[j], keys[i]];
+    }
+    return keys;
+  };
+  for (let n = 0; n < 300; n++) {
+    const [k1, k2] = [randomKeys(), randomKeys()];
+    const [v1, v2] = [keyedList(k1), keyedList(k2)];
+    const container = document.createElement("div");
+    container.appendChild(createElement(v1));
+    const before = new Map([...container.firstChild.children].map((li, i) => [k1[i], li]));
+    patch(container, diff(v1, v2));
+    const after = [...container.firstChild.children];
+    assertEqual(domToVdom(container.firstChild), domToVdom(createElement(v2)), `${k1} → ${k2}`);
+    k2.forEach((k, i) => {
+      if (before.has(k) && before.get(k) !== after[i]) throw new Error(`${k1} → ${k2}: ${k}가 재사용되지 않음`);
+    });
+  }
+});
+
+test("ref 교체: current가 우연히 같은 다른 ref 객체로 바꿔도 새 ref가 연결됨 (얕은 비교는 style만)", () => {
+  const r1 = { current: null };
+  const r2 = { current: null };
+  const v1 = h("div", null, h("p", { ref: r1 }));
+  const container = document.createElement("div");
+  container.appendChild(createElement(v1));
+  r1.current = null; // r1과 r2의 내용이 같아지는 상황을 만든다
+  patch(container, diff(v1, h("div", null, h("p", { ref: r2 }))));
+  assertEqual(r2.current === container.querySelector("p"), true, "r2가 p를 가리켜야 함");
+});
+
+test("<template>: 내용(content)까지 읽고, 만들고, patch로 고침", () => {
+  const w = document.createElement("div");
+  w.innerHTML = "<template><p>x</p></template>";
+  const v1 = domToVdom(w.firstChild);
+  assertEqual(v1, h("template", null, h("p", null, "x")), "domToVdom이 content를 읽음");
+  const v2 = h("template", null, h("p", null, "y"), h("b", null, "z"));
+  const container = document.createElement("div");
+  container.appendChild(createElement(v1));
+  patch(container, diff(v1, v2));
+  assertEqual(domToVdom(container.firstChild), v2);
+});
+
+test("Phase 1 흐름: 사용자가 select 선택을 바꾼 뒤 Patch해도 새로 그린 화면과 같음 (commitLiveState, 무작위 테스트로 발견)", () => {
+  // 사용자가 o2를 골랐다 (property만 바뀌고 selected attribute는 없음)
+  const v1 = h("div", null, h("select", null, h("option", { value: "o1" }, "o1"), h("option", { value: "o2" }, "o2"), h("option", { value: "o3" }, "o3")));
+  const v2 = h("div", null, h("select", null, h("option", { value: "o2" }, "o2"), h("option", { value: "o3", selected: true }, "o3")));
+  const container = document.createElement("div");
+  container.appendChild(createElement(v1));
+  container.querySelector("select").value = "o2";
+  commitLiveState(container.firstChild);
+  patch(container, diff(domToVdom(container.firstChild), v2));
+  const fresh = createElement(v2);
+  assertEqual(container.querySelector("select").value, fresh.querySelector("select").value, "선택된 값");
 });
 
 const escape = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

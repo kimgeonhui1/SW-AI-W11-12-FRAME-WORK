@@ -12,7 +12,10 @@ const STORAGE_KEY = "mini-react-todos";
 function loadTodos() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    return Array.isArray(saved) ? saved : [];
+    // 배열이어도 항목이 깨져 있으면([null] 등) 렌더링에서 todo.done을 읽다가 앱 전체가 뜨지 않는다 → 올바른 모양만 남긴다
+    return Array.isArray(saved)
+      ? saved.filter((t) => t && typeof t === "object" && t.id != null && typeof t.text === "string").map((t) => ({ ...t, done: t.done === true }))
+      : [];
   } catch {
     return [];
   }

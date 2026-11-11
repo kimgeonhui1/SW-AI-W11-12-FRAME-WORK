@@ -237,8 +237,8 @@ export function domToVdom(node, preserveWhitespace = false) {
   const preserve = preserveWhitespace || WHITESPACE_PRESERVING_TAGS.has(type);
   // 변환된 자식들을 담을 배열
   const children = [];
-  // 실제 자식 노드들(텍스트·주석 포함)을 하나씩 돈다
-  for (const child of node.childNodes) {
+  // 실제 자식 노드들(텍스트·주석 포함)을 하나씩 돈다 (<template>은 content 안의 자식)
+  for (const child of childHost(node).childNodes) {
     // 자기 자신(domToVdom)을 다시 호출 = 재귀. 자식의 자식의 자식... 까지 끝까지 내려가며 변환한다
     const vchild = domToVdom(child, preserve);
     // null(버릴 노드)이 아니면 자식 목록에 추가
@@ -247,6 +247,30 @@ export function domToVdom(node, preserveWhitespace = false) {
 
   // 팀 규약 모양으로 묶어서 돌려준다. 이웃한 텍스트는 h()와 같은 규칙으로 합친다
   return { type, props, children: mergeAdjacentText(children) };
+}
+
+/**
+ * ■ childHost : 자식이 실제로 들어 있는 곳
+ * <template>의 자식은 template 자신(childNodes)이 아니라 content(DocumentFragment) 안에 있다. (화면에 그려지지 않는 내용)
+ * 읽기(domToVdom) · 만들기(createElement) · 고치기(patch)가 모두 이 함수로 같은 곳을 봐야 template의 VDOM과 DOM이 어긋나지 않는다.
+ */
+export function childHost(el) {
+  return el instanceof HTMLTemplateElement ? el.content : el;
+}
+
+/**
+ * ■ commitLiveState : 사용자가 바꾼 option 선택(property)을 selected attribute에도 적어 둔다 (Phase 1이 diff 전에 부름)
+ *
+ * 왜 필요한가?
+ *   domToVdom은 option의 "지금 선택 상태(property)"를 selected로 읽는다. 사용자가 고른 option은 property만 true고 attribute는 없다.
+ *   새 VDOM도 selected: true면 diff는 "변경 없음"이라 attribute를 고치지 않는다.
+ *   그런데 select의 값을 다시 맞출 때(setProp의 value 없음 처리)는 attribute(defaultSelected)를 기준으로 삼아서 선택이 풀려 버린다.
+ *   → diff 전에 attribute를 property와 같게 맞춰 두면, "읽은 VDOM = DOM의 attribute = property"가 되어 기준이 하나로 맞는다.
+ *   (무작위 테스트에서 select 선택을 바꾼 뒤 Patch하면 새로 그린 화면과 달라지는 것으로 발견)
+ */
+export function commitLiveState(root) {
+  if (root.nodeType !== Node.ELEMENT_NODE) return;
+  for (const option of root.querySelectorAll("option")) option.defaultSelected = option.selected;
 }
 
 /**
@@ -341,9 +365,10 @@ export function createElement(vnode, inSvg = false) {
   // 속성을 먼저 넣으면 아직 option이 없어서 select.value = "b"가 무시된다.
   // 단, multiple은 예외로 먼저 넣는다. 단일 select 상태에서 selected option을 붙이면 마지막 하나만 선택으로 남기 때문이다.
   if (vnode.props?.multiple) setProp(el, "multiple", vnode.props.multiple);
+  const host = childHost(el);
   for (const child of vnode.children ?? []) {
-    // 자식도 createElement로 실제 DOM을 만들고(재귀), el의 마지막 자식으로 붙인다
-    el.appendChild(createElement(child, childInSvg));
+    // 자식도 createElement로 실제 DOM을 만들고(재귀), el의 마지막 자식으로 붙인다 (<template>이면 content에)
+    host.appendChild(createElement(child, childInSvg));
   }
 
   // 그다음 속성을 넣는다 (props가 없을 수도 있으니 빈 객체로 대비)
@@ -359,6 +384,97 @@ export function createElement(vnode, inSvg = false) {
 
   // 속성과 자식이 모두 채워진 완성된 요소를 돌려준다
   return el;
+}
+
+/**
+ * ■ validateVNode : VNode 트리가 "실제 DOM으로 만들 수 있는 모양"인지 미리 검사한다 (diff/patch/createElement 전에 부름)
+ *
+ * 왜 필요한가?
+ *   1) 잘못된 값이 들어가면 한참 뒤 엉뚱한 곳에서 "Cannot read properties of undefined" 같은 에러가 나서 원인을 찾기 어렵다.
+ *      → 처음에 검사해서 "루트.children[0].children[2] <li>: ..." 처럼 위치를 알려 준다.
+ *   2) patch 도중에 에러가 나면 실제 DOM이 반쯤만 바뀐 채로 남는다.
+ *      patch가 실패할 수 있는 경우(만들 수 없는 태그 이름, setAttribute가 거부하는 속성 이름)를 여기서 미리 걸러서
+ *      "검사를 통과하면 patch는 중간에 실패하지 않는다"가 되게 한다.
+ *
+ * 검사 규칙
+ *   - 문자열(텍스트)은 항상 OK
+ *   - 요소: { type: 비어 있지 않은 문자열, props: 객체, children: 배열 }. 태그 이름은 브라우저가 만들 수 있는 이름
+ *   - props: on대문자(이벤트) → 함수 또는 없음 / style → 객체·문자열 또는 없음 / key·ref → 검사 안 함
+ *            나머지 → 문자열·숫자·불리언 또는 없음 (객체를 넣으면 "[object Object]"가 속성 값이 되어 버린다)
+ *            setAttribute로 들어가는 이름은 브라우저가 받아 주는 이름이어야 한다
+ */
+export function validateVNode(vnode, at = "루트") {
+  if (typeof vnode === "string") return;
+  if (vnode === null || typeof vnode !== "object" || Array.isArray(vnode) || typeof vnode.type !== "string" || vnode.type === "") {
+    const hint = typeof vnode?.type === "function" ? " (자식 컴포넌트 h(Child)는 FunctionComponent 안에서만 쓸 수 있습니다)" : "";
+    throw new TypeError(`${at}: 올바른 VNode가 아닙니다: ${describe(vnode)}${hint}`);
+  }
+  const where = `${at} <${vnode.type}>`;
+  if (!isValidName(vnode.type, tagNameOk)) throw new TypeError(`${where}: 만들 수 없는 태그 이름입니다`);
+  const { props, children } = vnode;
+  if (props === null || typeof props !== "object" || Array.isArray(props)) throw new TypeError(`${where}: props는 객체여야 합니다: ${describe(props)}`);
+  for (const [name, value] of Object.entries(props)) checkProp(where, name, value);
+  if (!Array.isArray(children)) throw new TypeError(`${where}: children은 배열이어야 합니다: ${describe(children)}`);
+  // forEach는 배열의 빈 칸([a, , b])을 건너뛰므로 인덱스로 돈다
+  for (let i = 0; i < children.length; i++) validateVNode(children[i], `${at}.children[${i}]`);
+}
+
+function checkProp(where, name, value) {
+  const empty = value == null || value === false;
+  // key는 `k:${key}` 문자열로 짝짓는다. 객체를 넣으면 전부 "[object Object]"가 되어 서로 다른 항목이 같은 key로 취급된다
+  if (name === "key") {
+    if (value != null && typeof value !== "string" && typeof value !== "number") throw new TypeError(`${where}: key는 문자열이나 숫자여야 합니다: ${describe(value)}`);
+    return;
+  }
+  // ref는 함수이거나 { current } 객체. 문자열을 넣으면 patch가 끝난 뒤에야 "Cannot create property 'current'" 에러가 난다
+  if (name === "ref") {
+    if (!empty && typeof value !== "function" && typeof value !== "object") throw new TypeError(`${where}: ref는 함수나 useRef() 객체여야 합니다: ${describe(value)}`);
+    return;
+  }
+  if (/^on[A-Z]/.test(name)) {
+    if (!empty && typeof value !== "function") throw new TypeError(`${where}: ${name}에는 함수를 넣어야 합니다: ${describe(value)}`);
+    return;
+  }
+  if (name === "style") {
+    if (!empty && typeof value !== "object" && typeof value !== "string") throw new TypeError(`${where}: style은 객체나 문자열이어야 합니다`);
+    return;
+  }
+  if (!empty && !["string", "number", "boolean"].includes(typeof value)) {
+    throw new TypeError(`${where}: 속성 "${name}"의 값으로 ${typeof value}를 쓸 수 없습니다`);
+  }
+  // value/checked/selected는 property로 넣고, 나머지는 setAttribute로 들어간다 → 그 이름을 브라우저가 받아 주는지 확인
+  if (!PROPERTY_PROPS.has(name) && !isValidName(PROP_TO_ATTR[name] ?? name, attrNameOk)) {
+    throw new TypeError(`${where}: 쓸 수 없는 속성 이름입니다: "${name}"`);
+  }
+}
+
+// 이름 검사 결과를 기억해 둔다 (같은 태그/속성 이름은 렌더링마다 반복되므로 브라우저에 한 번만 물어본다)
+const nameCache = new Map();
+const scratch = document.createElement("div");
+const tagNameOk = (name) => document.createElement(name);
+const attrNameOk = (name) => scratch.setAttribute(name, "");
+function isValidName(name, tryIt) {
+  const cacheKey = `${tryIt === tagNameOk ? "t" : "a"}:${name}`;
+  if (!nameCache.has(cacheKey)) {
+    // 정규식으로 규칙을 흉내 내는 대신 브라우저에 직접 시켜 본다 (규칙이 브라우저와 100% 같아진다)
+    try {
+      tryIt(name);
+      nameCache.set(cacheKey, true);
+    } catch {
+      nameCache.set(cacheKey, false);
+    }
+  }
+  return nameCache.get(cacheKey);
+}
+
+// 에러 메시지용으로 값을 짧은 글자로 (순환 객체처럼 JSON으로 못 바꾸면 String)
+function describe(value) {
+  if (typeof value === "function") return "함수";
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }
 
 /**
@@ -508,7 +624,16 @@ function updateListener(el, eventType, propName, handler) {
 function runLatestHandler(event) {
   const group = listenerStore.get(event.currentTarget)?.[event.type];
   if (!group) return;
-  for (const handler of Object.values(group)) handler(event);
+  // 같은 이벤트에 핸들러가 둘이면(텍스트 입력의 onInput + onChange) 하나가 에러를 내도 나머지는 실행하고, 첫 에러는 끝에서 알린다
+  let error;
+  for (const handler of Object.values(group)) {
+    try {
+      handler(event);
+    } catch (e) {
+      error ??= e;
+    }
+  }
+  if (error !== undefined) throw error;
 }
 
 // 글자를 입력하는 요소인지 (onChange를 input 이벤트로 연결할 대상)

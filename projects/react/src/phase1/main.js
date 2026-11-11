@@ -1,6 +1,6 @@
 // [phase1/main.js] Phase 1 페이지 시작점 — 실제/테스트 영역 렌더링, Patch·뒤로가기·앞으로가기 버튼 동작
 
-import { domToVdom, createElement } from "../core/vdom.js";
+import { domToVdom, createElement, validateVNode, commitLiveState } from "../core/vdom.js";
 import { diff } from "../core/diff.js";
 import { patch } from "../core/patch.js";
 import { push, undo, redo } from "./history.js";
@@ -19,6 +19,8 @@ const patchLog = document.getElementById("patch-log");
  * Phase 1 HTML에는 onClick 같은 함수 prop이 없어서 화면에서 읽어도 빠지는 정보가 없다.
  */
 function render(target) {
+  // 사용자가 바꾼 option 선택을 attribute에도 적어 둔다 → 읽은 VDOM과 DOM의 기준이 같아진다 (vdom.js commitLiveState 참고)
+  commitLiveState(realArea.firstChild);
   const patches = diff(domToVdom(realArea.firstChild), target);
   patch(realArea, patches);
   patchLog.textContent = patches === null ? "변경 없음 (null)" : JSON.stringify(patches, null, 2);
@@ -48,6 +50,14 @@ push(current);
 document.getElementById("patch-btn").addEventListener("click", () => {
   // 현재 테스트 영역 상태를 다시 Virtual DOM으로 만들고 → diff → 바뀐 부분만 실제 영역에 반영
   const vdom = htmlToVdom(testInput.value);
+  // 실제 영역을 건드리기 "전에" 검사한다. 브라우저 HTML 파서는 받아 주지만 setAttribute는 거부하는 속성 이름
+  // (브라우저에 따라 <p "a"="1"> 같은 이름)이 있으면 patch가 중간에 멈춰 실제 영역이 반쯤만 바뀐다 → 검사에서 막고 이유를 보여 준다
+  try {
+    validateVNode(vdom);
+  } catch (e) {
+    patchLog.textContent = `Patch 취소 (실제 영역은 그대로): ${e.message}`;
+    return;
+  }
   render(vdom);
   // 직전 기록과 VDOM이 같으면 기록을 남기지 않는다 (뒤로가기를 눌렀는데 화면이 그대로인 칸이 생기지 않게).
   // render의 diff 결과로 판단하지 않는 이유: 사용자가 실제 영역 input만 바꿨을 때도 diff 결과가 생기기 때문이다
