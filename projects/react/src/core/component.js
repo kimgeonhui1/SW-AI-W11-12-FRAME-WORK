@@ -45,17 +45,25 @@ export function runWithoutHooks(fn) {
 export class FunctionComponent {
   /**
    * @param component  루트 컴포넌트 함수 (props) => VNode
-   * @param container  화면을 그릴 부모 요소. 루트 노드 = container의 첫 자식
+   * @param container  화면을 그릴 요소. 컴포넌트가 돌려준 노드들이 container의 자식으로 들어간다
    * @param props      루트 컴포넌트에 넘길 props
    */
   constructor(component, container, props = {}) {
+    // 잘못 넘기면 mount 때 "is not a function" 같은 알기 어려운 에러가 나므로 만들 때 바로 알린다
+    if (typeof component !== "function") throw new TypeError("FunctionComponent: component는 함수여야 합니다");
+    if (container?.nodeType !== Node.ELEMENT_NODE) throw new TypeError("FunctionComponent: container는 DOM 요소여야 합니다");
     this.component = component;
     this.container = container;
     this.props = props;
     this.hooks = []; // Hook별 저장 칸. 렌더링이 끝나도 이 배열은 남아 있어서 상태가 유지된다
     this.hookKinds = []; // 칸마다 처음 쓴 Hook 종류 ("state" / "effect" / "ref" / "memo"). 순서가 바뀌었는지 검사용
     this.hookIndex = 0; // 이번 렌더링에서 다음 Hook이 쓸 칸 번호
-    this.vdom = null; // 지금 화면에 그려진 VDOM. 다음 update의 diff 기준 (화면에서 다시 읽지 않는다 → onClick 같은 함수도 보존)
+    // 지금 화면에 그려진 VDOM. 다음 update의 diff 기준 (화면에서 다시 읽지 않는다 → onClick 같은 함수도 보존)
+    // 루트는 container 자신을 뜻하는 속성 없는 div: { type: "div", props: {}, children: [컴포넌트가 돌려준 노드들] }
+    this.vdom = null;
+    // patch는 "parent.firstChild = 루트"로 다룬다. 루트가 container 자신이므로 container를 firstChild로 가진 객체를 넘긴다
+    // (루트 div끼리는 props가 늘 {}라서 루트 패치는 UPDATE나 null뿐 → parent의 다른 기능은 쓰이지 않는다)
+    this.patchParent = { firstChild: container };
     this.pendingEffects = []; // 이번 렌더링에서 실행해야 할 useEffect 목록 (화면 반영 "뒤"에 실행)
     this.updateScheduled = false;
     this.nestedUpdates = 0; // 사용자 입력 없이 연달아 일어난 렌더링 수 (무한 렌더링 감지)
@@ -68,10 +76,20 @@ export class FunctionComponent {
     this.committing = true;
     try {
       const vdom = this.render();
-      this.container.replaceChildren(createElement(vdom));
+      this.container.replaceChildren(...createElement(vdom).childNodes);
       // DOM을 다 만든 "뒤"에 기억한다. createElement가 실패했는데 vdom이 남으면 "이미 mount됨"으로 보여 다시 mount할 수 없다
       this.vdom = vdom;
       this.runEffects();
+      return this; // new FunctionComponent(App, el).mount() 처럼 이어서 쓸 수 있게
+    } catch (e) {
+      // 첫 렌더링이 실패하면 그때 만든 Hook 칸을 버린다. 남겨 두면 다시 mount할 때 실패한 시도의 초기값을 그대로 쓴다 (React도 버린다)
+      // (effect 실행 중 에러는 화면은 이미 그려진 것이라 해당하지 않는다)
+      if (this.vdom === null) {
+        this.hooks = [];
+        this.hookKinds = [];
+        this.hookCount = undefined;
+      }
+      throw e;
     } finally {
       this.committing = false;
     }
@@ -92,19 +110,19 @@ export class FunctionComponent {
   commitUpdate() {
     const next = this.render();
     try {
-      patch(this.container, diff(this.vdom, next));
+      patch(this.patchParent, diff(this.vdom, next));
     } catch (e) {
       // validateVNode를 통과했으면 patch는 보통 실패하지 않지만, 브라우저가 값을 거부하는 경우가 남아 있다
       // (예: <input type="file">에 value를 넣으면 InvalidStateError). 그러면 DOM이 반쯤만 바뀌어 this.vdom과 어긋나고,
       // 다음 diff가 틀린 DOM을 기준으로 고치게 된다 → 마지막으로 성공한 VDOM으로 화면을 통째로 다시 만들어 둘을 맞춘다
-      clearRefs(this.container.firstChild);
-      this.container.replaceChildren(createElement(this.vdom));
+      clearRefs(this.container);
+      this.container.replaceChildren(...createElement(this.vdom).childNodes);
       throw e;
     }
     this.vdom = next;
     // 제어 컴포넌트: 사용자가 입력해서 화면 값만 바뀌고 State는 그대로면 diff는 "변경 없음"이라 화면 값이 남는다.
     // 화면 값을 항상 State(VDOM)와 같게 맞춘다 (React의 controlled input과 같은 동작)
-    syncControlled(this.container.firstChild, next);
+    syncControlled(this.container, next);
     this.runEffects();
   }
 
@@ -152,7 +170,7 @@ export class FunctionComponent {
         errors.push(e);
       }
     });
-    clearRefs(this.container.firstChild);
+    clearRefs(this.container);
     this.container.replaceChildren();
     this.vdom = null;
     // 다시 mount하면 처음부터 시작한다 (React도 unmount된 컴포넌트의 상태는 버린다)
@@ -166,6 +184,8 @@ export class FunctionComponent {
   render() {
     this.hookIndex = 0;
     this.pendingEffects = [];
+    // 렌더링 도중 다른 컴포넌트를 렌더링해도(중첩) 끝나면 바깥 컴포넌트로 돌아가게 이전 값을 기억한다
+    const outer = currentComponent;
     currentComponent = this;
     try {
       const result = this.component(this.props);
@@ -175,16 +195,15 @@ export class FunctionComponent {
       else if (this.hookIndex !== this.hookCount) {
         throw new Error(`Hook 호출 개수가 바뀌었습니다 (${this.hookCount} → ${this.hookIndex}). Hook을 조건문/반복문 안에서 부르지 마세요.`);
       }
-      // 루트 결과도 h의 자식 정리 규칙(배열 펼치기, null 제거, 텍스트 합치기)을 거친 뒤 "노드 하나"인지 확인한다
-      // (patch는 container의 첫 자식 하나를 루트로 다룬다)
-      const roots = h("div", null, expand(result)).children;
-      if (roots.length !== 1) throw new Error(`루트 컴포넌트는 노드 하나를 반환해야 합니다 (지금 ${roots.length}개).`);
+      // 결과를 container를 뜻하는 루트 div로 감싼다. h의 자식 정리 규칙(배열 펼치기, null 제거, 텍스트 합치기)을 거쳐서
+      // 컴포넌트가 노드 하나 · 여러 개(배열) · 문자열 · null 무엇을 돌려줘도 된다 (React의 Fragment / null과 같은 효과)
+      const root = h("div", null, expand(result));
       // 화면을 건드리기 "전에" 결과를 검사한다 → 잘못된 VDOM이면 DOM은 그대로 두고 위치가 담긴 에러를 낸다
-      validateVNode(roots[0]);
-      return roots[0];
+      validateVNode(root);
+      return root;
     } finally {
-      // 에러가 나도 해제해야 렌더링 밖에서 Hook을 부르는 실수를 계속 잡아낼 수 있다
-      currentComponent = null;
+      // 에러가 나도 되돌려야 렌더링 밖에서 Hook을 부르는 실수를 계속 잡아낼 수 있다
+      currentComponent = outer;
     }
   }
 
@@ -260,8 +279,8 @@ function expand(node) {
 // VDOM의 value/checked를 실제 DOM의 현재 값(property)에 다시 맞춘다. 다를 때만 대입 (같은 값을 넣으면 커서 위치가 튈 수 있음)
 function syncControlled(node, vnode) {
   if (!node || typeof vnode === "string") return;
-  const props = vnode.props;
+  const props = vnode.props ?? {};
   if ("value" in props && props.value != null && node.value !== String(props.value)) node.value = String(props.value);
   if ("checked" in props && node.checked !== Boolean(props.checked)) node.checked = Boolean(props.checked);
-  vnode.children.forEach((child, i) => syncControlled(node.childNodes[i], child));
+  (vnode.children ?? []).forEach((child, i) => syncControlled(node.childNodes[i], child));
 }

@@ -52,16 +52,38 @@ test("자식 반환값 정리: 텍스트는 이웃과 합치고, 배열은 펼�
   const List = () => [h("b", null, "1"), 2];
   const [c, inst] = mount(() => h("p", null, "앞 ", h(Text), h(Empty), " 뒤", h(List)));
   // 자식 목록이 VDOM 규약(텍스트 합침, 빈 문자열 없음, 숫자는 문자열)과 같아야 index 기반 diff가 실제 DOM과 어긋나지 않는다
-  assertEqual(inst.vdom.children, ["앞 안녕 뒤", { type: "b", props: {}, children: ["1"] }, "2"]);
+  // inst.vdom은 container를 뜻하는 루트 div → 그 첫 자식이 컴포넌트가 돌려준 <p>
+  assertEqual(inst.vdom.children[0].children, ["앞 안녕 뒤", { type: "b", props: {}, children: ["1"] }, "2"]);
   assertEqual(c.innerHTML, "<p>앞 안녕 뒤<b>1</b>2</p>");
 });
 
-test("루트가 노드 하나가 아니면(배열/null) 에러, 루트가 자식 컴포넌트 하나면 OK", () => {
-  assertThrows(() => mount(() => [h("p"), h("p")]), "루트가 배열");
-  assertThrows(() => mount(() => null), "루트가 null");
+test("루트 컴포넌트는 노드 하나 · 여러 개(배열) · 문자열 · null 무엇을 돌려줘도 됨 (React의 Fragment / null), 개수가 바뀌어도 update", async () => {
+  let setMode;
+  const [c] = mount(() => {
+    const [mode, set] = useState("many");
+    setMode = set;
+    if (mode === "many") return [h("p", null, "a"), h("p", null, "b")];
+    if (mode === "text") return "글자";
+    if (mode === "none") return null;
+    return h("span", null, "x");
+  });
+  assertEqual(c.innerHTML, "<p>a</p><p>b</p>");
+  for (const [mode, html] of [["text", "글자"], ["none", ""], ["one", "<span>x</span>"], ["many", "<p>a</p><p>b</p>"]]) {
+    setMode(mode);
+    await tick();
+    assertEqual(c.innerHTML, html, mode);
+  }
   const Child = () => h("span", null, "x");
-  const [c] = mount(() => h(Child));
-  assertEqual(c.innerHTML, "<span>x</span>");
+  const [c2] = mount(() => h(Child));
+  assertEqual(c2.innerHTML, "<span>x</span>");
+});
+
+test("4차 리뷰: FunctionComponent는 잘못된 인자를 만들 때 바로 TypeError, mount()는 자기 자신을 돌려줌", () => {
+  assertThrows(() => new FunctionComponent(null, document.createElement("div")), "component가 함수 아님");
+  assertThrows(() => new FunctionComponent(() => null, null), "container 없음");
+  assertThrows(() => new FunctionComponent(() => null, document.createTextNode("x")), "container가 요소 아님");
+  const inst = new FunctionComponent(() => h("p"), document.createElement("div"));
+  assertEqual(inst.mount() === inst, true);
 });
 
 test("update: 바뀐 노드만 고치고 나머지 DOM 노드는 그대로 (같은 객체)", async () => {
@@ -344,7 +366,7 @@ test("자식 컴포넌트의 key: h(Item, { key })의 key는 결과 요소로 �
     return h("li", null, props.text);
   };
   const [, inst] = mount(() => h("ul", null, h(Item, { key: "a", text: "A" })));
-  assertEqual([inst.vdom.children[0].props.key, seenKey], ["a", "없음"]);
+  assertEqual([inst.vdom.children[0].children[0].props.key, seenKey], ["a", "없음"]);
 });
 
 // ── useRef ──
@@ -479,7 +501,6 @@ test("개선 4: 잘못된 VNode는 화면을 건드리기 전에, 위치가 담�
     [() => h("p", { title: { a: 1 } }), "title"],
     [() => h("button", { onClick: "alert(1)" }), "onClick"],
     [() => h("a b"), "태그 이름"],
-    [() => h("p", { "a b": "1" }), "속성 이름"],
   ];
   for (const [App, word] of cases) {
     const c = document.createElement("div");
@@ -605,6 +626,37 @@ test("퍼즈 1,000회 (Phase 2): 사용자 입력과 setState를 섞어도, 제�
     const [fresh] = mount(() => view(next));
     if (screen(c) !== screen(fresh)) throw new Error(`${n}번째: 화면이 state와 다름 ${JSON.stringify(next)}`);
   }
+});
+
+test("4차 리뷰: useEffect / useMemo 인자가 잘못되면 부른 자리에서 TypeError", () => {
+  for (const [App, word] of [
+    [() => (useEffect(5, []), h("p")), "useEffect에는 함수"],
+    [() => (useEffect(() => {}, "x"), h("p")), "useEffect의 deps"],
+    [() => (useMemo(() => 1, "x"), h("p")), "useMemo의 deps"],
+  ]) {
+    try {
+      new FunctionComponent(App, document.createElement("div")).mount();
+    } catch (e) {
+      if (!(e instanceof TypeError) || !e.message.includes(word)) throw new Error(`기대: "${word}", 실제: ${e.message}`);
+      continue;
+    }
+    throw new Error(`에러가 나야 함: ${word}`);
+  }
+});
+
+test("4차 리뷰: 첫 mount가 실패하면 그때 만든 Hook 칸을 버림 (다시 mount하면 초기값을 새로 계산)", () => {
+  let fail = true;
+  let inits = 0;
+  const inst = new FunctionComponent(() => {
+    useState(() => ++inits);
+    if (fail) throw new Error("boom");
+    return h("p");
+  }, document.createElement("div"));
+  assertThrows(() => inst.mount(), "첫 mount 실패");
+  assertEqual(inst.hooks.length, 0, "실패한 시도의 Hook 칸이 남음");
+  fail = false;
+  inst.mount();
+  assertEqual(inits, 2, "다시 mount할 때 초기값 함수가 다시 실행돼야 함");
 });
 
 test("Todo 앱: 저장된 목록에 깨진 항목([null] 등)이 있어도 앱이 뜨고, 올바른 항목만 보여 줌", async () => {

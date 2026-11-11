@@ -553,6 +553,109 @@ test("Phase 1 흐름: 사용자가 select 선택을 바꾼 뒤 Patch해도 새�
   assertEqual(container.querySelector("select").value, fresh.querySelector("select").value, "선택된 값");
 });
 
+// ── 4차 리뷰 (팀원 테스트 722개로 발견) ──
+
+test("4차 리뷰: 대소문자만 다른 속성으로 바뀌어도 사라지지 않음 ({ Title } → { title })", () => {
+  const v1 = h("div", null, h("p", { Title: "a" }));
+  const v2 = h("div", null, h("p", { title: "a" }));
+  const container = document.createElement("div");
+  container.appendChild(createElement(v1));
+  patch(container, diff(v1, v2));
+  assertEqual(container.querySelector("p").getAttribute("title"), "a", "삭제를 먼저 해야 방금 넣은 속성이 안 지워짐");
+});
+
+test("4차 리뷰: DOM의 __proto__ 속성도 일반 속성으로 읽음 (프로토타입이 바뀌거나 사라지지 않음)", () => {
+  const w = document.createElement("div");
+  w.innerHTML = '<p __proto__="x">t</p>';
+  const v = domToVdom(w.firstChild);
+  assertEqual([Object.hasOwn(v.props, "__proto__"), v.props.__proto__ === "x", Object.getPrototypeOf(v.props) === Object.prototype], [true, true, true]);
+});
+
+test("4차 리뷰: setAttribute가 거부하는 속성 이름은 그 속성만 건너뛰고 나머지는 그림", () => {
+  const warn = console.warn;
+  const warned = [];
+  console.warn = (m) => warned.push(m);
+  try {
+    const el = createElement(h("p", { "a b": "1", id: "ok" }, "x"));
+    assertEqual([el.id, el.textContent, warned.length], ["ok", "x", 1]);
+  } finally {
+    console.warn = warn;
+  }
+});
+
+test("4차 리뷰: h()는 props를 복사함 (만든 뒤 원본을 고쳐도 VNode는 그대로)", () => {
+  const props = { id: "a" };
+  const v = h("p", props);
+  props.id = "b";
+  assertEqual(v.props.id, "a");
+});
+
+test("4차 리뷰: diff에 잘못된 VNode(null · 숫자 · 배열 · 문자열 props)가 오면 TypeError", () => {
+  for (const bad of [null, 5, [], { type: "p", props: "x", children: [] }]) {
+    try {
+      diff(h("p"), bad);
+    } catch (e) {
+      if (!(e instanceof TypeError)) throw new Error(`TypeError가 아님: ${e}`);
+      continue;
+    }
+    throw new Error(`에러가 나야 함: ${JSON.stringify(bad)}`);
+  }
+});
+
+test("4차 리뷰: DOM과 VDOM이 어긋나 대상이 없으면 아무것도 바꾸지 않고 TypeError (전부 적용되거나, 전혀 안 되거나)", () => {
+  const v1 = h("div", null, h("p", null, "a"), h("ul", null, h("li", null, "x")));
+  const v2 = h("div", null, h("p", null, "A"), h("ul", null, h("li", null, "y")));
+  const container = document.createElement("div");
+  container.appendChild(createElement(v1));
+  container.querySelector("li").remove(); // 누군가 실제 영역을 직접 고쳤다
+  const before = container.innerHTML;
+  try {
+    patch(container, diff(v1, v2));
+  } catch (e) {
+    if (!(e instanceof TypeError)) throw e;
+    assertEqual(container.innerHTML, before, "앞쪽 p의 글자도 바뀌면 안 됨");
+    return;
+  }
+  throw new Error("에러가 나야 함");
+});
+
+test("4차 리뷰: createElement에 요소 VNode가 아닌 값(true · {} · 배열)이 오면 TypeError (<undefined> 요소를 만들지 않음)", () => {
+  for (const bad of [true, {}, []]) {
+    try {
+      createElement(bad);
+    } catch (e) {
+      if (!(e instanceof TypeError)) throw e;
+      continue;
+    }
+    throw new Error(`에러가 나야 함: ${JSON.stringify(bad)}`);
+  }
+});
+
+test("4차 리뷰: props · children이 없거나 null이어도 diff 통과, props가 Date 같은 객체면 TypeError", () => {
+  diff({ type: "p" }, { type: "p", props: null, children: null });
+  try {
+    diff(h("p"), { type: "p", props: new Date(), children: [] });
+  } catch (e) {
+    if (e instanceof TypeError) return;
+    throw e;
+  }
+  throw new Error("Date props는 에러가 나야 함");
+});
+
+test("4차 리뷰: patch에 모르는 패치 종류나 대상 없는 패치가 오면 TypeError", () => {
+  const container = document.createElement("div");
+  container.appendChild(createElement(h("p")));
+  for (const [c, p] of [[container, { type: "NOPE" }], [document.createElement("div"), { type: "TEXT", text: "x" }]]) {
+    try {
+      patch(c, p);
+    } catch (e) {
+      if (!(e instanceof TypeError) || !e.message.startsWith("[patch]")) throw new Error(`기대한 에러가 아님: ${e.message}`);
+      continue;
+    }
+    throw new Error(`에러가 나야 함: ${JSON.stringify(p)}`);
+  }
+});
+
 // ── 무작위(퍼즈) 테스트: 사람이 떠올리지 못한 조합을 찾는다. 시드를 고정해서 매번 같은 화면 쌍으로 돈다 ──
 
 function makeRandom(seed) {

@@ -50,9 +50,10 @@ const PROPERTY_PROPS = new Set(["value", "checked", "selected"]);
 
 // HTML attribute 이름 → props 이름으로 바꾸는 표.
 // JS에서 class / for는 예약어(문법에 쓰이는 단어)라서 React처럼 className / htmlFor라는 이름을 쓴다.
-const ATTR_TO_PROP = { class: "className", for: "htmlFor" };
+// __proto__: null → 표에 없는 이름은 확실히 undefined (없으면 "__proto__"를 찾을 때 Object.prototype이 나와 속성이 사라진다)
+const ATTR_TO_PROP = { __proto__: null, class: "className", for: "htmlFor" };
 // 위 표의 반대 방향. props 이름 → HTML attribute 이름. (createElement에서 실제 DOM에 쓸 때 사용)
-const PROP_TO_ATTR = { className: "class", htmlFor: "for" };
+const PROP_TO_ATTR = { __proto__: null, className: "class", htmlFor: "for" };
 
 // 요소별로 "지금 등록된 이벤트 핸들러"를 기억해 두는 저장소.
 // WeakMap: 키(DOM 요소)가 화면에서 사라져 더 이상 쓰이지 않으면 저장된 값도 자동으로 정리되는 Map.
@@ -72,7 +73,7 @@ let pendingRefs = null;
 export const SVG_NS = "http://www.w3.org/2000/svg";
 
 // "on + 이름"을 소문자로 바꾼 것과 실제 브라우저 이벤트 이름이 다른 경우 (onDoubleClick → "doubleclick"이 아니라 "dblclick")
-const EVENT_NAME_FIX = { doubleclick: "dblclick" };
+const EVENT_NAME_FIX = { __proto__: null, doubleclick: "dblclick" };
 
 // 숫자를 그대로 쓰는 CSS 속성 (React와 같은 목록 중 자주 쓰는 것). 그 외 숫자 값에는 px를 붙인다 ({ width: 100 } → "100px")
 const UNITLESS_STYLES = new Set([
@@ -103,7 +104,8 @@ export function h(type, props = {}, ...children) {
     type,
     // ?? 는 "왼쪽이 null 또는 undefined일 때만 오른쪽 값을 쓴다"는 연산자.
     // h("div", null) 처럼 null이 들어와도 이후 코드가 props.xxx에 안전하게 접근하도록 빈 객체로 맞춘다
-    props: props ?? {},
+    // 얕은 복사: 원본 객체를 그대로 쓰면, 만든 뒤에 원본을 고칠 때 VNode도 같이 바뀐다
+    props: { ...(props ?? {}) },
     // 자식 배열은 아래 normalizeChildren으로 깔끔하게 정리해서 저장
     children: normalizeChildren(children),
   };
@@ -226,7 +228,8 @@ export function domToVdom(node, preserveWhitespace = false) {
     }
     // 이름을 props 이름으로 바꿔서 저장. class → className, for → htmlFor, 나머지는 그대로(??)
     // 예) <div class="a" id="b"> → props = { className: "a", id: "b" }
-    props[ATTR_TO_PROP[name] ?? name] = value;
+    // defineProperty: props["__proto__"] = 값 으로 넣으면 일반 속성이 아니라 프로토타입 설정으로 처리되어 사라진다
+    Object.defineProperty(props, ATTR_TO_PROP[name] ?? name, { value, enumerable: true, writable: true, configurable: true });
   }
 
   // 사용자가 화면에서 직접 바꾼 입력 상태(property)를 props에 반영한다 (아래 readLiveState 참고)
@@ -354,6 +357,10 @@ export function createElement(vnode, inSvg = false) {
   }
 
   // ── 2) 요소인 경우 ──
+  // 요소 VNode가 아니면(true, {}, 배열 등) document.createElement(undefined)가 <undefined> 요소를 조용히 만들어 버린다 → 바로 알린다
+  if (vnode === null || typeof vnode !== "object" || Array.isArray(vnode) || typeof vnode.type !== "string" || vnode.type === "") {
+    throw new TypeError(`createElement: 올바른 VNode가 아닙니다: ${describe(vnode)}`);
+  }
   // <svg>와 그 안쪽은 SVG 이름공간으로 만든다. document.createElement("circle")은 이름만 circle인 HTML 요소라서 화면에 안 그려진다.
   // inSvg: 부모가 SVG 안이면 true (재귀로 아래까지 전달). <foreignObject> 안은 다시 HTML이다
   const svg = inSvg || vnode.type === "svg";
@@ -393,15 +400,14 @@ export function createElement(vnode, inSvg = false) {
  *   1) 잘못된 값이 들어가면 한참 뒤 엉뚱한 곳에서 "Cannot read properties of undefined" 같은 에러가 나서 원인을 찾기 어렵다.
  *      → 처음에 검사해서 "루트.children[0].children[2] <li>: ..." 처럼 위치를 알려 준다.
  *   2) patch 도중에 에러가 나면 실제 DOM이 반쯤만 바뀐 채로 남는다.
- *      patch가 실패할 수 있는 경우(만들 수 없는 태그 이름, setAttribute가 거부하는 속성 이름)를 여기서 미리 걸러서
- *      "검사를 통과하면 patch는 중간에 실패하지 않는다"가 되게 한다.
+ *      patch가 실패할 수 있는 경우(만들 수 없는 태그 이름)를 여기서 미리 거른다.
+ *      (setAttribute가 거부하는 속성 이름은 setProp이 그 속성만 건너뛰므로 실패하지 않는다)
  *
  * 검사 규칙
  *   - 문자열(텍스트)은 항상 OK
  *   - 요소: { type: 비어 있지 않은 문자열, props: 객체, children: 배열 }. 태그 이름은 브라우저가 만들 수 있는 이름
  *   - props: on대문자(이벤트) → 함수 또는 없음 / style → 객체·문자열 또는 없음 / key·ref → 검사 안 함
  *            나머지 → 문자열·숫자·불리언 또는 없음 (객체를 넣으면 "[object Object]"가 속성 값이 되어 버린다)
- *            setAttribute로 들어가는 이름은 브라우저가 받아 주는 이름이어야 한다
  */
 export function validateVNode(vnode, at = "루트") {
   if (typeof vnode === "string") return;
@@ -410,10 +416,16 @@ export function validateVNode(vnode, at = "루트") {
     throw new TypeError(`${at}: 올바른 VNode가 아닙니다: ${describe(vnode)}${hint}`);
   }
   const where = `${at} <${vnode.type}>`;
-  if (!isValidName(vnode.type, tagNameOk)) throw new TypeError(`${where}: 만들 수 없는 태그 이름입니다`);
+  if (!isValidTagName(vnode.type)) throw new TypeError(`${where}: 만들 수 없는 태그 이름입니다`);
   const { props, children } = vnode;
-  if (props === null || typeof props !== "object" || Array.isArray(props)) throw new TypeError(`${where}: props는 객체여야 합니다: ${describe(props)}`);
-  for (const [name, value] of Object.entries(props)) checkProp(where, name, value);
+  // props · children이 없으면(null / undefined) 빈 것으로 본다 (createElement · diff도 ?? {} / ?? []로 다룬다)
+  if (props != null) {
+    // 평범한 객체만: 배열 · Date 같은 객체는 속성 목록으로 읽을 수 없다
+    const proto = typeof props === "object" ? Object.getPrototypeOf(props) : undefined;
+    if (proto !== Object.prototype && proto !== null) throw new TypeError(`${where}: props는 평범한 객체여야 합니다: ${describe(props)}`);
+    for (const [name, value] of Object.entries(props)) checkProp(where, name, value);
+  }
+  if (children == null) return;
   if (!Array.isArray(children)) throw new TypeError(`${where}: children은 배열이어야 합니다: ${describe(children)}`);
   // forEach는 배열의 빈 칸([a, , b])을 건너뛰므로 인덱스로 돈다
   for (let i = 0; i < children.length; i++) validateVNode(children[i], `${at}.children[${i}]`);
@@ -442,29 +454,22 @@ function checkProp(where, name, value) {
   if (!empty && !["string", "number", "boolean"].includes(typeof value)) {
     throw new TypeError(`${where}: 속성 "${name}"의 값으로 ${typeof value}를 쓸 수 없습니다`);
   }
-  // value/checked/selected는 property로 넣고, 나머지는 setAttribute로 들어간다 → 그 이름을 브라우저가 받아 주는지 확인
-  if (!PROPERTY_PROPS.has(name) && !isValidName(PROP_TO_ATTR[name] ?? name, attrNameOk)) {
-    throw new TypeError(`${where}: 쓸 수 없는 속성 이름입니다: "${name}"`);
-  }
+  // 속성 "이름"은 여기서 막지 않는다: setAttribute가 거부하는 이름은 setProp이 그 속성만 건너뛰고 경고한다 (화면 전체를 멈추지 않게)
 }
 
-// 이름 검사 결과를 기억해 둔다 (같은 태그/속성 이름은 렌더링마다 반복되므로 브라우저에 한 번만 물어본다)
-const nameCache = new Map();
-const scratch = document.createElement("div");
-const tagNameOk = (name) => document.createElement(name);
-const attrNameOk = (name) => scratch.setAttribute(name, "");
-function isValidName(name, tryIt) {
-  const cacheKey = `${tryIt === tagNameOk ? "t" : "a"}:${name}`;
-  if (!nameCache.has(cacheKey)) {
-    // 정규식으로 규칙을 흉내 내는 대신 브라우저에 직접 시켜 본다 (규칙이 브라우저와 100% 같아진다)
+// 태그 이름 검사 결과를 기억해 둔다 (같은 태그는 렌더링마다 반복되므로 브라우저에 한 번만 물어본다)
+const tagNameCache = new Map();
+function isValidTagName(name) {
+  if (!tagNameCache.has(name)) {
+    // 정규식으로 규칙을 흉내 내는 대신 브라우저에 직접 만들어 보게 한다 (규칙이 브라우저와 100% 같아진다)
     try {
-      tryIt(name);
-      nameCache.set(cacheKey, true);
+      document.createElement(name);
+      tagNameCache.set(name, true);
     } catch {
-      nameCache.set(cacheKey, false);
+      tagNameCache.set(name, false);
     }
   }
-  return nameCache.get(cacheKey);
+  return tagNameCache.get(name);
 }
 
 // 에러 메시지용으로 값을 짧은 글자로 (순환 객체처럼 JSON으로 못 바꾸면 String)
@@ -572,7 +577,13 @@ export function setProp(el, name, value, oldValue) {
   }
   // disabled={true} → <input disabled="">. HTML의 boolean 속성은 "있느냐 없느냐"만 의미가 있어서 값은 빈 문자열로 둔다.
   // 그 외 값은 문자열로 바꿔서 속성에 쓴다 (속성 값은 항상 문자열이어야 함)
-  el.setAttribute(attr, value === true ? "" : String(value));
+  try {
+    el.setAttribute(attr, value === true ? "" : String(value));
+  } catch (e) {
+    // HTML 파서는 받아 주지만 setAttribute는 거부하는 이름("a b" 등)이 있다. 그 속성 하나 때문에 화면 전체가 멈추지 않게 건너뛴다
+    if (e?.name !== "InvalidCharacterError") throw e;
+    console.warn(`[setProp] 쓸 수 없는 속성 이름이라 건너뜁니다: "${attr}"`);
+  }
 }
 
 /**

@@ -15,7 +15,7 @@ const RAW_TAGS = new Set(["pre", "textarea"]);
 // (HTML 표준 직렬화 규칙의 목록. noscript는 스크립트가 켜진 브라우저 기준)
 const RAW_TEXT_TAGS = new Set(["style", "script", "xmp", "iframe", "noembed", "noframes", "plaintext", "noscript"]);
 // props 이름 → HTML 속성 이름 (vdom.js와 같은 규칙)
-const PROP_TO_ATTR = { className: "class", htmlFor: "for" };
+const PROP_TO_ATTR = { __proto__: null, className: "class", htmlFor: "for" };
 
 /**
  * ■ htmlToVdom : HTML 문자열 → 루트 <div>로 감싼 VDOM

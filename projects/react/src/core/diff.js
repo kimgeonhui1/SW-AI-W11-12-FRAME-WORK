@@ -1,5 +1,7 @@
 // [diff.js] 이전/새 Virtual DOM을 비교해 변경된 부분을 찾는 Diff 알고리즘
 
+import { validateVNode } from "./vdom.js";
+
 /**
  * ■ diff 반환 형식: "패치 트리" (VDOM과 같은 모양으로, 바뀐 곳만 표시한 트리)
  *
@@ -25,6 +27,15 @@
  * 자식에 key(h("li", { key: id }))가 있으면 "같은 key끼리" 비교하고, 노드를 지우지 않고 자리만 옮긴다. (실제 React와 같은 방식)
  */
 export function diff(oldVNode, newVNode) {
+  // 입력 검사는 맨 위에서 한 번만 한다 (재귀 안에서 하면 같은 하위 트리를 깊이만큼 반복 검사한다).
+  // null · 숫자 · 배열 · props 자리의 문자열 같은 값이 들어오면 엉뚱한 곳에서 터지지 않고 위치가 담긴 TypeError가 난다.
+  // undefined는 "노드 없음"(CREATE / REMOVE)이라 허용한다
+  if (oldVNode !== undefined) validateVNode(oldVNode, "diff 이전 VDOM");
+  if (newVNode !== undefined) validateVNode(newVNode, "diff 새 VDOM");
+  return diffNode(oldVNode, newVNode);
+}
+
+function diffNode(oldVNode, newVNode) {
   // 1) 이전엔 없고 이번엔 있음 → 새로 만들기
   if (oldVNode === undefined) return { type: "CREATE", node: newVNode };
   // 2) 이전엔 있고 이번엔 없음 → 지우기
@@ -96,7 +107,7 @@ function diffProps(oldProps, newProps) {
   }
   // 이전 props 기준: 이번엔 없는 속성 → value: undefined (= 삭제)
   for (const name of Object.keys(oldProps)) {
-    if (name !== "key" && !(name in newProps)) changes.push({ name, value: undefined, oldValue: oldProps[name] });
+    if (name !== "key" && !Object.hasOwn(newProps, name)) changes.push({ name, value: undefined, oldValue: oldProps[name] });
   }
   return changes;
 }
@@ -125,7 +136,7 @@ function diffChildren(oldChildren, newChildren) {
   const length = Math.max(oldChildren.length, newChildren.length);
   const patches = [];
   for (let i = 0; i < length; i++) {
-    patches.push(diff(oldChildren[i], newChildren[i]));
+    patches.push(diffNode(oldChildren[i], newChildren[i]));
   }
   return { children: patches };
 }
@@ -168,7 +179,7 @@ function diffKeyedChildren(oldChildren, newChildren) {
     } else {
       oldIndexByKey.delete(key);
       order.push(oldIndex);
-      children.push(diff(oldChildren[oldIndex], child));
+      children.push(diffNode(oldChildren[oldIndex], child));
     }
   });
   // 아무도 안 가져간 이전 자식은 지운다. (Map에 남은 것만 보면 안 된다: 같은 key가 두 번 있던 이전 자식의 두 번째는 Map에 아예 없다)

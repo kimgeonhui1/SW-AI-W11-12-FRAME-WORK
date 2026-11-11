@@ -23,6 +23,13 @@ function nextHook(kind) {
 }
 const hookName = (kind) => `use${kind[0].toUpperCase()}${kind.slice(1)}`;
 
+// useEffect / useMemo 인자 검사. 함수가 아니면 렌더링이 끝난 뒤(effect)에야 "callback is not a function"이 나고,
+// deps가 문자열이면 글자 단위로 비교되는 등 조용히 틀리게 동작하므로 부른 자리에서 바로 알린다
+function checkArgs(name, fn, deps) {
+  if (typeof fn !== "function") throw new TypeError(`${name}에는 함수를 넘겨야 합니다`);
+  if (deps !== undefined && !Array.isArray(deps)) throw new TypeError(`${name}의 deps는 배열이어야 합니다 (없으면 생략)`);
+}
+
 // 의존성 배열이 바뀌었는지. deps가 없으면(undefined) 매번 "바뀜"
 function depsChanged(prevDeps, deps) {
   if (deps === undefined || prevDeps === undefined) return true;
@@ -55,6 +62,7 @@ export function useState(initial) {
 
 // 렌더링 후 부수효과 실행 (의존성이 바뀔 때만)
 export function useEffect(callback, deps) {
+  checkArgs("useEffect", callback, deps);
   const [component, i] = nextHook("effect");
   const hook = component.hooks[i] ?? (component.hooks[i] = { deps: undefined, cleanup: undefined, ran: false });
   // 비교 기준은 "마지막으로 실제 실행된" deps. 실행 기록(ran, deps)은 runEffects가 실행할 때 남긴다
@@ -74,6 +82,7 @@ export function useRef(initial) {
 
 // 계산 결과 저장, 의존성이 그대로면 재사용
 export function useMemo(factory, deps) {
+  checkArgs("useMemo", factory, deps);
   const [component, i] = nextHook("memo");
   const hook = component.hooks[i];
   if (hook && !depsChanged(hook.deps, deps)) return hook.value;

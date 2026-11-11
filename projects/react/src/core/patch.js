@@ -1,6 +1,6 @@
 // [patch.js] Diff 결과(변경 목록)를 실제 DOM에 반영
 
-import { createElement, setProp, removeProp, clearRefs, withDeferredRefs, childHost, SVG_NS } from "./vdom.js";
+import { createElement, setProp, removeProp, clearRefs, withDeferredRefs, childHost, validateVNode, SVG_NS } from "./vdom.js";
 
 // 이 부모 아래에 새로 만들 요소가 SVG여야 하는지 (<foreignObject> 안쪽은 다시 HTML)
 function inSvg(parent) {
@@ -21,14 +21,42 @@ function inSvg(parent) {
  *    실제 DOM을 domToVdom으로 읽었다면 createElement 결과로 한 번 교체해 둘의 모양을 맞춰야 한다 (vdom.js 참고).
  */
 export function patch(container, patches) {
+  // DOM을 건드리기 "전에" 패치가 가리키는 노드가 전부 있는지 먼저 확인한다 (전부 적용되거나, 전혀 안 되거나).
+  // 바로 적용하다 중간에 대상이 없으면 앞쪽만 바뀐 채 멈춰서 화면이 반쯤 바뀐다
+  verifyPatch(patches, container.firstChild);
   // ref 연결은 patch가 끝난 뒤 한꺼번에 한다 → 같은 ref가 형제 사이를 옮겨가도 "해제 → 연결" 순서가 지켜진다
   withDeferredRefs(() => applyPatch(container, patches, container.firstChild));
+}
+
+const PATCH_TYPES = new Set(["CREATE", "REMOVE", "REPLACE", "TEXT", "UPDATE"]);
+
+// applyPatch와 같은 길을 따라가며 "적용할 수 있는지"만 확인한다 (DOM은 바꾸지 않음)
+function verifyPatch(p, node) {
+  if (p === null) return;
+  if (!PATCH_TYPES.has(p?.type)) throw new TypeError(`[patch] 알 수 없는 패치 종류입니다: ${JSON.stringify(p?.type)}`);
+  // 새로 만들 노드도 미리 검사한다. 적용 도중 createElement가 실패하면 앞쪽 변경만 반영된 채 멈춘다
+  if (p.type === "CREATE" || p.type === "REPLACE") {
+    if (p.node === undefined) throw new TypeError(`[patch] ${p.type} 패치에 새 노드(node)가 없습니다`);
+    validateVNode(p.node, `[patch] ${p.type}의 새 노드`);
+  }
+  if (p.type === "CREATE") return;
+  // CREATE 말고는 고칠 실제 노드가 있어야 한다. 없거나 종류가 다르면 DOM과 VDOM이 어긋난 것 (예: 누군가 실제 영역을 직접 고침)
+  const ok = p.type === "TEXT" ? node?.nodeType === Node.TEXT_NODE : p.type === "UPDATE" ? node?.nodeType === Node.ELEMENT_NODE : !!node;
+  if (!ok) throw new TypeError(`[patch] ${p.type} 패치를 적용할 DOM 노드가 없거나 종류가 다릅니다 (DOM과 VDOM이 어긋남)`);
+  if (p.type !== "UPDATE") return;
+  const childNodes = childHost(node).childNodes;
+  if (p.order) {
+    for (const i of p.removed) if (!childNodes[i]) throw new TypeError("[patch] 지울 자식 노드가 없습니다 (DOM과 VDOM이 어긋남)");
+    p.order.forEach((oldIndex, i) => oldIndex !== -1 && verifyPatch(p.children[i], childNodes[oldIndex] ?? null));
+  } else {
+    p.children.forEach((childPatch, i) => verifyPatch(childPatch, childNodes[i] ?? null));
+  }
 }
 
 // 실제 DOM 노드(node)에 패치 하나를 적용하고, UPDATE면 자식들로 재귀한다. (CREATE일 때 node는 없음)
 // 적용 뒤 그 자리에 있는 노드를 돌려준다 (REPLACE면 새 노드). key 모드가 "바로 앞 노드"를 기억하는 데 쓴다
 function applyPatch(parent, p, node) {
-  if (p === null) return node;
+  if (p === null) return node; // (대상 노드가 있는지는 verifyPatch가 미리 확인했다)
 
   switch (p.type) {
     case "CREATE":
@@ -66,9 +94,16 @@ function applyPatch(parent, p, node) {
         if (p.order) applyKeyedChildren(host, p, childNodes);
         else p.children.forEach((childPatch, i) => applyPatch(host, childPatch, childNodes[i]));
       }
-      for (const { name, value, oldValue } of p.props) {
-        if (value === undefined) removeProp(node, name, oldValue);
-        else setProp(node, name, value, oldValue);
+      // 삭제를 먼저 한다. HTML 속성 이름은 대소문자를 구분하지 않아서, { Title → title }을 "넣기 → 지우기" 순서로 하면
+      // 방금 넣은 title까지 지워진다. 단 value는 삭제여도 맨 끝에 둔다 (multiple / max 등이 먼저 바뀌어야 값이 맞게 남는다. diff가 맨 끝에 둠)
+      {
+        const removeFirst = (c) => c.value === undefined && c.name !== "value";
+        for (const c of p.props) if (removeFirst(c)) removeProp(node, c.name, c.oldValue);
+        for (const c of p.props) {
+          if (removeFirst(c)) continue;
+          if (c.value === undefined) removeProp(node, c.name, c.oldValue);
+          else setProp(node, c.name, c.value, c.oldValue);
+        }
       }
       return node;
   }
