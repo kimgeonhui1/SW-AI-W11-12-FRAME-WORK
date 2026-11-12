@@ -42,7 +42,7 @@ export function YutBoard({ state, clickable, chosen, dests, targeting, onNode })
       // 출발 · 도착 칸(o0): 비어 있으면 칸 안에 "출발" (말이 있으면 말이 덮는다)
       pos === "o0" && teams.length === 0 ? h("span", { className: "start-mark" }, "출발") : null,
       // 함정: 놓은 팀만 알아보게 색 표시 (상대도 보이게 둔다: 숨기면 화면 하나로 둘이 하는 게임에서 의미가 없음)
-      state.traps[pos] ? h("span", { className: `trap ${state.traps[pos] === "홍" ? "red" : "blue"}`, title: "함정" }, "✕") : null,
+      state.traps[pos] ? h("span", { className: `trap ${state.traps[pos] === "홍" ? "red" : "blue"}`, title: "바나나 껍질 함정" }, "🍌") : null,
       // 말 묶음: 업힌 수가 2개 이상이면 오른쪽 위에 숫자 배지. 방패를 든 팀의 말은 테두리
       teams.map(([team, n]) => h("span", { key: team, className: `token ${team} ${team === "홍" ? "red" : "blue"}${state.shield[team] ? " shielded" : ""}` }, n > 1 ? h("span", { className: "stack" }, `×${n}`) : null))
     );
