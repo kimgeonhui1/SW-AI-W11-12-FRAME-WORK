@@ -65,6 +65,15 @@ class DemoApiTest(unittest.TestCase):
         self.request("GET", "/items/3")
         self.assertGreater(self.store.ttl("item:3:v1"), 0)  # 옛 버전 키도 결국 만료되도록 TTL이 붙어 있다
 
+    def test_cache_expires_then_miss_again(self):
+        # 캐시 보관 시간(CACHE_TTL)이 지나면 Mini Redis가 키를 지워서, 다음 조회는 다시 원본을 읽는다(MISS → HIT → 만료 → MISS)
+        self.addCleanup(setattr, api_server, "CACHE_TTL", api_server.CACHE_TTL)
+        api_server.CACHE_TTL = 0.2
+        statuses = [self.request("GET", "/items/11")[1]["cache"] for _ in range(2)]
+        time.sleep(0.3)
+        statuses.append(self.request("GET", "/items/11")[1]["cache"])
+        self.assertEqual(statuses, ["MISS", "HIT", "MISS"])
+
     def test_update_invalidates_cache(self):
         self.request("GET", "/items/4")  # 캐시에 넣고
         status, body, _ = self.request("PUT", "/items/4", {"price": 9999})
@@ -107,6 +116,25 @@ class DemoApiTest(unittest.TestCase):
         # 객체가 아닌 본문, 너무 깊은 중첩 → 400 (리뷰 반영: 깊은 중첩은 500이던 것)
         for raw in [b"123", b'[{"price": 1}]', b'"price"', b"[" * 100000 + b"]" * 100000]:
             self.assertEqual(self.request("PUT", "/items/5", raw=raw)[0], 400, raw[:20])
+
+    def test_truncated_or_stalled_body(self):
+        port = self.demo_server.server_address[1]
+        before = api_server._items[5]["price"] if 5 in api_server._items else None
+        # 덜 보내고 연결을 닫음 → 400 (잘린 본문 {"price": 5}가 그대로 저장되던 것, Gemini 리뷰)
+        with socket.create_connection(("127.0.0.1", port)) as c:
+            c.sendall(b'PUT /items/5 HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n{"price": 5}')
+            c.shutdown(socket.SHUT_WR)
+            c.settimeout(5)
+            self.assertIn(b" 400 ", c.recv(100))
+        self.assertEqual(api_server._items[5]["price"] if 5 in api_server._items else None, before)
+        # 덜 보내고 멈춤 → 제한 시간 뒤 408 (500이던 것)
+        handler = self.demo_server.RequestHandlerClass
+        self.addCleanup(setattr, handler, "timeout", handler.timeout)
+        handler.timeout = 0.5
+        with socket.create_connection(("127.0.0.1", port)) as c:
+            c.sendall(b'PUT /items/5 HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n{"pr')
+            c.settimeout(5)
+            self.assertIn(b" 408 ", c.recv(100))
 
     def test_non_ascii_digit_path_is_404(self):
         # 원시 바이트 0xB2는 서버가 "²"(위첨자 2)로 읽는다. isdigit은 True지만 int()가 실패해 500이던 것 (리뷰 반영)

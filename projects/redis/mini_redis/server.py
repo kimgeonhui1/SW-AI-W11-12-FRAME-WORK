@@ -150,6 +150,11 @@ def make_handler(store):
                 raw = self.rfile.read(length)
             except (TimeoutError, socket.timeout):  # 파이썬 3.9(맥 기본 python3)까지는 socket.timeout이 TimeoutError가 아니라서 둘 다 잡는다
                 raise ApiError(408, "요청 본문을 제한 시간 안에 다 받지 못했습니다")
+            # 클라이언트가 Content-Length보다 덜 보내고 연결을 닫으면 read는 에러 없이 받은 만큼만 돌려준다.
+            # 잘린 본문이 우연히 올바른 JSON이면 그대로 저장되므로, 길이가 다르면 거부한다
+            if len(raw) != length:
+                self.close_connection = True
+                raise ApiError(400, "본문이 Content-Length보다 짧습니다")
             try:
                 # parse_constant: 파이썬 json은 NaN / Infinity를 기본으로 받아들이는데, 표준 JSON이 아니라서
                 # 저장 후 응답에 그대로 나가면 다른 언어의 클라이언트가 응답을 읽지 못한다 → 처음부터 거부
@@ -193,11 +198,20 @@ def make_handler(store):
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
-                self.wfile.write(data)
+                if self.command != "HEAD":  # HEAD 응답은 헤더만 보낸다 (HTTP 규약: 본문을 보내면 클라이언트가 다음 응답으로 착각한다)
+                    self.wfile.write(data)
             except ConnectionError:
                 # 클라이언트가 응답을 다 받기 전에 연결을 끊었다 (BrokenPipe / ConnectionReset / ConnectionAborted).
                 # 보낼 곳이 없으니 조용히 연결만 정리한다 (에러로 취급해 로그를 남기거나 다시 응답하려 하지 않는다)
                 self.close_connection = True
+
+        # HEAD · TRACE · CONNECT처럼 do_* 메서드가 없는 요청이나 깨진 요청 줄은 기본 동작이 HTML 에러 페이지라서, 여기서 JSON으로 바꾼다.
+        # 501(서버가 아예 모르는 메서드)과 405(아는 메서드지만 이 경로에서 안 됨, _route에서 처리)는 그대로 구분한다
+        def send_error(self, code, message=None, explain=None):
+            self.close_connection = True
+            if code == 501:
+                message = f"지원하지 않는 메서드입니다: {self.command}"
+            self._send(code, {"error": message or "잘못된 요청입니다"})
 
         def log_message(self, format, *args):
             pass  # 요청마다 콘솔에 찍지 않는다 (성능 측정에 출력 비용이 섞이지 않게)

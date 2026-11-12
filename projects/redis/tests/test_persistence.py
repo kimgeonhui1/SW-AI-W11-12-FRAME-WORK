@@ -6,6 +6,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 from mini_redis import persistence
 from mini_redis.persistence import SnapshotError, load_snapshot, save_snapshot, start_periodic_snapshot
@@ -105,6 +106,29 @@ class PersistenceTest(unittest.TestCase):
                 load_snapshot(r, self.path)
             self.assertEqual(len(r), 0, entries)
 
+    def test_bad_header_fields_raise(self):
+        # format에 true(== 1), saved_at에 true(1970년으로 읽혀 TTL 키가 전부 만료) · 문자열 · 1e999(Infinity)가 들어온 파일 (GPT 리뷰)
+        os.makedirs(os.path.dirname(self.path))
+        entries = [{"key": "a", "value": 1, "ttl": 50}]
+        for header in [{"format": True, "saved_at": self.wall.now}, {"format": 1, "saved_at": True},
+                       {"format": 1, "saved_at": "어제"}, {"format": 1, "saved_at": 1e999}, {"format": 1.0, "saved_at": self.wall.now}]:
+            with open(self.path, "w", encoding="utf-8") as f:
+                json.dump({**header, "entries": entries}, f)
+            r = MiniRedis()
+            with self.assertRaises(SnapshotError, msg=header):
+                load_snapshot(r, self.path)
+            self.assertEqual(len(r), 0, header)
+
+    def test_duplicate_keys_last_one_wins(self):
+        # 손으로 고친 파일에 같은 키가 두 번 있으면 뒤의 항목이 남는다 (저장소의 set 덮어쓰기와 같은 규칙)
+        os.makedirs(os.path.dirname(self.path))
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump({"format": 1, "saved_at": self.wall.now, "entries": [
+                {"key": "a", "value": 1, "ttl": 50}, {"key": "a", "value": 2, "ttl": None}]}, f)
+        r = MiniRedis()
+        load_snapshot(r, self.path)
+        self.assertEqual((len(r), r.get("a"), r.ttl("a")), (1, 2, -1))
+
     def test_lone_surrogate_value_round_trip(self):
         # 파이썬 코드로 직접 넣은 반쪽 문자도 저장·복구된다 (전에는 UnicodeEncodeError로 저장 실패)
         r = MiniRedis()
@@ -156,6 +180,29 @@ class PersistenceTest(unittest.TestCase):
             save_snapshot(r, self.path)
         with open(self.path, encoding="utf-8") as f:
             self.assertEqual([e["key"] for e in json.load(f)["entries"]], ["ok"])
+        self.assertFalse(os.path.exists(self.path + ".tmp"))
+
+    def test_empty_store_round_trip(self):
+        # 키가 하나도 없어도 저장 · 복구가 된다 (빈 entries 목록을 "형식 오류"로 오해하지 않는다)
+        self.assertEqual(save_snapshot(MiniRedis(), self.path), 0)
+        restored = MiniRedis()
+        self.assertEqual((load_snapshot(restored, self.path), len(restored)), (0, 0))
+
+    def test_failed_replace_keeps_previous_snapshot(self):
+        # 임시 파일은 다 썼는데 마지막 교체(os.replace)가 계속 실패 (Windows에서 다른 프로그램이 파일을 잡고 있는 경우)
+        # → 재시도 후 에러, 이전 스냅샷은 그대로, 임시 파일은 남지 않는다
+        r = MiniRedis()
+        r.set("old", 1)
+        save_snapshot(r, self.path)
+        r.set("new", 2)
+
+        def always_locked(src, dst):
+            raise PermissionError("다른 프로그램이 사용 중")
+
+        with mock.patch.object(persistence.os, "replace", always_locked), mock.patch.object(persistence.time, "sleep"):
+            with self.assertRaises(PermissionError):
+                save_snapshot(r, self.path)
+        self.assertEqual(read_keys(self.path), ["old"])
         self.assertFalse(os.path.exists(self.path + ".tmp"))
 
     def test_periodic_snapshot_and_final_save_on_stop(self):

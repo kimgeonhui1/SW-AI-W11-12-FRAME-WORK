@@ -22,6 +22,7 @@ import argparse
 import http.client
 import json
 import math
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler
@@ -184,8 +185,15 @@ def make_handler():
                 length = int(self.headers.get("Content-Length") or 0)
                 if not 0 <= length <= 1024 * 1024:
                     raise ValueError
+                try:
+                    raw = self.rfile.read(length)
+                except (TimeoutError, socket.timeout):  # 본문을 덜 보내고 멈춘 클라이언트 → 500이 아니라 408
+                    self.close_connection = True
+                    return self._send(408, {"error": "요청 본문을 제한 시간 안에 다 받지 못했습니다"})
+                if len(raw) != length:  # 덜 보내고 연결을 닫은 요청: 잘린 본문이 우연히 올바른 JSON이어도 받지 않는다
+                    raise ValueError
                 # NaN / Infinity는 표준 JSON이 아니라서 거부 (Mini Redis도 저장을 거부한다)
-                body = json.loads(self.rfile.read(length) or b"{}", parse_constant=_reject_constant)
+                body = json.loads(raw or b"{}", parse_constant=_reject_constant)
                 if not isinstance(body, dict):
                     raise ValueError
                 price = body["price"]

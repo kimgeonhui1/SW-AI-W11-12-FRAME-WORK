@@ -2,7 +2,7 @@
 
 import unittest
 
-from demo import benchmark
+from demo import api_server, benchmark
 
 
 class BenchmarkTest(unittest.TestCase):
@@ -18,6 +18,17 @@ class BenchmarkTest(unittest.TestCase):
     def test_invalid_n(self):
         with self.assertRaises(ValueError):
             benchmark.measure("http://127.0.0.1:1", 0)
+
+    def test_invalid_args_rejected_before_servers_start(self):
+        for n, delay in [(0, 0.1), (True, 0.1), (1.5, 0.1), (1, -1), (1, float("nan")), (1, float("inf")), (1, True)]:
+            with self.assertRaises(ValueError, msg=(n, delay)):
+                benchmark.run(n, delay)
+
+    def test_run_restores_slow_delay(self):
+        # run이 바꾼 원본 지연 시간이 같은 프로세스의 다른 코드(데모 테스트 등)에 남지 않아야 한다
+        before = api_server.SLOW_DELAY
+        benchmark.run(n=1, delay=0.01)
+        self.assertEqual(api_server.SLOW_DELAY, before)
 
 
 if __name__ == "__main__":

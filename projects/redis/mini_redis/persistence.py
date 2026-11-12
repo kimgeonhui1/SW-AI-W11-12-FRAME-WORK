@@ -75,9 +75,14 @@ def load_snapshot(store, path):
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
-        if data.get("format") != SNAPSHOT_FORMAT or not isinstance(data.get("entries"), list):
+        # type(...) is int: True == 1이라 format에 true가 들어와도 통과하는 것을 막는다
+        if type(data.get("format")) is not int or data["format"] != SNAPSHOT_FORMAT or not isinstance(data.get("entries"), list):
             raise SnapshotError("스냅샷 형식이 다릅니다")
-        elapsed = max(0.0, _wall_clock() - float(data["saved_at"]))  # 서버가 꺼져 있던 시간 (시계가 뒤로 갔으면 0)
+        saved_at = data["saved_at"]
+        # bool이면 1초(1970년)로 읽혀 모든 TTL 키가 만료 처리되고, NaN · Infinity면 꺼져 있던 시간을 계산할 수 없다
+        if isinstance(saved_at, bool) or not isinstance(saved_at, (int, float)) or not math.isfinite(saved_at):
+            raise SnapshotError(f"saved_at이 올바르지 않습니다: {saved_at!r}")
+        elapsed = max(0.0, _wall_clock() - saved_at)  # 서버가 꺼져 있던 시간 (시계가 뒤로 갔으면 0)
         entries = [(e["key"], e["value"], e["ttl"]) for e in data["entries"]]
         # 저장소에 넣기 "전에" 모든 항목을 검사한다. 넣다가 중간에 실패하면 일부만 복구된 어정쩡한 상태가 되기 때문이다
         for key, _, ttl in entries:

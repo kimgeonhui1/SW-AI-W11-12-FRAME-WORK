@@ -172,6 +172,56 @@ class ServerTest(unittest.TestCase):
         handler._send(200, {"ok": True})
         self.assertTrue(handler.close_connection)
 
+    def raw_request(self, data):
+        """소켓으로 바이트를 그대로 보내고(쓰기 쪽은 닫음) 응답 전체를 받는다"""
+        with socket.create_connection(("127.0.0.1", self.server.server_address[1])) as c:
+            c.sendall(data)
+            c.shutdown(socket.SHUT_WR)
+            c.settimeout(5)
+            out = b""
+            while chunk := c.recv(65536):
+                out += chunk
+        head, _, body = out.partition(b"\r\n\r\n")
+        return head, body
+
+    def test_truncated_body_is_rejected(self):
+        # Content-Length 100인데 12바이트만 보내고 연결을 닫음 → 잘린 본문이 우연히 올바른 JSON이어도 저장하면 안 된다 (Gemini 리뷰)
+        head, body = self.raw_request(b'PUT /keys/cut HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n{"value": 1}')
+        self.assertIn(b" 400 ", head)
+        self.assertIn("error", json.loads(body))
+        self.assertFalse(self.store.exists("cut"))
+
+    def test_unknown_methods_get_json_501(self):
+        # do_* 가 없는 메서드는 표준 라이브러리 기본값이면 HTML 501 → JSON 501 (아는 메서드의 잘못된 경로는 405로 구분)
+        for method in [b"TRACE", b"CONNECT", b"FOO"]:
+            head, body = self.raw_request(method + b" /keys/a HTTP/1.1\r\nHost: x\r\n\r\n")
+            self.assertIn(b" 501 ", head, method)
+            self.assertIn("error", json.loads(body), method)
+        # HEAD는 HTTP 규약상 본문 없이 헤더만
+        head, body = self.raw_request(b"HEAD /keys/a HTTP/1.1\r\nHost: x\r\n\r\n")
+        self.assertIn(b" 501 ", head)
+        self.assertEqual(body, b"")
+
+    def test_bad_content_length_headers(self):
+        # 헤더가 없거나(본문 없음 → value 없음) 숫자가 아니거나 음수인 Content-Length → 모두 400, 저장 안 됨
+        for header in [b"", b"Content-Length: abc\r\n", b"Content-Length: -5\r\n", b"Content-Length: 0\r\n"]:
+            head, body = self.raw_request(b"PUT /keys/cl HTTP/1.1\r\nHost: x\r\n" + header + b"\r\n")
+            self.assertIn(b" 400 ", head, header)
+            self.assertIn("error", json.loads(body), header)
+        self.assertFalse(self.store.exists("cl"))
+
+    def test_encoded_slash_and_double_encoding_are_different_keys(self):
+        # %2F는 "a/b", %252F는 "a%2Fb" — 디코딩을 정확히 한 번만 해서 서로 다른 키가 되어야 한다
+        self.request("PUT", "/keys/a%2Fb", {"value": "slash"})
+        self.request("PUT", "/keys/a%252Fb", {"value": "percent"})
+        self.assertEqual((self.store.get("a/b"), self.store.get("a%2Fb")), ("slash", "percent"))
+
+    def test_too_long_url_gets_json_414(self):
+        # 요청 줄이 64KB를 넘는 아주 긴 키 → 표준 라이브러리가 거부(414). 그 응답도 HTML이 아니라 JSON이어야 한다
+        head, body = self.raw_request(b"GET /keys/" + b"k" * 70000 + b" HTTP/1.1\r\nHost: x\r\n\r\n")
+        self.assertIn(b" 414 ", head)
+        self.assertIn("error", json.loads(body))
+
     def test_body_too_large(self):
         raw = json.dumps({"value": "x" * (server_module.MAX_BODY + 1)}).encode()
         self.assertEqual(self.request("PUT", "/keys/big", raw=raw)[0], 413)
