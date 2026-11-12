@@ -1,5 +1,7 @@
 # [api_server.py] 기능 테스트용 간단한 API — 느린 데이터 조회 응답을 Mini Redis에 캐시해서 활용
 #
+# 설계 문서: projects/redis/Docs/설계.md  6 · 11장 — 이 파일은 dev(김건희 님 구현)를 그대로 쓴다 (팀과 동작 · 테스트를 맞추려고)
+#
 #   GET /items/{id}            Mini Redis 캐시 사용 (없으면 느린 조회 후 저장)
 #   GET /items/{id}?cache=off  캐시 없이 매번 느린 조회 (성능 비교용)
 #   PUT /items/{id}            원본 데이터 수정 body {"price": 숫자} → 버전을 올려 캐시 무효화
