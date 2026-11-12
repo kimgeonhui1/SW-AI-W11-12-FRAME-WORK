@@ -183,30 +183,3 @@ key가 없으면 5배 느려져 **key가 왜 필요한지** 확인했고, 멀리
 다음에는 처음부터 팀원과 코드를 더 자주 비교해서, 서로의 좋은 점을 더 빨리 가져오고 싶습니다.
 
 이상으로 발표를 마치겠습니다. 감사합니다.
-
----
-
-<details>
-<summary>📁 폴더 구조</summary>
-
-```
-projects/react/
-├─ index.html · app.html        ← Phase 1 / Phase 2 페이지
-├─ src/core/                    ← 엔진 (팀 공통 인터페이스)
-│  ├─ vdom.js       h · createElement · domToVdom · validateVNode · setProp
-│  ├─ diff.js       두 VDOM 비교 → 패치 트리 (key 지원)
-│  ├─ patch.js      패치 트리를 실제 DOM에 반영
-│  ├─ component.js  FunctionComponent (mount · update · unmount · Batching)
-│  └─ hooks.js      useState · useEffect · useMemo · useRef
-├─ src/phase1/                  ← 실제 영역 / 테스트 영역 / History
-├─ src/app/                     ← 초능력 윷놀이
-│  ├─ App.js        루트 컴포넌트 (State · Hook은 여기에만)
-│  ├─ yut.js        규칙 (순수 함수: 일어난 일 목록 → 판 · 차례 · 승자)
-│  └─ components/   PowerPick · YutBoard · ThrowPanel · TeamPanel · YutLog · ConfirmDialog · VictoryDialog (props만 받음)
-├─ tests/                       ← *.test.html 을 열면 결과 표시, bench.html 은 성능 측정
-└─ docs/                        ← DETAILS.md (이론 · 엣지 케이스), images/
-```
-
-</details>
-
-> 이론 설명 · 엣지 케이스 · 실제 React와의 차이 (Q&A 대비): [`docs/DETAILS.md`](docs/DETAILS.md)
