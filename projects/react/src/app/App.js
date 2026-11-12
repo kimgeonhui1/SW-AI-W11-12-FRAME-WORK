@@ -9,6 +9,7 @@ import { ThrowPanel } from "./components/ThrowPanel.js";
 import { TeamPanel } from "./components/TeamPanel.js";
 import { YutLog } from "./components/YutLog.js";
 import { ConfirmDialog } from "./components/ConfirmDialog.js";
+import { VictoryDialog } from "./components/VictoryDialog.js";
 
 // 말의 힘마다 누를 수 있는 칸 (swap은 내 말을 먼저(first 없음), 그다음 상대 말)
 function targetsFor(state, power, first) {
@@ -42,6 +43,7 @@ const TARGET_HINT = {
  *   pickSel   : 초능력 고르기 화면에서 지금 고른 것
  *   chosen    : 옮기려고 고른 말(칸 이름, 출발 전 말은 HOME). 고르면 갈 수 있는 칸들을 판에 표시한다
  *   targeting : 말의 힘을 쓸 대상을 고르는 중인지 ({ power, first })
+ *   victoryClosed : 승리 팝업을 닫았는지 (닫으면 끝난 판을 볼 수 있다)
  * props.random: 윷 · 초능력 후보의 무작위 함수 (테스트에서 결과를 정해 넣을 수 있게)
  */
 export function App({ random = Math.random }) {
@@ -51,14 +53,16 @@ export function App({ random = Math.random }) {
   const [targeting, setTargeting] = useState(null);
   const [notice, setNotice] = useState(null);
   const [confirming, setConfirming] = useState(false);
+  const [victoryClosed, setVictoryClosed] = useState(false);
   const logRef = useRef(null);
-  const cancelRef = useRef(null);
+  const dialogFocusRef = useRef(null); // 팝업이 열리면 먼저 포커스할 버튼 (확인 팝업: 취소, 승리 팝업: 새 게임)
 
   // 지금 상태는 action 목록이 바뀔 때만 다시 계산한다
   const state = useMemo(() => replay(actions), [actions]);
   const { phase, turn, pending } = state;
+  const showVictory = Boolean(state.winner) && !victoryClosed;
 
-  // 렌더링 뒤 부수효과: 탭 제목, 기보를 최신 줄로 스크롤, 확인 팝업이 열리면 취소 버튼에 포커스
+  // 렌더링 뒤 부수효과: 탭 제목, 기보를 최신 줄로 스크롤, 팝업이 열리면 기본 버튼에 포커스
   useEffect(() => {
     document.title = state.winner ? `${state.winner} 승리 - 초능력 윷놀이` : phase === "pick" ? "초능력 고르기 - 초능력 윷놀이" : `${turn} 차례 - 초능력 윷놀이`;
   }, [state.winner, phase, turn]);
@@ -67,8 +71,8 @@ export function App({ random = Math.random }) {
     if (log) log.scrollTop = log.scrollHeight;
   }, [state.log.length]);
   useEffect(() => {
-    if (confirming) cancelRef.current?.focus();
-  }, [confirming]);
+    if (confirming || showVictory) dialogFocusRef.current?.focus();
+  }, [confirming, showVictory]);
 
   // action이 규칙에 맞는지 먼저 확인하고(apply가 에러를 내면 안내만 보여 줌) 목록에 더한다
   const dispatch = (action) => {
@@ -123,6 +127,7 @@ export function App({ random = Math.random }) {
     setActions([{ type: "start", offers: makeOffers(random) }]);
     setPickSel({ yut: null, mal: null });
     setConfirming(false);
+    setVictoryClosed(false);
     setTargeting(null);
     setNotice(null);
   };
@@ -207,7 +212,10 @@ export function App({ random = Math.random }) {
           ),
         ],
     confirming
-      ? h(ConfirmDialog, { message: "진행 중인 판이 지워지고, 되돌릴 수 없습니다.", confirmLabel: "새 게임", cancelRef, onConfirm: restart, onCancel: () => setConfirming(false) })
+      ? h(ConfirmDialog, { message: "진행 중인 판이 지워지고, 되돌릴 수 없습니다.", confirmLabel: "새 게임", cancelRef: dialogFocusRef, onConfirm: restart, onCancel: () => setConfirming(false) })
+      : null,
+    showVictory
+      ? h(VictoryDialog, { team: state.winner, turnNo: state.turnNo, focusRef: dialogFocusRef, onRestart: restart, onClose: () => setVictoryClosed(true) })
       : null
   );
 }

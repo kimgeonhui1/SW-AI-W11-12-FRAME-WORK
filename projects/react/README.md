@@ -2,19 +2,19 @@
 
 # Mini React
 
-**외부 라이브러리 없이 Vanilla JavaScript로 직접 만든 미니 React**
+**Virtual DOM부터 Hooks까지, React의 핵심을 직접 만들어 본 프로젝트**
 
 Phase 1 · Virtual DOM / Diff / Patch &nbsp;|&nbsp; Phase 2 · Component / State / Hooks
 
 ![JavaScript](https://img.shields.io/badge/JavaScript-ES%20Modules-f7df1e?logo=javascript&logoColor=black)
 ![dependencies](https://img.shields.io/badge/dependencies-0-2ea44f)
-![tests](https://img.shields.io/badge/unit%20tests-275%20passed-2ea44f)
+![tests](https://img.shields.io/badge/unit%20tests-276%20passed-2ea44f)
 ![fuzz](https://img.shields.io/badge/fuzz-7%2C000%20cases-3b6fe0)
 ![browsers](https://img.shields.io/badge/tested-Chrome%20%C2%B7%20Edge-555)
 
 | 🧩 외부 라이브러리 | ✅ 단위 테스트 | 🎲 무작위(퍼즈) 테스트 | ⚡ 1,000줄 중 1줄 바꾸기 |
 |:---:|:---:|:---:|:---:|
-| **0개** | **275개** 통과 | 실행마다 **7,000건** 통과 | 통째로 다시 그리기보다 **약 10배 빠름** |
+| **0개** | **276개** 통과 | 실행마다 **7,000건** 통과 | 통째로 다시 그리기보다 **약 10배 빠름** |
 
 </div>
 
@@ -117,8 +117,8 @@ diff 결과는 VDOM과 같은 모양의 **패치 트리**로 만들었습니다.
 const [actions, setActions] = useState(() => [시작]);           // hooks[0]  일어난 일의 목록 (던지기 · 옮기기 · 초능력)
 const [pickSel, setPickSel] = useState({ yut: null, mal: null }); // hooks[1]  초능력 고르기 화면에서 고른 것
 const [chosen, setChosen] = useState(null);                      // hooks[2]  옮기려고 고른 말 → 판에 갈 수 있는 칸 표시
-// … hooks[3~5] targeting · notice · confirming (useState), hooks[6~7] logRef · cancelRef (useRef)
-const state = useMemo(() => replay(actions), [actions]);         // hooks[8]  판 · 차례 · 승자는 목록을 처음부터 적용해 계산
+// … hooks[3~6] targeting · notice · confirming · victoryClosed (useState), hooks[7~8] logRef · dialogFocusRef (useRef)
+const state = useMemo(() => replay(actions), [actions]);         // hooks[9]  판 · 차례 · 승자는 목록을 처음부터 적용해 계산
 ```
 
 Hook은 컴포넌트의 hooks 배열에 값을 저장하고, **호출 순서로 자기 칸**을 찾습니다.
@@ -202,7 +202,7 @@ projects/react/
 ├─ src/app/                     ← 초능력 윷놀이
 │  ├─ App.js        루트 컴포넌트 (State · Hook은 여기에만)
 │  ├─ yut.js        규칙 (순수 함수: 일어난 일 목록 → 판 · 차례 · 승자)
-│  └─ components/   PowerPick · YutBoard · ThrowPanel · TeamPanel · YutLog · ConfirmDialog (props만 받음)
+│  └─ components/   PowerPick · YutBoard · ThrowPanel · TeamPanel · YutLog · ConfirmDialog · VictoryDialog (props만 받음)
 ├─ tests/                       ← *.test.html 을 열면 결과 표시, bench.html 은 성능 측정
 └─ docs/                        ← DETAILS.md (이론 · 엣지 케이스), images/
 ```

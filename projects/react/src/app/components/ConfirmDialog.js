@@ -4,21 +4,23 @@
 
 import { h } from "../../core/vdom.js";
 
+// Tab 키를 팝업 안의 버튼 사이에서만 돌게 한다 (승리 팝업도 같이 쓴다)
+export function keepFocusInside(e) {
+  if (e.key !== "Tab") return;
+  const buttons = e.currentTarget.querySelectorAll("button");
+  const first = buttons[0];
+  const last = buttons[buttons.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
 export function ConfirmDialog({ message, confirmLabel, cancelRef, onConfirm, onCancel }) {
-  const onKeyDown = (e) => {
-    if (e.key === "Escape") return onCancel();
-    if (e.key !== "Tab") return;
-    const buttons = e.currentTarget.querySelectorAll("button");
-    const first = buttons[0];
-    const last = buttons[buttons.length - 1];
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
+  const onKeyDown = (e) => (e.key === "Escape" ? onCancel() : keepFocusInside(e));
   return h(
     "div",
     // 배경 자체를 눌렀을 때만 닫는다 (팝업 안을 누른 클릭이 배경까지 올라온 경우는 무시)

@@ -3,6 +3,8 @@
 import { FunctionComponent } from "../src/core/component.js";
 import { HOME, END, routeFrom, destination, throwSticks, resolveThrow, initialState, apply, movableFrom, makeOffers, POWERS } from "../src/app/yut.js";
 import { App } from "../src/app/App.js";
+import { VictoryDialog } from "../src/app/components/VictoryDialog.js";
+import { h } from "../src/core/vdom.js";
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -239,6 +241,29 @@ test("던지기 → 말 고르기 → 표시된 칸 누르기: 갈 곳에 결과
   await tick();
   assertEqual(app.q(".sticks") !== sticks, true, "던질 때마다 막대 묶음을 새로 만듦");
   app.close();
+});
+
+test("승리 팝업: 팀 이름 · 턴 수 표시, 새 게임 / 판 보기 / Esc, 색종이는 다시 그려도 그대로", async () => {
+  const calls = [];
+  const box = document.createElement("div");
+  document.body.appendChild(box);
+  let turnNo = 18;
+  const inst = new FunctionComponent(() => h(VictoryDialog, { team: "청", turnNo, onRestart: () => calls.push("restart"), onClose: () => calls.push("close") }), box).mount();
+  const q = (sel) => box.querySelector(sel);
+  assertEqual([q("h2").textContent, q(".victory-card p").textContent, q(".victory").classList.contains("team-blue")], ["청팀 승리!", "말 4개를 모두 먼저 냈습니다 · 18턴", true]);
+  const pieces = [...box.querySelectorAll(".confetti span")];
+  const before = pieces.map((p) => p.style.cssText);
+  turnNo = 19;
+  inst.update();
+  assertEqual(box.querySelectorAll(".confetti span").length, 36);
+  assertEqual([...box.querySelectorAll(".confetti span")].map((p) => p.style.cssText), before, "색종이 위치가 렌더링마다 바뀌면 안 됨 (Math.random 금지)");
+  [...box.querySelectorAll("button")].find((b) => b.textContent === "새 게임").click();
+  [...box.querySelectorAll("button")].find((b) => b.textContent === "판 보기").click();
+  q(".victory-card").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  q(".victory").click(); // 바깥(배경) 누르기
+  assertEqual(calls, ["restart", "close", "close", "close"]);
+  inst.unmount();
+  box.remove();
 });
 
 // ── 실행 ──

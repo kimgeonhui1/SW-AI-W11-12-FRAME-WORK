@@ -378,6 +378,32 @@ button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger
 @keyframes pop-in { from { transform: scale(0.96); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .modal-backdrop, .modal { animation: none; } }
 
+/* ── 승리 팝업: 트로피 · 팀 색 제목이 커지며 등장, 뒤로 색종이가 떨어짐 ── */
+.victory { overflow-y: auto; } /* 낮은 화면에서는 팝업이 잘리지 않고 스크롤 */
+.victory-card { position: relative; z-index: 1; width: min(360px, 100%); padding: 28px 24px 20px; text-align: center; border-top: 6px solid var(--team); animation: victory-in 0.5s cubic-bezier(0.3, 1.5, 0.5, 1) both; }
+.victory-card .trophy { font-size: 64px; line-height: 1; animation: trophy-bounce 1.4s 0.5s ease-in-out infinite; }
+.victory-card h2 { margin: 12px 0 6px; color: var(--team); font-size: 32px; letter-spacing: -0.02em; }
+.victory-card p { margin: 0 0 22px; color: var(--muted); font-size: 15px; }
+.victory-card .modal-actions { justify-content: center; }
+.victory-card .modal-actions button { min-width: 110px; padding: 10px 16px; }
+.victory-card button.primary { background: var(--team); border-color: var(--team); }
+.victory-card button.primary:hover { background: color-mix(in srgb, var(--team) 85%, #000); }
+@keyframes victory-in { from { opacity: 0; transform: scale(0.5); } }
+@keyframes trophy-bounce { 0%, 100% { transform: translateY(0) rotate(0); } 25% { transform: translateY(-8px) rotate(-6deg); } 75% { transform: translateY(-8px) rotate(6deg); } }
+/* 색종이: 화면 위에서 아래로 돌며 떨어지기를 반복. 색 · 모양 · 위치 · 속도는 조각마다 다름 (VictoryDialog.js) */
+.confetti { position: fixed; inset: 0; overflow: hidden; pointer-events: none; }
+.confetti span { position: absolute; top: -20px; width: 10px; height: 10px; border-radius: 2px; animation: confetti-fall linear infinite both; }
+.confetti span.strip { width: 6px; height: 16px; }
+.confetti span.team { background: var(--team); }
+.confetti span.gold { background: #f5b400; }
+.confetti span.white { background: #ffffff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08); }
+@keyframes confetti-fall {
+  0% { transform: translate(0, 0) rotate(0); opacity: 1; }
+  50% { transform: translate(24px, 55vh) rotate(360deg); }
+  100% { transform: translate(-12px, 110vh) rotate(720deg); opacity: 0.8; }
+}
+@media (prefers-reduced-motion: reduce) { .victory-card, .victory-card .trophy { animation: none; } .confetti { display: none; } }
+
 /* ── 좁은 화면 ── */
 @media (max-width: 600px) {
   :root { --gutter: 16px; }

@@ -62,7 +62,7 @@ projects/react/
 │   │   ├── App.js               루트 컴포넌트 (모든 State가 여기에)
 │   │   ├── main.js              App을 #root에 mount
 │   │   ├── yut.js               윷놀이 규칙 + 초능력 (순수 함수: action 목록 → 판 · 차례 · 승자)
-│   │   └── components/          PowerPick, YutBoard, ThrowPanel, TeamPanel, YutLog, ConfirmDialog (전부 Stateless)
+│   │   └── components/          PowerPick, YutBoard, ThrowPanel, TeamPanel, YutLog, ConfirmDialog, VictoryDialog (전부 Stateless)
 │   └── styles/style.css
 └── tests/                       *.test.html / *.test.js (단위 테스트), bench.html / bench.js (성능 측정)
 ```
@@ -288,13 +288,14 @@ set((c) => c + 1);    // 세 번 불러도 다시 그리기는 1번 (결과는 +
 
 ```mermaid
 flowchart TD
-  App["App (루트)<br/>State: actions (일어난 일 목록), pickSel, chosen (고른 말), targeting, notice, confirming<br/>useMemo: state = replay(actions)<br/>useEffect: 탭 제목, 기보 스크롤, 팝업 포커스<br/>useRef: 기보 목록, 팝업 취소 버튼"]
+  App["App (루트)<br/>State: actions (일어난 일 목록), pickSel, chosen (고른 말), targeting, notice, confirming, victoryClosed<br/>useMemo: state = replay(actions)<br/>useEffect: 탭 제목, 기보 스크롤, 팝업 포커스<br/>useRef: 기보 목록, 팝업 기본 버튼"]
   App -->|team, offers, selected, onSelect, onConfirm| PowerPick
   App -->|state, clickable, chosen, dests, targeting, onNode| YutBoard
   App -->|state, onThrow, onChoose| ThrowPanel
   App -->|team, state, canEnter, entering, targeting, onEnter, onArm, onMal| TeamPanel
   App -->|log, logRef| YutLog
   App -->|message, confirmLabel, cancelRef, onConfirm, onCancel| ConfirmDialog
+  App -->|team, turnNo, focusRef, onRestart, onClose| VictoryDialog
 ```
 
 - **State는 루트(`App`)에만** 둡니다. 자식은 **props만 받아 그리는 순수 함수**(Stateless)입니다.
@@ -344,9 +345,9 @@ sequenceDiagram
 | `hooks.test` | 37 | FunctionComponent, useState(Batching), useEffect, useMemo, useRef, Hook 규칙, 무작위 state 변경 |
 | `htmlText.test` | 7 | HTML ↔ VDOM 왕복 |
 | `history.test` | 6 | 뒤로 / 앞으로 / 기록 자르기 |
-| `yut.test` | 24 | 윷놀이 규칙 (지름길 · 업기 · 잡기 · 나기 · 초능력), 앱 화면 흐름 |
+| `yut.test` | 25 | 윷놀이 규칙 (지름길 · 업기 · 잡기 · 나기 · 초능력), 앱 화면 흐름 |
 | `ported.test` | 106 | 팀원(김준우 님) 테스트 중 형식만 달라 실패한 것을 같은 상황 그대로 옮긴 것 |
-| **합계** | **275** | |
+| **합계** | **276** | |
 
 성능 측정(`tests/bench.html`)은 테스트와 따로 있습니다. 결과는 README의 "핵심 설계 ③ 성능"에 있습니다.
 
