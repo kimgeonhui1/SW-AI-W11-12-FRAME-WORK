@@ -5,7 +5,7 @@
 
 - 언어: Python 3.10 이상, **표준 라이브러리만** (설치할 것 없음) · Python 3.14.7 · macOS 에서 검증
 - 브랜치: `feat/Kimjunwoo-Redis` (김준우)
-- 테스트: 제 테스트 **75개** + 팀원(dev) 테스트 **61개** 모두 통과
+- 테스트: 제 테스트 **78개** + 팀원(dev) 테스트 **61개** 모두 통과 · 브라우저 **테스트 GUI** 있음 (6장)
 - 성능: 같은 요청 20번 평균 **204.58ms → 11.32ms (약 18배)**
 
 | 문서 | 내용 |
@@ -37,7 +37,7 @@ curl localhost:6380/keys/user:1
 python -m demo.benchmark
 ```
 
-- `unittest` — 테스트 75개 (약 7초)
+- `unittest` — 테스트 78개 (약 7초)
 - `mini_redis.server` — Mini Redis 서버. 기본 `127.0.0.1` 이라 같은 컴퓨터에서만 접속됩니다 (`--host 0.0.0.0` 이면 외부 허용)
 - `demo.benchmark` — 캐시 사용 / 미사용 성능 비교. 서버를 알아서 띄우므로 이 명령 하나면 됩니다
 
@@ -67,7 +67,9 @@ projects/redis/
 ├── demo/
 │   ├── api_server.py    캐시를 쓰는 예제 API (dev 파일 그대로)
 │   └── benchmark.py     캐시 사용 / 미사용 성능 비교
-├── tests/               test_hashtable · test_store · test_server · test_demo
+├── tests/               test_hashtable · test_store · test_server · test_demo · test_gui
+│   ├── gui.py           브라우저 테스트 GUI 실행기
+│   └── gui.html         테스트 GUI 화면
 └── Docs/                README · 설계 · 보고서
 ```
 
@@ -184,8 +186,28 @@ python -m unittest
 | `tests/test_store.py` | 23 | ttl 규칙(-1 / -2 · 올림 · 경계) · 지연 / 주기 삭제 · 잘못된 ttl · 스레드 동시 쓰기 |
 | `tests/test_server.py` | 22 | 모든 경로 · 상태 코드 · 오류 문구 · 413 · 408 · 클라이언트 50개 동시 접속 · 실제 1초 주기 정리 |
 | `tests/test_demo.py` | 10 | MISS → HIT · 버전 키 무효화 · 느린 읽기 중 수정 · Mini Redis 장애 시 BYPASS |
+| `tests/test_gui.py` | 3 | GUI 실행기가 화면을 내주는지 · 같은 서버의 API 가 그대로 동작하는지 · 화면이 기대하는 오류 문구가 서버 문구와 같은지 |
 
 시간이 걸리는 테스트는 가짜 시계로 기다리지 않습니다. 팀원(dev) 테스트 61개도 이 코드에서 그대로 통과합니다 ([보고서.md](./보고서.md) 4 · 9장).
+
+### 브라우저로 테스트 (GUI)
+
+```bash
+python -m tests.gui
+```
+
+브라우저로 **http://127.0.0.1:6390** 을 엽니다 (`--port` 로 바꿀 수 있음, 끄려면 Ctrl+C).
+
+| 화면 | 할 수 있는 것 |
+|---|---|
+| ① 명령 | 키 · 값(JSON) · ttl 을 넣고 저장 · 조회 · 삭제 · TTL · EXPIRE · 상태 버튼 |
+| ② 원시 요청 | 메서드 · 경로 · 본문을 그대로 보내기 — 잘못된 JSON · `NaN` · `null` · 405 · 빈 키 예시 버튼 |
+| ③ 자동 시나리오 | "전체 실행" 한 번으로 검사 21개 (저장 · 조회 · ttl · 만료 · 주기 삭제 · 한글 키 · 오류 문구 · 413 · 405 · 동시 요청 30개) 를 돌리고 통과 / 실패 표시 (약 2초) |
+| ④ 응답 기록 | 보낸 요청 · 상태 코드 · 응답 본문 · 걸린 시간 |
+
+- 화면과 API 가 **같은 서버**에서 나옵니다. `gui.html` 을 파일로 직접 열면 브라우저가 다른 출처의 PUT · DELETE 를 막으니(CORS), 반드시 위 명령으로 엽니다.
+- 이 실행기는 자기 저장소를 따로 가집니다. 끄면 데이터가 사라지고, 6380 의 Mini Redis 서버와는 별개입니다.
+- `mini_redis/` 코드는 바꾸지 않았습니다. 실행기가 실제 서버(`MiniRedisServer`)를 그대로 띄우고 `GET /` 만 화면으로 바꿔 끼웁니다.
 
 ---
 

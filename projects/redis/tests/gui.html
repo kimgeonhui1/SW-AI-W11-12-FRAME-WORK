@@ -1,0 +1,426 @@
+<!doctype html>
+<!--
+  [gui.html] Mini Redis 테스트 GUI — 브라우저에서 버튼으로 Mini Redis 를 시험한다
+
+  실행: projects/redis 에서  python -m tests.gui  → http://127.0.0.1:6390
+  (이 파일을 그냥 더블클릭해서 열면 API 와 출처가 달라 요청이 막힌다. 반드시 위 실행기로 연다 — tests/gui.py 설명 참고)
+
+  화면 구성
+    ① 명령      : 키 · 값 · ttl 을 넣고 저장(PUT) · 조회(GET) · 삭제(DELETE) · TTL · EXPIRE · 상태(health) 버튼
+    ② 원시 요청  : 메서드 · 경로 · 본문을 그대로 보낸다 — 잘못된 JSON · NaN · 405 같은 오류를 직접 시험할 때
+    ③ 자동 시나리오: 버튼 하나로 검사 여러 개를 차례로 실행하고 통과 / 실패를 표시 (설계 8장 규칙 기준)
+    ④ 응답 기록  : 보낸 요청과 받은 응답(상태 코드 · 본문 · 걸린 시간)을 최근 것부터
+
+  외부 라이브러리 없이 이 파일 하나(HTML · CSS · JS)로 동작한다.
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mini Redis 테스트</title>
+<style>
+  /* ── 색 토큰: 밝은 화면 / 어두운 화면 ─────────────────────────────── */
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085; --line: #e3e6eb;
+    --accent: #2f6fde; --accent-text: #ffffff; --ok: #157f3d; --ok-bg: #e6f4ea;
+    --bad: #c0362c; --bad-bg: #fdecea; --warn: #9a6700; --warn-bg: #fff4d6; --code-bg: #f1f3f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b1f27; --text: #e6e9ef; --muted: #98a2b3; --line: #2c323d;
+      --accent: #6b9cff; --accent-text: #0b1220; --ok: #6fd28f; --ok-bg: #16301f;
+      --bad: #ff8a80; --bad-bg: #3a1d1b; --warn: #f2c14e; --warn-bg: #352a10; --code-bg: #232833;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { margin: 0; font-size: 18px; }
+  #status { font-size: 13px; padding: 2px 10px; border-radius: 999px; background: var(--warn-bg); color: var(--warn); }
+  #status.on { background: var(--ok-bg); color: var(--ok); }
+  #status.off { background: var(--bad-bg); color: var(--bad); }
+  main { display: grid; gap: 16px; padding: 16px; max-width: 1200px; margin: 0 auto; grid-template-columns: 1fr; }
+  @media (min-width: 900px) { main { grid-template-columns: 1fr 1fr; } .wide { grid-column: 1 / -1; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
+  section h2 { margin: 0 0 12px; font-size: 15px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 4px; }
+  input, select, textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: 14px ui-monospace, Menlo, monospace; }
+  textarea { min-height: 70px; resize: vertical; }
+  .row { display: flex; gap: 8px; } .row > * { flex: 1; min-width: 0; }
+  .buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  button { padding: 8px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button:disabled { opacity: .5; cursor: default; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  code, pre { font: 13px ui-monospace, Menlo, monospace; background: var(--code-bg); border-radius: 4px; }
+  code { padding: 1px 5px; }
+  pre { margin: 6px 0 0; padding: 8px; white-space: pre-wrap; word-break: break-all; }
+  #summary { font-weight: 600; margin-left: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td, th { text-align: left; padding: 6px 8px; border-top: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; }
+  .pass { color: var(--ok); font-weight: 600; } .fail { color: var(--bad); font-weight: 600; } .wait { color: var(--muted); }
+  .badge { display: inline-block; min-width: 42px; text-align: center; border-radius: 4px; padding: 0 6px; font-weight: 600; }
+  .s2 { background: var(--ok-bg); color: var(--ok); } .s4 { background: var(--warn-bg); color: var(--warn); } .s5, .s0 { background: var(--bad-bg); color: var(--bad); }
+  #log { display: flex; flex-direction: column; gap: 10px; max-height: 520px; overflow: auto; }
+  .entry { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .entry .head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font: 13px ui-monospace, Menlo, monospace; }
+  .entry .ms { color: var(--muted); margin-left: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mini Redis 테스트</h1>
+  <span id="status">연결 확인 중…</span>
+  <span class="hint">이 화면과 API 는 같은 서버(<code id="origin"></code>)에서 나옵니다. 저장된 데이터는 실행기를 끄면 사라집니다.</span>
+</header>
+
+<main>
+  <!-- ① 명령 -->
+  <section>
+    <h2>① 명령</h2>
+    <label for="key">키</label>
+    <input id="key" value="user:1" autocomplete="off">
+    <div class="hint">한글 · <code>/</code> · 공백도 됩니다. 보낼 때 자동으로 URL 인코딩합니다.</div>
+    <label for="value">값 (JSON)</label>
+    <textarea id="value">"Nameisme"</textarea>
+    <div class="hint">JSON 으로 읽습니다: <code>"글자"</code> · <code>123</code> · <code>{"lv": 200}</code> · <code>[1, 2]</code>. JSON 이 아니면 글자로 보냅니다.</div>
+    <label for="ttl">ttl (초, 비우면 만료 없음)</label>
+    <input id="ttl" placeholder="예: 60 · 1.5" inputmode="decimal">
+    <div class="buttons">
+      <button class="primary" data-cmd="set">저장 PUT</button>
+      <button data-cmd="get">조회 GET</button>
+      <button data-cmd="del">삭제 DELETE</button>
+      <button data-cmd="ttl">남은 시간 TTL</button>
+      <button data-cmd="expire">만료 설정 EXPIRE</button>
+      <button data-cmd="health">상태 health</button>
+    </div>
+  </section>
+
+  <!-- ② 원시 요청 -->
+  <section>
+    <h2>② 원시 요청</h2>
+    <div class="row">
+      <div style="flex:0 0 120px">
+        <label for="raw-method">메서드</label>
+        <select id="raw-method"><option>GET</option><option selected>PUT</option><option>POST</option><option>DELETE</option><option>PATCH</option></select>
+      </div>
+      <div>
+        <label for="raw-path">경로 (인코딩된 그대로 보냄)</label>
+        <input id="raw-path" value="/keys/bad" autocomplete="off">
+      </div>
+    </div>
+    <label for="raw-body">본문 (그대로 보냄, 비우면 본문 없음)</label>
+    <textarea id="raw-body">{"value": NaN}</textarea>
+    <div class="buttons">
+      <button class="primary" id="raw-send">보내기</button>
+      <button data-raw='["PUT","/keys/bad","not json"]'>잘못된 JSON</button>
+      <button data-raw='["PUT","/keys/bad","{\"value\": null}"]'>null 값</button>
+      <button data-raw='["PUT","/keys/bad","{\"value\": 1, \"ttl\": 0}"]'>ttl 0</button>
+      <button data-raw='["PUT","/keys/bad","[1, 2]"]'>객체 아님</button>
+      <button data-raw='["POST","/keys/a",""]'>405</button>
+      <button data-raw='["GET","/keys/",""]'>빈 키</button>
+    </div>
+    <div class="hint">아래 작은 버튼은 예시를 채우기만 합니다. "보내기" 를 눌러야 전송됩니다.</div>
+  </section>
+
+  <!-- ③ 자동 시나리오 -->
+  <section class="wide">
+    <h2>③ 자동 시나리오 <span id="summary"></span></h2>
+    <div class="buttons" style="margin-top:0">
+      <button class="primary" id="run">전체 실행</button>
+    </div>
+    <div class="hint">검사마다 새 키(<code>gui-실행번호-…</code>)를 써서 ① 에서 넣은 데이터와 섞이지 않습니다. 만료 검사 때문에 약 2초 걸립니다.</div>
+    <table>
+      <thead><tr><th style="width:36px">#</th><th>검사</th><th style="width:70px">결과</th><th>내용</th></tr></thead>
+      <tbody id="checks"></tbody>
+    </table>
+  </section>
+
+  <!-- ④ 응답 기록 -->
+  <section class="wide">
+    <h2>④ 응답 기록 <button id="clear" style="float:right;padding:2px 10px">지우기</button></h2>
+    <div id="log"></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+// ── 공통: 요청 보내기 ───────────────────────────────────────────────
+// 모든 요청이 이 함수를 지난다. 응답을 JSON 으로 읽고 ④ 응답 기록에 남긴다.
+// 반환: { status, body, ms } — 네트워크 오류면 status 0, body 에 오류 문구
+async function call(method, path, rawBody, { log = true } = {}) {
+  const start = performance.now();
+  let status = 0, body;
+  try {
+    const res = await fetch(path, {
+      method,
+      body: rawBody === undefined || rawBody === "" ? undefined : rawBody,
+      headers: rawBody === undefined || rawBody === "" ? {} : { "Content-Type": "application/json" },
+      cache: "no-store",
+    });
+    status = res.status;
+    const text = await res.text();
+    try { body = JSON.parse(text); } catch { body = text; } // 서버는 항상 JSON 이지만, 혹시 아니면 글자 그대로
+  } catch (e) {
+    body = String(e); // 서버가 꺼졌거나 연결이 끊김
+  }
+  const ms = performance.now() - start;
+  if (log) addLog(method, path, rawBody, status, body, ms);
+  return { status, body, ms };
+}
+
+// 키를 URL 경로 조각으로 — "/" 까지 %2F 로 바꿔야 서버가 키의 일부로 읽는다
+const keyPath = (key, suffix = "") => `/keys/${encodeURIComponent(key)}${suffix}`;
+
+// ── ④ 응답 기록 ─────────────────────────────────────────────────────
+const logBox = document.getElementById("log");
+function addLog(method, path, rawBody, status, body, ms) {
+  const div = document.createElement("div");
+  div.className = "entry";
+  const head = document.createElement("div");
+  head.className = "head";
+  const badge = document.createElement("span");
+  badge.className = `badge s${String(status)[0]}`;
+  badge.textContent = status || "실패";
+  const what = document.createElement("span");
+  what.textContent = `${method} ${decodeSafe(path)}`;
+  const time = document.createElement("span");
+  time.className = "ms";
+  time.textContent = `${ms.toFixed(1)} ms · ${new Date().toLocaleTimeString()}`;
+  head.append(badge, what, time);
+  div.append(head);
+  if (rawBody) div.append(pre("보냄: " + (rawBody.length > 300 ? rawBody.slice(0, 300) + ` … (${rawBody.length.toLocaleString()}자)` : rawBody))); // 1MB 본문도 화면이 무거워지지 않게
+  div.append(pre(typeof body === "string" ? body : JSON.stringify(body, null, 2)));
+  logBox.prepend(div); // 최근 것이 위로
+  while (logBox.children.length > 200) logBox.lastChild.remove(); // 너무 쌓이지 않게
+}
+function pre(text) { const p = document.createElement("pre"); p.textContent = text; return p; } // textContent: 받은 값을 HTML 로 해석하지 않는다
+function decodeSafe(path) { try { return decodeURIComponent(path); } catch { return path; } }
+document.getElementById("clear").onclick = () => { logBox.textContent = ""; };
+
+// ── 연결 상태: 2초마다 /health ──────────────────────────────────────
+const statusEl = document.getElementById("status");
+document.getElementById("origin").textContent = location.origin;
+async function poll() {
+  const { status, body } = await call("GET", "/health", undefined, { log: false });
+  if (status === 200) { statusEl.className = "on"; statusEl.textContent = `연결됨 · 키 ${body.keys}개`; }
+  else { statusEl.className = "off"; statusEl.textContent = "연결 안 됨 — python -m tests.gui 실행 확인"; }
+}
+poll();
+setInterval(poll, 2000);
+
+// ── ① 명령 ──────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+// 값 칸: JSON 으로 읽어 보고, 안 되면 글자 그대로 (예: Nameisme → "Nameisme")
+function readValue() { const t = $("value").value; try { return JSON.parse(t); } catch { return t; } }
+// ttl 칸: 비면 없음, 숫자면 숫자, 아니면 글자 그대로 보내 서버가 400 으로 답하는 것을 볼 수 있게
+function readTtl() { const t = $("ttl").value.trim(); if (t === "") return undefined; const n = Number(t); return Number.isNaN(n) ? t : n; }
+
+const commands = {
+  set: () => {
+    const body = { value: readValue() };
+    const ttl = readTtl();
+    if (ttl !== undefined) body.ttl = ttl;
+    return call("PUT", keyPath($("key").value), JSON.stringify(body));
+  },
+  get: () => call("GET", keyPath($("key").value)),
+  del: () => call("DELETE", keyPath($("key").value)),
+  ttl: () => call("GET", keyPath($("key").value, "/ttl")),
+  expire: () => call("POST", keyPath($("key").value, "/expire"), JSON.stringify({ ttl: readTtl() ?? null })),
+  health: () => call("GET", "/health"),
+};
+document.querySelectorAll("[data-cmd]").forEach((b) => { b.onclick = () => commands[b.dataset.cmd]().then(poll); });
+
+// ── ② 원시 요청 ─────────────────────────────────────────────────────
+$("raw-send").onclick = () => call($("raw-method").value, $("raw-path").value, $("raw-body").value).then(poll);
+document.querySelectorAll("[data-raw]").forEach((b) => {
+  b.onclick = () => { const [m, p, body] = JSON.parse(b.dataset.raw); $("raw-method").value = m; $("raw-path").value = p; $("raw-body").value = body; };
+});
+
+// ── ③ 자동 시나리오 ─────────────────────────────────────────────────
+// 검사 하나 = [이름, async (키 만들기) => [통과 여부, 내용]]
+// 기대값은 설계 8장 · 서버 테스트와 같은 규칙이다.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b); // 응답 JSON 비교용 (키 순서가 같은 단순한 값)
+const show = (r) => `${r.status} ${typeof r.body === "string" ? r.body : JSON.stringify(r.body)}`;
+const put = (k, body) => call("PUT", keyPath(k), typeof body === "string" ? body : JSON.stringify(body));
+
+const checks = [
+  ["저장 → 조회 (만료 없음은 ttl -1)", async (k) => {
+    const a = await put(k("a"), { value: "Nameisme" });
+    const b = await call("GET", keyPath(k("a")));
+    return [a.status === 200 && same(b.body, { key: k("a"), value: "Nameisme", ttl: -1 }), show(b)];
+  }],
+  ["JSON 값 종류 (객체 · 배열 · 숫자 · 불리언 · 빈 글자)", async (k) => {
+    const values = [{ lv: 200, tags: ["a"] }, [1, "b"], 3.14, false, ""];
+    for (const [i, v] of values.entries()) {
+      await put(k("t" + i), { value: v });
+      const r = await call("GET", keyPath(k("t" + i)));
+      if (r.status !== 200 || !same(r.body.value, v)) return [false, `${JSON.stringify(v)} → ${show(r)}`];
+    }
+    return [true, `${values.length}가지 그대로 돌아옴`];
+  }],
+  ["ttl 60 으로 저장 → GET 과 /ttl 이 60", async (k) => {
+    await put(k("b"), { value: 1, ttl: 60 });
+    const g = await call("GET", keyPath(k("b")));
+    const t = await call("GET", keyPath(k("b"), "/ttl"));
+    return [g.body.ttl === 60 && same(t.body, { ttl: 60 }), `GET ttl ${g.body.ttl} · /ttl ${show(t)}`];
+  }],
+  ["없는 키: GET 404 · /ttl -2 · DELETE false", async (k) => {
+    const g = await call("GET", keyPath(k("none")));
+    const t = await call("GET", keyPath(k("none"), "/ttl"));
+    const d = await call("DELETE", keyPath(k("none")));
+    const ok = g.status === 404 && same(g.body, { error: "키가 없습니다" }) && same(t.body, { ttl: -2 }) && same(d.body, { deleted: false });
+    return [ok, `${show(g)} · ${show(t)} · ${show(d)}`];
+  }],
+  ["EXPIRE: 있는 키 200 · ttl 5 / 없는 키 404", async (k) => {
+    await put(k("c"), { value: 1 });
+    const e = await call("POST", keyPath(k("c"), "/expire"), JSON.stringify({ ttl: 5 }));
+    const t = await call("GET", keyPath(k("c"), "/ttl"));
+    const m = await call("POST", keyPath(k("none2"), "/expire"), JSON.stringify({ ttl: 5 }));
+    return [same(e.body, { ok: true }) && t.body.ttl === 5 && m.status === 404, `${show(e)} · ttl ${t.body.ttl} · 없는 키 ${show(m)}`];
+  }],
+  ["소수 ttl 1.5 → 남은 시간 올림 2", async (k) => {
+    await put(k("f"), { value: 1, ttl: 1.5 });
+    const t = await call("GET", keyPath(k("f"), "/ttl"));
+    await call("DELETE", keyPath(k("f")), undefined, { log: false }); // 정리: 뒤의 "주기 삭제" 검사 도중 이 키가 만료돼 키 수를 흔들지 않게
+    return [same(t.body, { ttl: 2 }), show(t)];
+  }],
+  ["ttl 없이 덮어쓰면 만료가 사라짐 (Redis SET 규칙)", async (k) => {
+    await put(k("s"), { value: 1, ttl: 100 });
+    await put(k("s"), { value: 2 });
+    const g = await call("GET", keyPath(k("s")));
+    return [g.body.value === 2 && g.body.ttl === -1, show(g)];
+  }],
+  ["만료: ttl 0.5 → 0.7초 뒤 404", async (k) => {
+    await put(k("x"), { value: "곧 사라짐", ttl: 0.5 });
+    const before = await call("GET", keyPath(k("x")));
+    await sleep(700);
+    const after = await call("GET", keyPath(k("x")));
+    return [before.status === 200 && after.status === 404, `직후 ${before.status} → 0.7초 뒤 ${show(after)}`];
+  }],
+  ["주기 삭제: 아무도 안 읽어도 1초 안팎에 /health 키 수가 줄어듦", async (k) => {
+    const h0 = await call("GET", "/health", undefined, { log: false });
+    await put(k("sweep"), { value: 1, ttl: 0.2 });
+    const h1 = await call("GET", "/health", undefined, { log: false });
+    let h2;
+    for (let i = 0; i < 15; i++) { // 최대 1.5초 기다림 (정리 주기 1초)
+      await sleep(100);
+      h2 = await call("GET", "/health", undefined, { log: false });
+      if (h2.body.keys < h1.body.keys) break;
+    }
+    return [h1.body.keys === h0.body.keys + 1 && h2.body.keys < h1.body.keys, `키 수 ${h0.body.keys} → 저장 뒤 ${h1.body.keys} → 정리 뒤 ${h2.body.keys}`];
+  }],
+  ["삭제: 처음 true, 다시 false", async (k) => {
+    await put(k("d"), { value: 1 });
+    const a = await call("DELETE", keyPath(k("d")));
+    const b = await call("DELETE", keyPath(k("d")));
+    return [same(a.body, { deleted: true }) && same(b.body, { deleted: false }), `${show(a)} · ${show(b)}`];
+  }],
+  ["한글 · / · 공백 · ? · # 이 든 키", async (k) => {
+    const key = k("메이플/2024 ?&#");
+    await put(key, { value: "ok" });
+    const g = await call("GET", keyPath(key));
+    return [g.status === 200 && g.body.key === key, show(g)];
+  }],
+  ["null 값 → 400", async (k) => {
+    const r = await put(k("bad"), { value: null });
+    return [r.status === 400 && same(r.body, { error: "value가 필요합니다 (null은 저장할 수 없습니다)" }), show(r)];
+  }],
+  ["value 없음 → 400", async (k) => {
+    const r = await put(k("bad"), { ttl: 5 });
+    return [r.status === 400, show(r)];
+  }],
+  ["잘못된 JSON · NaN → 400", async (k) => {
+    const a = await put(k("bad"), "not json");
+    const b = await put(k("bad"), '{"value": NaN}');
+    const msg = { error: "본문이 올바른 JSON이 아닙니다 (NaN / Infinity 불가)" };
+    return [same(a.body, msg) && same(b.body, msg), `${show(a)} · ${a.status === b.status ? "NaN 도 같음" : show(b)}`];
+  }],
+  ["객체가 아닌 본문 [1, 2] → 400", async (k) => {
+    const r = await put(k("bad"), "[1, 2]");
+    return [same(r.body, { error: "본문은 JSON 객체({...})여야 합니다" }), show(r)];
+  }],
+  ["짝 없는 반쪽 문자 \\ud800 → 400", async (k) => {
+    const r = await put(k("bad"), '{"value": "\\ud800"}'); // JSON 이스케이프 그대로 보냄
+    return [same(r.body, { error: "UTF-8로 표현할 수 없는 문자(짝 없는 서로게이트)가 들어 있습니다" }), show(r)];
+  }],
+  ["잘못된 ttl (0 · -1 · \"5\" · true · 0.0001) → 400", async (k) => {
+    for (const ttl of [0, -1, "5", true, 0.0001]) {
+      const r = await put(k("bad"), { value: 1, ttl });
+      if (!same(r.body, { error: "ttl은 0.001초 이상의 유한한 숫자여야 합니다" })) return [false, `ttl ${JSON.stringify(ttl)} → ${show(r)}`];
+    }
+    const g = await call("GET", keyPath(k("bad")));
+    return [g.status === 404, "5가지 모두 400 · 아무것도 저장되지 않음"];
+  }],
+  ["1MB 넘는 본문 → 413", async (k) => {
+    const r = await put(k("big"), { value: "x".repeat(1024 * 1024 + 1) });
+    return [same(r.body, { error: "요청 본문이 너무 큽니다 (최대 1MB)" }), show(r)];
+  }],
+  ["메서드가 다르면 405 (경로마다 문구)", async () => {
+    const cases = [["POST", "/keys/a", "GET / PUT / DELETE만 지원합니다"], ["PATCH", "/keys/a", "GET / PUT / DELETE만 지원합니다"],
+                   ["PUT", "/keys/a/ttl", "GET만 지원합니다"], ["GET", "/keys/a/expire", "POST만 지원합니다"], ["DELETE", "/health", "GET만 지원합니다"]];
+    for (const [m, p, msg] of cases) {
+      const r = await call(m, p, m === "PUT" ? "{}" : undefined);
+      if (r.status !== 405 || !same(r.body, { error: msg })) return [false, `${m} ${p} → ${show(r)}`];
+    }
+    return [true, `${cases.length}가지 모두 405`];
+  }],
+  ["없는 경로 · 빈 키 → 404", async () => {
+    for (const p of ["/nope", "/keys/", "/keys/a/b/c", "/keys/a/unknown"]) {
+      const r = await call("GET", p);
+      if (r.status !== 404 || !same(r.body, { error: "없는 경로입니다" })) return [false, `${p} → ${show(r)}`];
+    }
+    return [true, "4가지 모두 404"];
+  }],
+  ["동시 요청 30개 (저장 후 모두 조회)", async (k) => {
+    const n = 30;
+    const puts = await Promise.all(Array.from({ length: n }, (_, i) => put(k("p" + i), { value: i })));
+    const gets = await Promise.all(Array.from({ length: n }, (_, i) => call("GET", keyPath(k("p" + i)), undefined, { log: false })));
+    const bad = gets.filter((g, i) => g.status !== 200 || g.body.value !== i).length + puts.filter((p) => p.status !== 200).length;
+    return [bad === 0, `저장 ${n} · 조회 ${n} · 실패 ${bad}`];
+  }],
+];
+
+const tbody = $("checks");
+const summary = $("summary");
+let runNo = 0;
+// 표를 처음 한 번 그려 둔다 (실행 전에도 어떤 검사가 있는지 보이게)
+function drawRows() {
+  tbody.textContent = "";
+  checks.forEach(([name], i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${i + 1}</td><td></td><td class="wait">대기</td><td></td>`;
+    tr.children[1].textContent = name;
+    tbody.append(tr);
+  });
+}
+drawRows();
+
+$("run").onclick = async () => {
+  $("run").disabled = true;
+  drawRows();
+  runNo += 1;
+  const prefix = `gui-${Date.now()}-${runNo}-`; // 실행마다 다른 키 → 이전 실행 · ① 의 데이터와 섞이지 않음
+  const k = (name) => prefix + name;
+  let pass = 0;
+  for (const [i, [, fn]] of checks.entries()) {
+    const cells = tbody.children[i].children;
+    cells[2].className = "wait"; cells[2].textContent = "실행 중";
+    let ok = false, detail = "";
+    try { [ok, detail] = await fn(k); } catch (e) { detail = "예외: " + e; } // 검사 코드 자체의 오류도 실패로 표시
+    cells[2].className = ok ? "pass" : "fail";
+    cells[2].textContent = ok ? "✓ 통과" : "✗ 실패";
+    cells[3].textContent = detail;
+    if (ok) pass += 1;
+    summary.textContent = `${pass} / ${i + 1} 통과`;
+  }
+  summary.className = pass === checks.length ? "pass" : "fail";
+  summary.textContent = `${pass} / ${checks.length} 통과`;
+  $("run").disabled = false;
+  poll();
+};
+</script>
+</body>
+</html>
