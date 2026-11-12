@@ -1,13 +1,24 @@
 <!DOCTYPE html>
-<!-- [app.html] Phase 2 페이지 — Component / State / Hooks로 만든 데모 앱 -->
+<!-- [app.html] Phase 2 페이지 — Component / State / Hooks로 만든 초능력 윷놀이 -->
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <title>Phase 2 - Component / State / Hooks</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Phase 2 - 초능력 윷놀이 (Component / State / Hooks)</title>
   <link rel="stylesheet" href="./src/styles/style.css" />
 </head>
 <body>
-  <div id="root"></div>
+  <header class="site-header">
+    <div class="brand">Mini <span>React</span></div>
+    <nav class="site-nav">
+      <a href="./index.html">Phase 1 · VDOM</a>
+      <a href="./app.html" aria-current="page">Phase 2 · Hooks</a>
+    </nav>
+  </header>
+
+  <main class="page">
+    <div id="root"></div>
+  </main>
   <script type="module" src="./src/app/main.js"></script>
 </body>
 </html>
