@@ -113,6 +113,20 @@ class MiniRedis:
                     removed += 1
             return removed
 
+    # 스냅샷용: 만료되지 않은 모든 키 → [(키, 값, 남은 초 또는 None)] (persistence.save_snapshot 이 사용, 김건희 님 브랜치와 같음)
+    # 락 하나 안에서 한 번에 찍어서, 저장 도중 다른 요청이 끼어들어도 "한 시점의 사진" 이 된다.
+    # 남은 초는 올림하지 않은 그대로 (복구할 때 꺼져 있던 시간을 정확히 빼려고)
+    def dump(self):
+        with self._lock:
+            now = self._clock()
+            entries = []
+            for key in self._data.keys():
+                expire_at = self._expires.get(key)
+                if expire_at is not None and expire_at <= now:
+                    continue  # 이미 만료된 키는 저장하지 않는다 (지우지는 않음 — 읽기 전용)
+                entries.append((key, self._data.get(key), None if expire_at is None else expire_at - now))
+            return entries
+
     # 저장된 키 수 (아직 sweep 되지 않은 만료 키도 포함) — 서버의 GET /health 가 사용
     def __len__(self):
         with self._lock:

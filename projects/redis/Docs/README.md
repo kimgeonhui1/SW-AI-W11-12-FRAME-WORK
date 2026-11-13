@@ -5,7 +5,8 @@
 
 - 언어: Python 3.10 이상, **표준 라이브러리만** (설치할 것 없음) · Python 3.14.7 · macOS 에서 검증
 - 브랜치: `feat/Kimjunwoo-Redis` (김준우)
-- 테스트: 제 테스트 **78개** + 팀원(dev) 테스트 **61개** 모두 통과 · 브라우저 **테스트 GUI** 있음 (6장)
+- 테스트: 제 테스트 **93개** + 팀원(dev) 테스트 **61개** 모두 통과 · 브라우저 **테스트 GUI** 있음 (6장)
+- 영속성: 60초마다 + 끌 때 `data/dump.json` 에 저장하고, 켤 때 복구 (3장 끝)
 - 성능: 같은 요청 20번 평균 **204.58ms → 11.32ms (약 18배)**
 
 | 문서 | 내용 |
@@ -37,7 +38,7 @@ curl localhost:6380/keys/user:1
 python -m demo.benchmark
 ```
 
-- `unittest` — 테스트 78개 (약 7초)
+- `unittest` — 테스트 93개 (약 8초)
 - `mini_redis.server` — Mini Redis 서버. 기본 `127.0.0.1` 이라 같은 컴퓨터에서만 접속됩니다 (`--host 0.0.0.0` 이면 외부 허용)
 - `demo.benchmark` — 캐시 사용 / 미사용 성능 비교. 서버를 알아서 띄우므로 이 명령 하나면 됩니다
 
@@ -63,7 +64,7 @@ projects/redis/
 │   ├── hashtable.py     해시 테이블 (dict 없이 직접 구현)
 │   ├── store.py         MiniRedis 본체 (TTL · 락)
 │   ├── server.py        HTTP JSON API 서버
-│   └── persistence.py   (선택) 스냅샷 저장 · 복구 — 아직 TODO
+│   └── persistence.py   스냅샷 저장 · 복구 (김건희 님 브랜치 구현 그대로)
 ├── demo/
 │   ├── api_server.py    캐시를 쓰는 예제 API (dev 파일 그대로)
 │   └── benchmark.py     캐시 사용 / 미사용 성능 비교
@@ -106,6 +107,17 @@ projects/redis/
 | 500 | 예상 못 한 오류 (서버는 계속 동작) | `{"error": "서버 내부 오류"}` |
 
 전체 문구 목록은 [설계.md](./설계.md) 8장에 있습니다.
+
+**데이터 보존 (스냅샷)** — 서버를 껐다 켜도 데이터가 남습니다.
+
+```bash
+python -m mini_redis.server --port 6380 --snapshot data/dump.json --snapshot-interval 60
+```
+
+- 위 값이 기본값이라 그냥 `python -m mini_redis.server` 만 해도 됩니다. 켤 때 `data/dump.json` 에서 복구하고, 60초마다 + Ctrl+C 로 끌 때 저장합니다.
+- ttl 이 있는 키는 **꺼져 있던 시간만큼 줄어서** 복구됩니다 (30초짜리 키를 3초 꺼 두면 27초). 그 사이 만료된 키는 복구하지 않습니다.
+- 파일이 손상돼 있으면 서버가 **시작을 거부**합니다 (빈 서버로 떠서 그 파일을 덮어쓰지 않게).
+- 저장을 끄려면 `--snapshot ""`.
 
 **예시**
 
@@ -186,6 +198,7 @@ python -m unittest
 | `tests/test_store.py` | 23 | ttl 규칙(-1 / -2 · 올림 · 경계) · 지연 / 주기 삭제 · 잘못된 ttl · 스레드 동시 쓰기 |
 | `tests/test_server.py` | 22 | 모든 경로 · 상태 코드 · 오류 문구 · 413 · 408 · 클라이언트 50개 동시 접속 · 실제 1초 주기 정리 |
 | `tests/test_demo.py` | 10 | MISS → HIT · 버전 키 무효화 · 느린 읽기 중 수정 · Mini Redis 장애 시 BYPASS |
+| `tests/test_persistence.py` | 15 | 저장 → 복구 왕복 · 꺼져 있던 시간만큼 ttl 차감 · 손상 파일 거부 · 저장 실패 때 이전 파일 유지 · 주기 저장 |
 | `tests/test_gui.py` | 3 | GUI 실행기가 화면을 내주는지 · 같은 서버의 API 가 그대로 동작하는지 · 화면이 기대하는 오류 문구가 서버 문구와 같은지 |
 
 시간이 걸리는 테스트는 가짜 시계로 기다리지 않습니다. 팀원(dev) 테스트 61개도 이 코드에서 그대로 통과합니다 ([보고서.md](./보고서.md) 4 · 9장).
@@ -206,7 +219,7 @@ python -m tests.gui
 | ④ 응답 기록 | 보낸 요청 · 상태 코드 · 응답 본문 · 걸린 시간 |
 
 - 화면과 API 가 **같은 서버**에서 나옵니다. `gui.html` 을 파일로 직접 열면 브라우저가 다른 출처의 PUT · DELETE 를 막으니(CORS), 반드시 위 명령으로 엽니다.
-- 이 실행기는 자기 저장소를 따로 가집니다. 끄면 데이터가 사라지고, 6380 의 Mini Redis 서버와는 별개입니다.
+- 이 실행기는 자기 저장소를 따로 가지고 스냅샷을 쓰지 않습니다. 끄면 데이터가 사라지고, 6380 의 Mini Redis 서버와는 별개입니다.
 - `mini_redis/` 코드는 바꾸지 않았습니다. 실행기가 실제 서버(`MiniRedisServer`)를 그대로 띄우고 `GET /` 만 화면으로 바꿔 끼웁니다.
 
 ---
@@ -225,7 +238,7 @@ python -m tests.gui
 |---|---|
 | 자료형 | 문자열 키 → JSON 값 하나만. Redis 의 List · Set · Hash 등은 없음 |
 | 프로토콜 | Redis 의 RESP 가 아니라 HTTP JSON |
-| 영속성 | 아직 없음 — 서버를 끄면 데이터가 사라짐 (`persistence.py` TODO) |
+| 영속성 | 스냅샷 방식이라, 서버가 갑자기 죽으면(전원 · `kill -9`) 마지막 저장 뒤 최대 60초치 변경을 잃음. AOF(명령 기록)는 없음 |
 | 메모리 | 한도 · LRU 제거 없음. 해시 테이블은 커지기만 하고 줄지 않음 |
 | 규모 | 락 하나 · 1초마다 만료 키 전부 훑기 — 초당 수만 요청 · 만료 키 수십만 개를 넘으면 바꿔야 함 (`shortcut:` 주석) |
 | 데모 서버 | `demo/api_server.py`(dev 파일)는 클라이언트 수십 개가 한꺼번에 접속하면 일부 연결이 끊김. Mini Redis 서버는 고쳤음 ([보고서.md](./보고서.md) 9장) |

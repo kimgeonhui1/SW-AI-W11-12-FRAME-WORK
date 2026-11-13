@@ -23,6 +23,7 @@
 #   주기 삭제(sweep) 스레드도 서버와 함께 시작하고, server_close() 때 함께 멈춘다.
 #
 # 실행: projects/redis 에서  python -m mini_redis.server --port 6380
+#       (기본으로 data/dump.json 에 60초마다 + 끌 때 스냅샷을 저장하고, 켤 때 복구한다. --snapshot "" 로 끌 수 있다)
 
 import argparse
 import json
@@ -30,6 +31,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote
 
+from .persistence import SnapshotError, load_snapshot, start_periodic_snapshot
 from .store import MiniRedis
 
 MAX_BODY = 1024 * 1024  #     요청 본문 최대 1MB — 큰 요청 하나로 서버 메모리를 다 쓰지 못하게
@@ -234,12 +236,34 @@ def create_server(store, host="127.0.0.1", port=6380):
 
 
 # 명령줄 실행 시작점. 기본 127.0.0.1 — 같은 컴퓨터에서만 접속된다 (외부에 열려면 --host 0.0.0.0)
+# 스냅샷(영속성): 켤 때 --snapshot 파일에서 복구하고, --snapshot-interval 초마다 + 끌 때 저장한다 (김건희 님 브랜치와 같음)
+#   --snapshot "" 이면 저장 · 복구를 하지 않는다 (예전처럼 끄면 데이터가 사라지는 서버)
 def main():
     parser = argparse.ArgumentParser(description="Mini Redis HTTP 서버")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=6380)
+    parser.add_argument("--snapshot", default="data/dump.json", help="스냅샷 파일 경로 (빈 문자열이면 저장 안 함)")
+    parser.add_argument("--snapshot-interval", type=float, default=60, help="스냅샷 저장 주기(초)")
     args = parser.parse_args()
-    server = create_server(MiniRedis(), args.host, args.port)
+    if args.snapshot and not 0 < args.snapshot_interval < float("inf"):  # NaN 도 이 비교에서 걸러진다
+        parser.error("--snapshot-interval은 0보다 큰 유한한 숫자여야 합니다")
+
+    store = MiniRedis()
+    if args.snapshot:
+        try:
+            loaded = load_snapshot(store, args.snapshot)
+        except SnapshotError as e:
+            # 손상된 파일로 빈 서버를 띄우면 다음 저장 때 그 파일을 덮어써 데이터가 영영 사라진다 → 시작하지 않는다
+            raise SystemExit(f"[snapshot] {e}\n파일을 확인하거나 다른 경로(--snapshot)를 지정하세요.")
+        print(f"[snapshot] {args.snapshot}에서 키 {loaded}개 복구")
+
+    # 서버(포트)를 먼저 연다. 포트가 이미 쓰이는 중이면 여기서 끝나고, 스냅샷 스레드는 아직 켜지지 않는다
+    try:
+        server = create_server(store, args.host, args.port)
+    except OSError as e:
+        raise SystemExit(f"{args.host}:{args.port}에서 서버를 열 수 없습니다: {e}")
+    stop_snapshot = start_periodic_snapshot(store, args.snapshot, args.snapshot_interval) if args.snapshot else None
+
     print(f"Mini Redis listening on http://{args.host}:{args.port}")
     try:
         server.serve_forever()
@@ -247,6 +271,12 @@ def main():
         pass
     finally:
         server.server_close()
+        if stop_snapshot:
+            try:
+                stop_snapshot()  # 종료 직전 상태까지 저장
+                print(f"[snapshot] 종료 전 저장 완료: {args.snapshot}")
+            except Exception as e:  # 저장에 실패해도 마지막 주기 저장 파일은 남아 있다
+                print(f"[snapshot] 종료 전 저장 실패 (마지막 주기 저장본은 그대로): {e}")
 
 
 if __name__ == "__main__":
