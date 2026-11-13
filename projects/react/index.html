@@ -7,51 +7,164 @@
   <title>Phase 1 - Virtual DOM / Diff / Patch</title>
   <link rel="stylesheet" href="./src/styles/style.css" />
 </head>
-<body>
+<body class="phase1">
+  <!-- 머리말: app.html 과 같은 모양 (style.css 의 .site-*) -->
   <header class="site-header">
-    <div class="brand">Mini <span>React</span></div>
-    <nav class="site-nav">
-      <a href="./index.html" aria-current="page">Phase 1 · VDOM</a>
-      <a href="./app.html">Phase 2 · Hooks</a>
+    <div>
+      <h1 class="site-eyebrow">Mini React · Phase 1</h1>
+      <p class="site-desc">Virtual DOM · Diff · Patch.
+        오른쪽 <strong>테스트 영역</strong>을 고친 뒤 <strong>Patch</strong>를 누르면,
+        Diff로 찾은 변경점만 왼쪽 <strong>실제 영역</strong>에 반영됩니다. 바뀐 노드는 잠깐 강조됩니다.</p>
+    </div>
+    <!-- 두 페이지 공용 이동 메뉴: 지금 페이지에 aria-current="page" -->
+    <nav class="site-nav" aria-label="페이지 이동">
+      <a href="./index.html" aria-current="page">Phase 1 · Diff / Patch</a>
+      <a href="./app.html">Phase 2 · Hooks 앱</a>
     </nav>
   </header>
 
-  <main class="page">
-    <h1 class="page-title">Virtual DOM / Diff / Patch</h1>
-    <p class="page-desc">테스트 영역의 HTML을 고치고 Patch를 누르면, 바뀐 부분만 실제 영역에 반영됩니다.</p>
-
-    <div class="toolbar">
-      <button id="patch-btn" class="primary">Patch</button>
-      <button id="undo-btn">← 뒤로가기</button>
-      <button id="redo-btn">앞으로가기 →</button>
-    </div>
-
-    <div class="areas">
-      <section class="card">
-        <div class="card-header"><h2>실제 영역</h2><small>실제 DOM</small></div>
-        <!-- 샘플 HTML. 페이지가 로드되면 main.js가 이 DOM을 domToVdom으로 읽어 Virtual DOM으로 만든다 -->
-        <div id="real-area" class="card-body">
-          <h3 class="title">할 일 목록</h3>
-          <ul id="todo">
-            <li>Virtual DOM 만들기</li>
-            <li>Diff 구현</li>
-          </ul>
-          <p style="color: gray;">총 <b>2</b>개</p>
-          <input value="입력값" />
-          <label><input type="checkbox" checked /> 완료</label>
+  <main>
+    <!-- ① 실제 영역 / 테스트 영역 -->
+    <div class="grid">
+      <section class="panel" aria-labelledby="real-title">
+        <h2 id="real-title" class="panel-title">실제 영역 <small>(#real-area · 읽기 전용)</small></h2>
+        <!--
+          실제 영역 안의 샘플 HTML.
+          일부러 들여쓰기를 해 두었다: 줄바꿈이 들어간 공백 텍스트는 domToVdom 이 무시하므로
+          VDOM 에는 들어가지 않고, patch 도 같은 규칙으로 자식 위치를 센다.
+          ※ main.js 는 이 영역에 클래스·속성을 추가하지 않는다 (VDOM 과 어긋나지 않게).
+        -->
+        <div id="real-area" class="area">
+          <section class="card" data-id="intro">
+            <h1>Virtual DOM 실험실</h1>
+            <h2 class="subtitle" style="color: #7c3aed;">바뀐 부분만 다시 그리기</h2>
+            <p>이 문단에는 <strong>굵은 글씨</strong>, <em>기울임</em>, <a href="https://developer.mozilla.org/ko/" title="MDN 문서">링크</a>, <code>코드</code>가 함께 들어 있습니다.</p>
+            <ul class="todo" data-count="3">
+              <li data-done="true">HTML을 Virtual DOM으로 변환</li>
+              <li data-done="false">Diff로 변경점 찾기</li>
+              <li data-done="false">Patch로 실제 DOM 수정</li>
+            </ul>
+            <p class="note" style="font-size: 0.9em;">테스트 영역에서 자유롭게 고쳐 보세요.</p>
+          </section>
+          <!--
+            테스트 카드: 버튼 · 입력 · 선택 · 표 · 접기 · 대화상자 · 측정 · 글자 꾸미기 요소를 한곳에.
+            - id 는 쓰지 않는다 (실제 영역과 테스트 영역에 똑같이 그려지므로 id 가 겹친다). label 은 감싸는 방식.
+            - <form> 으로 감싼 이유: 라디오 묶음(name="size")이 영역마다 따로 동작하도록 (폼이 다르면 다른 묶음).
+            - 제출 버튼을 눌러도 페이지가 이동하지 않게 main.js 가 두 영역의 submit 을 막는다.
+            - 예시 버튼(제목 · 부제 · 목록 …)은 querySelector 로 "처음 나오는" 요소를 고치므로, 이 모음은 위 카드 뒤에 둔다.
+          -->
+          <section class="showcase" data-id="html">
+            <h2>테스트</h2>
+            <form class="demo-form">
+              <fieldset>
+                <legend>입력 요소 (fieldset · legend · label)</legend>
+                <label>글자 <input type="text" name="name" value="홍길동" placeholder="이름"></label>
+                <label>이메일 <input type="email" name="email" value="mini@react.dev"></label>
+                <label>비밀번호 <input type="password" name="pw" value="1234"></label>
+                <label>숫자 <input type="number" name="count" value="3" min="0" max="10"></label>
+                <label>범위 <input type="range" name="level" value="60" min="0" max="100"></label>
+                <label>색 <input type="color" name="color" value="#2563eb"></label>
+                <label>날짜 <input type="date" name="date" value="2026-11-09"></label>
+                <label><input type="checkbox" name="agree" checked> 체크박스</label>
+                <label><input type="radio" name="size" value="s"> 라디오 작게</label>
+                <label><input type="radio" name="size" value="m" checked> 라디오 보통</label>
+                <label>선택 <select name="fruit"><optgroup label="빨강"><option value="apple" selected>사과</option><option value="cherry">체리</option></optgroup><optgroup label="노랑"><option value="banana">바나나</option></optgroup></select></label>
+                <label>여러 줄 <textarea name="memo" rows="2">textarea 내용</textarea></label>
+              </fieldset>
+              <p class="demo-row">
+                <button type="button">일반 버튼</button>
+                <button type="submit">제출 버튼</button>
+                <button type="reset">초기화 버튼</button>
+                <button type="button" disabled>꺼진 버튼</button>
+                <input type="button" value="input 버튼">
+              </p>
+            </form>
+            <details>
+              <summary>펼치기 (details · summary)</summary>
+              <p>접혀 있던 내용입니다.</p>
+            </details>
+            <dialog open>
+              <p>열린 대화상자 (dialog open)</p>
+            </dialog>
+            <p class="demo-row">진행률 <progress value="60" max="100">60%</progress> 측정값 <meter value="3" min="0" max="10" low="3" high="7" optimum="5">3</meter> 결과 <output>42</output></p>
+            <table>
+              <caption>표 (table · caption)</caption>
+              <thead>
+                <tr><th>태그</th><th>설명</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>button</td><td>누르는 버튼</td></tr>
+                <tr><td>input</td><td>입력 칸</td></tr>
+              </tbody>
+              <tfoot>
+                <tr><td colspan="2">합계 2개</td></tr>
+              </tfoot>
+            </table>
+            <ol>
+              <li>순서 있는 목록 (ol)</li>
+              <li>두 번째</li>
+            </ol>
+            <dl>
+              <dt>dl · dt</dt>
+              <dd>설명 목록 (dd)</dd>
+            </dl>
+            <blockquote cite="https://html.spec.whatwg.org/">인용 블록 — <q>짧은 인용</q> <cite>HTML 표준</cite></blockquote>
+            <p><abbr title="HyperText Markup Language">HTML</abbr> · <kbd>Ctrl</kbd>+<kbd>C</kbd> · H<sub>2</sub>O · x<sup>2</sup> · <mark>형광펜</mark> · <del>지운 글</del> <ins>넣은 글</ins> · <small>작은 글</small> · <s>취소선</s> · <u>밑줄</u> · <b>b</b> · <i>i</i> · <time datetime="2026-11-09">2026년 11월 9일</time><br>줄바꿈(br) 뒤 아주긴<wbr>단어</p>
+            <figure>
+              <figcaption>그림 설명 (figure · figcaption)</figcaption>
+              <pre>pre 안의   공백은   그대로</pre>
+            </figure>
+            <hr>
+            <address>주소 요소 (address)</address>
+          </section>
         </div>
       </section>
-      <section class="card">
-        <div class="card-header"><h2>테스트 영역</h2><small>HTML을 고친 뒤 Patch</small></div>
-        <div id="test-area"><textarea id="test-input" spellcheck="false" aria-label="테스트 영역 HTML"></textarea></div>
+
+      <section class="panel" aria-labelledby="test-title">
+        <h2 id="test-title" class="panel-title">테스트 영역 <small>(#test-area · 직접 편집)</small></h2>
+        <!-- contenteditable: 미리보기를 클릭해서 글자를 바로 고칠 수 있다 -->
+        <div id="test-area" class="area area--editable" contenteditable="true" spellcheck="false"></div>
+
+        <label class="source-label" for="test-source">HTML 소스 편집기 <small>(태그 · 속성 · 구조 수정, 미리보기와 양방향 동기화)</small></label>
+        <textarea id="test-source" class="source" spellcheck="false" autocomplete="off" wrap="off"></textarea>
       </section>
     </div>
 
-    <section class="card">
-      <div class="card-header"><h2>마지막 diff 결과</h2><small>패치 트리 (JSON)</small></div>
-      <pre id="patch-log">아직 Patch하지 않았습니다.</pre>
+    <!-- ② 조작 버튼 -->
+    <div class="toolbar" role="toolbar" aria-label="Patch 및 History 이동">
+      <button id="patch-btn" class="btn btn--primary" type="button">Patch</button>
+      <button id="undo-btn" class="btn" type="button">← 뒤로가기</button>
+      <button id="redo-btn" class="btn" type="button">앞으로가기 →</button>
+      <span id="position-label" class="position">현재 위치: - / -</span>
+      <span id="status" class="status" role="status" aria-live="polite"></span>
+    </div>
+
+    <!-- ②-1 예시 변경: 누르면 테스트 영역을 고치고 바로 Patch (버튼은 main.js 의 EXAMPLES 로 그린다) -->
+    <section class="panel" aria-labelledby="examples-title">
+      <h2 id="examples-title" class="panel-title">예시 변경 <small>(누르면 테스트 영역을 고치고 바로 Patch · 작은 글씨는 나올 패치)</small></h2>
+      <div id="examples" class="examples" role="group" aria-labelledby="examples-title"></div>
     </section>
+
+    <!-- ③ State History / 마지막 Diff 결과 -->
+    <div class="grid">
+      <section class="panel" aria-labelledby="history-title">
+        <h2 id="history-title" class="panel-title">State History <small>(클릭하면 그 시점으로 이동)</small></h2>
+        <ol id="history-list" class="history"></ol>
+      </section>
+
+      <section class="panel" aria-labelledby="log-title">
+        <h2 id="log-title" class="panel-title">마지막 Diff 결과 <small id="log-summary"></small></h2>
+        <ol id="patch-log" class="patch-log"></ol>
+      </section>
+    </div>
+
+    <!-- ④ 현재 Virtual DOM (JSON) -->
+    <details class="panel vdom-view">
+      <summary>현재 Virtual DOM (JSON)</summary>
+      <pre id="vdom-json"></pre>
+    </details>
   </main>
+
   <script type="module" src="./src/phase1/main.js"></script>
 </body>
 </html>

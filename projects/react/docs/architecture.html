@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<!-- [docs/architecture.html] 미니 React 전체 설계도 — 모듈 구조 · 데이터 흐름 · 렌더 사이클 · 자료구조를 한 장에 (Live Server 로 열기) -->
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>미니 React 설계도</title>
+  <style>
+    /* 색은 모두 변수로 두고, 다크 모드에서 값만 바꾼다 */
+    :root {
+      --bg: #f6f7fb; --card: #ffffff; --ink: #1f2430; --muted: #5f6878; --line: #d9dde6;
+      --p1: #7c3aed; --p1-soft: #f1ebff;   /* Phase 1 = 보라 */
+      --p2: #2563eb; --p2-soft: #e8f0ff;   /* Phase 2 = 파랑 */
+      --core: #0f766e; --core-soft: #e3f5f2; /* core 엔진 = 청록 */
+      --dom: #b45309; --dom-soft: #fdf1e2;  /* 실제 DOM = 주황 */
+      --bad: #b91c1c;
+      --code-bg: #f2f4f8;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #12151c; --card: #1b2029; --ink: #e6e9ef; --muted: #9aa3b2; --line: #2f3643;
+        --p1: #a78bfa; --p1-soft: #2a2140; --p2: #60a5fa; --p2-soft: #1b2a44;
+        --core: #2dd4bf; --core-soft: #12302d; --dom: #f59e0b; --dom-soft: #33260f;
+        --bad: #f87171; --code-bg: #232935;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.6 system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+    main { max-width: 1080px; margin: 0 auto; padding: 32px 16px 64px; }
+    h1 { font-size: 28px; margin: 0 0 4px; }
+    h2 { font-size: 20px; margin: 0 0 4px; }
+    h3 { font-size: 15px; margin: 18px 0 8px; }
+    p { margin: 6px 0; }
+    .lead { color: var(--muted); margin-bottom: 20px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px; margin: 18px 0; }
+    .key { color: var(--muted); margin-bottom: 14px; }
+    code { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 5px; }
+    pre { font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code-bg); padding: 12px 14px; border-radius: 10px; overflow-x: auto; margin: 8px 0; }
+    nav.toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
+    nav.toc a { text-decoration: none; color: var(--ink); border: 1px solid var(--line); background: var(--card); padding: 4px 12px; border-radius: 999px; font-size: 14px; }
+    nav.toc a:hover { border-color: var(--p2); }
+
+    /* 범례 */
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--muted); margin-top: 10px; }
+    .legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+
+    /* SVG 다이어그램 공통 */
+    svg { width: 100%; height: auto; display: block; }
+    svg text { fill: var(--ink); font: 13px system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif; }
+    svg .sub { fill: var(--muted); font-size: 11px; }
+    svg .box { stroke-width: 1.5; rx: 10; }
+    .scroll { overflow-x: auto; }
+    .scroll svg { min-width: 760px; }
+
+    /* 단계 흐름 (세로 목록) */
+    .steps { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+    .steps li { position: relative; padding: 8px 12px 8px 46px; border-left: 2px solid var(--line); margin-left: 14px; }
+    .steps li::before { counter-increment: s; content: counter(s); position: absolute; left: -15px; top: 7px; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700; color: #fff; background: var(--c, var(--p2)); }
+    .steps li b { display: block; }
+    .steps li small { color: var(--muted); }
+    .steps.p1 { --c: var(--p1); }
+    .steps.p2 { --c: var(--p2); }
+
+    /* 두 칸 / 세 칸 배치 */
+    .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+    .grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+    .pane { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+    .pane h3 { margin-top: 0; }
+    .tag { display: inline-block; font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 6px; margin-right: 4px; }
+    .t-create { background: #dcfce7; color: #166534; } .t-remove { background: #fee2e2; color: #991b1b; }
+    .t-replace { background: #ffedd5; color: #9a3412; } .t-text { background: #e0e7ff; color: #3730a3; }
+    .t-props { background: #fef9c3; color: #854d0e; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
+    .note { font-size: 13px; color: var(--muted); }
+    .rule { border-left: 3px solid var(--core); padding: 6px 12px; margin: 8px 0; background: var(--core-soft); border-radius: 0 8px 8px 0; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>미니 React 설계도</h1>
+  <p class="lead">모듈 구조 · 데이터 흐름 · 렌더 사이클 · 자료구조를 한 장에 모았습니다. 글 설명은 <a href="./README.md">README.md</a>에 있습니다.</p>
+
+  <nav class="toc" aria-label="목차">
+    <a href="#arch">① 전체 구조</a>
+    <a href="#layers">② 계층</a>
+    <a href="#p1">③ Phase 1 흐름</a>
+    <a href="#diff">④ Diff · Patch 내부</a>
+    <a href="#p2">⑤ Phase 2 렌더 사이클</a>
+    <a href="#hooks">⑥ Hooks 저장 구조</a>
+    <a href="#event">⑦ 이벤트 연결</a>
+    <a href="#data">⑧ 자료구조</a>
+    <a href="#rules">⑨ 지켜야 할 규칙</a>
+  </nav>
+
+  <!-- ① 전체 구조: 파일 의존 관계 (화살표 = "가져다 쓴다") -->
+  <section class="card" id="arch">
+    <h2>① 전체 구조 — 누가 누구를 쓰나</h2>
+    <p class="key">화살표는 "가져다 쓴다(import)". Phase 2(파랑)는 Phase 1과 <b>같은 core 엔진</b>(청록)을 그대로 씁니다.</p>
+    <div class="scroll">
+    <svg viewBox="0 0 930 470" role="img" aria-label="모듈 의존 관계도">
+      <defs>
+        <marker id="a-p1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--p1)"/></marker>
+        <marker id="a-p2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--p2)"/></marker>
+        <marker id="a-core" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--core)"/></marker>
+        <marker id="a-dom" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--dom)"/></marker>
+      </defs>
+
+      <!-- 줄 라벨 -->
+      <text x="0" y="46" class="sub">페이지</text>
+      <text x="0" y="126" class="sub">시작점</text>
+      <text x="0" y="216" class="sub">화면 로직</text>
+      <text x="0" y="300" class="sub">core 엔진</text>
+
+      <!-- 화살표 (상자보다 먼저 그려 상자 아래에 깔리게) -->
+      <g fill="none" stroke-width="1.6">
+        <!-- Phase 1 -->
+        <line x1="215" y1="64" x2="215" y2="98" stroke="var(--p1)" marker-end="url(#a-p1)"/>
+        <line x1="190" y1="144" x2="130" y2="188" stroke="var(--p1)" marker-end="url(#a-p1)"/>
+        <line x1="200" y1="144" x2="140" y2="318" stroke="var(--p1)" marker-end="url(#a-p1)"/>
+        <line x1="225" y1="144" x2="300" y2="318" stroke="var(--p1)" marker-end="url(#a-p1)"/>
+        <line x1="245" y1="144" x2="455" y2="318" stroke="var(--p1)" marker-end="url(#a-p1)"/>
+        <!-- Phase 2 -->
+        <line x1="735" y1="64" x2="735" y2="98" stroke="var(--p2)" marker-end="url(#a-p2)"/>
+        <line x1="715" y1="144" x2="590" y2="188" stroke="var(--p2)" marker-end="url(#a-p2)"/>
+        <line x1="735" y1="144" x2="680" y2="318" stroke="var(--p2)" marker-end="url(#a-p2)"/>
+        <line x1="640" y1="210" x2="758" y2="210" stroke="var(--p2)" marker-end="url(#a-p2)"/>
+        <line x1="600" y1="234" x2="820" y2="318" stroke="var(--p2)" marker-end="url(#a-p2)"/>
+        <line x1="820" y1="234" x2="705" y2="318" stroke="var(--p2)" stroke-dasharray="5 4" marker-end="url(#a-p2)"/>
+        <!-- core 안: component → patch → diff → vdom, component → hooks -->
+        <line x1="600" y1="340" x2="537" y2="340" stroke="var(--core)" marker-end="url(#a-core)"/>
+        <line x1="400" y1="340" x2="357" y2="340" stroke="var(--core)" marker-end="url(#a-core)"/>
+        <line x1="220" y1="340" x2="177" y2="340" stroke="var(--core)" marker-end="url(#a-core)"/>
+        <line x1="750" y1="340" x2="773" y2="340" stroke="var(--core)" marker-end="url(#a-core)"/>
+        <!-- 실제 DOM -->
+        <line x1="110" y1="364" x2="110" y2="408" stroke="var(--dom)" marker-start="url(#a-dom)" marker-end="url(#a-dom)"/>
+        <line x1="470" y1="364" x2="470" y2="408" stroke="var(--dom)" marker-end="url(#a-dom)"/>
+      </g>
+
+      <!-- 상자 -->
+      <g>
+        <!-- 페이지 -->
+        <rect class="box" x="140" y="20" width="150" height="44" fill="var(--p1-soft)" stroke="var(--p1)"/>
+        <text x="215" y="47" text-anchor="middle">index.html</text>
+        <rect class="box" x="660" y="20" width="150" height="44" fill="var(--p2-soft)" stroke="var(--p2)"/>
+        <text x="735" y="47" text-anchor="middle">app.html</text>
+        <!-- 시작점 -->
+        <rect class="box" x="140" y="100" width="150" height="44" fill="var(--p1-soft)" stroke="var(--p1)"/>
+        <text x="215" y="127" text-anchor="middle">phase1/main.js</text>
+        <rect class="box" x="660" y="100" width="150" height="44" fill="var(--p2-soft)" stroke="var(--p2)"/>
+        <text x="735" y="127" text-anchor="middle">app/main.js</text>
+        <!-- 화면 로직 -->
+        <rect class="box" x="55" y="190" width="150" height="44" fill="var(--p1-soft)" stroke="var(--p1)"/>
+        <text x="130" y="211" text-anchor="middle">phase1/history.js</text>
+        <text x="130" y="227" text-anchor="middle" class="sub">State History</text>
+        <rect class="box" x="490" y="190" width="150" height="44" fill="var(--p2-soft)" stroke="var(--p2)"/>
+        <text x="565" y="211" text-anchor="middle">app/App.js</text>
+        <text x="565" y="227" text-anchor="middle" class="sub">루트 · 모든 상태</text>
+        <rect class="box" x="760" y="190" width="150" height="44" fill="var(--p2-soft)" stroke="var(--p2)"/>
+        <text x="835" y="211" text-anchor="middle">components/*</text>
+        <text x="835" y="227" text-anchor="middle" class="sub">상태 없는 자식</text>
+        <!-- core -->
+        <rect x="30" y="300" width="890" height="80" rx="14" fill="none" stroke="var(--core)" stroke-dasharray="6 5" opacity=".6"/>
+        <rect class="box" x="40" y="318" width="135" height="44" fill="var(--core-soft)" stroke="var(--core)"/>
+        <text x="107" y="338" text-anchor="middle">vdom.js</text>
+        <text x="107" y="354" text-anchor="middle" class="sub">h · DOM↔VDOM</text>
+        <rect class="box" x="220" y="318" width="135" height="44" fill="var(--core-soft)" stroke="var(--core)"/>
+        <text x="287" y="338" text-anchor="middle">diff.js</text>
+        <text x="287" y="354" text-anchor="middle" class="sub">비교 → 패치 목록</text>
+        <rect class="box" x="400" y="318" width="135" height="44" fill="var(--core-soft)" stroke="var(--core)"/>
+        <text x="467" y="338" text-anchor="middle">patch.js</text>
+        <text x="467" y="354" text-anchor="middle" class="sub">패치 → 실제 DOM</text>
+        <rect class="box" x="600" y="318" width="150" height="44" fill="var(--core-soft)" stroke="var(--core)"/>
+        <text x="675" y="338" text-anchor="middle">component.js</text>
+        <text x="675" y="354" text-anchor="middle" class="sub">FunctionComponent</text>
+        <rect class="box" x="775" y="318" width="135" height="44" fill="var(--core-soft)" stroke="var(--core)"/>
+        <text x="842" y="338" text-anchor="middle">hooks.js</text>
+        <text x="842" y="354" text-anchor="middle" class="sub">useState · Effect · Memo</text>
+        <!-- 실제 DOM -->
+        <rect class="box" x="40" y="410" width="870" height="44" fill="var(--dom-soft)" stroke="var(--dom)"/>
+        <text x="475" y="437" text-anchor="middle">브라우저의 실제 DOM (Phase 1: #real-area · #test-area / Phase 2: #root)</text>
+      </g>
+    </svg>
+    </div>
+    <div class="legend">
+      <span style="--c: var(--p1)">Phase 1</span>
+      <span style="--c: var(--p2)">Phase 2 (점선 = stateless 로 감싸기)</span>
+      <span style="--c: var(--core)">core 엔진 (팀 공통, 이름 바꾸지 않기)</span>
+      <span style="--c: var(--dom)">실제 DOM</span>
+    </div>
+    <p class="note">core 안의 화살표는 대표 관계만 그렸습니다. 실제로는 <code>component.js</code>가 vdom · diff · patch · hooks를 모두 쓰고, <code>patch.js</code>도 vdom을 씁니다. 모든 컴포넌트는 <code>vdom.js</code>의 <code>h()</code>로 화면을 만듭니다.</p>
+  </section>
+
+  <!-- ② 계층: 위에서 아래로 책임이 나뉜다 -->
+  <section class="card" id="layers">
+    <h2>② 계층 — 책임 나누기</h2>
+    <p class="key">위 계층은 아래 계층만 씁니다. 아래 계층은 위를 모릅니다.</p>
+    <table>
+      <thead><tr><th style="width:18%">계층</th><th style="width:34%">파일</th><th>책임</th></tr></thead>
+      <tbody>
+        <tr><td><b>페이지</b></td><td><code>index.html</code> · <code>app.html</code></td><td>화면 뼈대와 스크립트 불러오기</td></tr>
+        <tr><td><b>시작점</b></td><td><code>phase1/main.js</code> · <code>app/main.js</code></td><td>버튼 연결 · 첫 렌더 · 바뀐 노드 강조</td></tr>
+        <tr><td><b>화면 로직</b></td><td><code>history.js</code> · <code>App.js</code> · <code>components/*</code></td><td>기록 관리 / 상태와 화면 정의 (Phase 1은 DOM을 직접 편집, Phase 2는 상태로 그림)</td></tr>
+        <tr><td><b>렌더링 엔진</b></td><td><code>component.js</code> · <code>hooks.js</code></td><td>컴포넌트 실행 · 상태 저장 · 렌더 예약 · 이벤트 위임 · effect 실행</td></tr>
+        <tr><td><b>DOM 엔진</b></td><td><code>vdom.js</code> · <code>diff.js</code> · <code>patch.js</code></td><td>DOM ↔ VDOM 변환 · 비교 · 바뀐 곳만 반영</td></tr>
+        <tr><td><b>브라우저</b></td><td>실제 DOM</td><td>화면에 그리기</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ③ Phase 1 데이터 흐름 -->
+  <section class="card" id="p1">
+    <h2>③ Phase 1 흐름 — 테스트 영역의 변경을 실제 영역으로</h2>
+    <p class="key">실제 영역은 <b>Patch로만</b> 바뀝니다. 테스트 영역은 마음대로 고치는 연습장입니다.</p>
+    <div class="grid3">
+      <div class="pane">
+        <h3>페이지를 열 때 · <code>init</code></h3>
+        <ol class="steps p1">
+          <li><b>실제 영역 → VDOM₀</b><small><code>containerToVdom</code> (들여쓰기 공백 제외)</small></li>
+          <li><b>VDOM₀ → 테스트 영역</b><small><code>createElement</code> + 소스 편집기 채우기</small></li>
+          <li><b>기록</b><small><code>history.push(VDOM₀)</code> "초기 상태"</small></li>
+        </ol>
+      </div>
+      <div class="pane">
+        <h3>Patch 버튼 · <code>onPatch</code></h3>
+        <ol class="steps p1">
+          <li><b>테스트 영역 → 새 VDOM</b><small><code>containerToVdom</code></small></li>
+          <li><b>비교</b><small><code>diff(history.peek(), 새 VDOM)</code> → 0개면 끝</small></li>
+          <li><b>실제 영역에 반영</b><small><code>patch(#real-area, 패치)</code> 실패하면 DOM 그대로</small></li>
+          <li><b>기록 · 점검</b><small><code>history.push</code> → 실제 영역 VDOM == 기록?</small></li>
+        </ol>
+      </div>
+      <div class="pane">
+        <h3>뒤로 · 앞으로 · <code>moveTo</code></h3>
+        <ol class="steps p1">
+          <li><b>대상 고르기</b><small><code>undo()</code> · <code>redo()</code> · <code>go(i)</code></small></li>
+          <li><b>실제 영역</b><small><code>patch(diff(지금, 대상))</code> 바뀐 부분만</small></li>
+          <li><b>테스트 영역</b><small>대상 VDOM으로 통째로 다시 그림</small></li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ④ Diff · Patch 내부 -->
+  <section class="card" id="diff">
+    <h2>④ Diff · Patch 내부</h2>
+    <p class="key">Diff는 계산만 하고, Patch는 "먼저 다 찾고 · 다 만들고 · 마지막에 한꺼번에" 적용합니다.</p>
+    <div class="grid2">
+      <div class="pane">
+        <h3>Diff — 노드 한 쌍의 판정 (<code>walk</code>)</h3>
+        <svg viewBox="0 0 440 330" role="img" aria-label="diff 판정 순서도">
+          <defs><marker id="a-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>
+          <g fill="none" stroke="var(--muted)" stroke-width="1.4">
+            <line x1="120" y1="44" x2="120" y2="80" marker-end="url(#a-g)"/>
+            <line x1="120" y1="120" x2="120" y2="156" marker-end="url(#a-g)"/>
+            <line x1="120" y1="196" x2="120" y2="232" marker-end="url(#a-g)"/>
+            <line x1="220" y1="24" x2="300" y2="24" marker-end="url(#a-g)"/>
+            <line x1="220" y1="100" x2="300" y2="100" marker-end="url(#a-g)"/>
+            <line x1="220" y1="176" x2="300" y2="176" marker-end="url(#a-g)"/>
+            <line x1="220" y1="252" x2="300" y2="252" marker-end="url(#a-g)"/>
+            <path d="M120 272 V 292 H 6 V 24 H 18" marker-end="url(#a-g)"/>
+          </g>
+          <g>
+            <rect x="20" y="4" width="200" height="40" rx="8" fill="var(--card)" stroke="var(--line)"/><text x="120" y="29" text-anchor="middle">① 새 쪽에 노드가 없나?</text>
+            <rect x="20" y="80" width="200" height="40" rx="8" fill="var(--card)" stroke="var(--line)"/><text x="120" y="105" text-anchor="middle">② 둘 다 텍스트인가?</text>
+            <rect x="20" y="156" width="200" height="40" rx="8" fill="var(--card)" stroke="var(--line)"/><text x="120" y="174" text-anchor="middle">③ 텍스트↔요소 또는</text><text x="120" y="189" text-anchor="middle">태그가 다른가?</text>
+            <rect x="20" y="232" width="200" height="40" rx="8" fill="var(--card)" stroke="var(--line)"/><text x="120" y="257" text-anchor="middle">④ 같은 태그</text>
+            <text x="230" y="18" class="sub">예</text><text x="230" y="94" class="sub">예</text><text x="230" y="170" class="sub">예</text>
+            <text x="126" y="66" class="sub">아니오</text><text x="126" y="142" class="sub">아니오</text><text x="126" y="218" class="sub">아니오</text>
+            <rect x="300" y="8" width="130" height="32" rx="6" fill="#fee2e2" stroke="#fca5a5"/><text x="365" y="29" text-anchor="middle" style="fill:#991b1b">REMOVE</text>
+            <rect x="300" y="84" width="130" height="32" rx="6" fill="#e0e7ff" stroke="#a5b4fc"/><text x="365" y="105" text-anchor="middle" style="fill:#3730a3">다르면 TEXT</text>
+            <rect x="300" y="160" width="130" height="32" rx="6" fill="#ffedd5" stroke="#fdba74"/><text x="365" y="181" text-anchor="middle" style="fill:#9a3412">REPLACE (멈춤)</text>
+            <rect x="300" y="236" width="130" height="32" rx="6" fill="#fef9c3" stroke="#fde047"/><text x="365" y="257" text-anchor="middle" style="fill:#854d0e">속성 차이 → PROPS</text>
+            <text x="128" y="300" class="sub">⑤ 자식을 인덱스 순서로 짝지어 ①부터 반복</text>
+            <text x="128" y="316" class="sub">   (새 쪽에만 있는 자식 → CREATE)</text>
+          </g>
+        </svg>
+      </div>
+      <div class="pane">
+        <h3>Patch — 3단계 (<code>patch</code>)</h3>
+        <ol class="steps p2" style="--c: var(--core)">
+          <li><b>① 대상 찾기</b><small>모든 패치의 노드를 경로(<code>[2, 0]</code>)로 <u>먼저</u> 찾아 둠. 노드가 없으면 <code>TypeError</code></small></li>
+          <li><b>② 새 DOM 미리 만들기</b><small>CREATE · REPLACE에 넣을 노드를 <code>createElement</code>로. 잘못된 태그면 <code>TypeError</code></small></li>
+          <li><b>③ 한꺼번에 적용</b><small>여기부터는 실패할 일이 없는 DOM 조작만</small></li>
+        </ol>
+        <div class="rule"><b>①②에서 실패하면 실제 DOM은 전혀 바뀌지 않습니다.</b><br><span class="note">경로는 이전 트리 기준이라, 먼저 지우면 뒤 번호가 당겨집니다 → 그래서 ①을 먼저 합니다.</span></div>
+        <h3>패치 5종류</h3>
+        <p>
+          <span class="tag t-create">CREATE</span>부모 끝에 붙이기
+          <span class="tag t-remove">REMOVE</span>지우기
+          <span class="tag t-replace">REPLACE</span>바꿔 끼우기<br>
+          <span class="tag t-text">TEXT</span>글자만 (노드 재사용)
+          <span class="tag t-props">PROPS</span>속성만 (노드 재사용)
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ⑤ Phase 2 렌더 사이클 -->
+  <section class="card" id="p2">
+    <h2>⑤ Phase 2 렌더 사이클 — 클릭에서 화면까지</h2>
+    <p class="key">setState는 바로 그리지 않고 <b>예약</b>만 합니다. 핸들러가 끝나면 한 번에 그립니다(Batching).</p>
+    <div class="scroll">
+    <svg viewBox="0 0 980 300" role="img" aria-label="렌더 사이클 도식">
+      <defs><marker id="a-c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--p2)"/></marker></defs>
+      <!-- 위 줄: 사용자 → setState → 예약 → flush -->
+      <g fill="none" stroke="var(--p2)" stroke-width="1.6">
+        <line x1="160" y1="50" x2="198" y2="50" marker-end="url(#a-c)"/>
+        <line x1="360" y1="50" x2="398" y2="50" marker-end="url(#a-c)"/>
+        <line x1="560" y1="50" x2="598" y2="50" marker-end="url(#a-c)"/>
+        <line x1="760" y1="50" x2="798" y2="50" marker-end="url(#a-c)"/>
+        <path d="M880 74 V 140 H 870" marker-end="url(#a-c)"/>
+        <!-- 아래 줄: 오른쪽 → 왼쪽 -->
+        <line x1="800" y1="164" x2="762" y2="164" marker-end="url(#a-c)"/>
+        <line x1="600" y1="164" x2="562" y2="164" marker-end="url(#a-c)"/>
+        <line x1="400" y1="164" x2="362" y2="164" marker-end="url(#a-c)"/>
+        <line x1="200" y1="164" x2="162" y2="164" marker-end="url(#a-c)"/>
+        <!-- 다시 사용자로 -->
+        <path d="M80 188 V 250 H 20 V 50 H 0" stroke-dasharray="5 4" marker-end="none"/>
+      </g>
+      <g>
+        <rect x="0" y="26" width="160" height="48" rx="10" fill="var(--dom-soft)" stroke="var(--dom)"/><text x="80" y="47" text-anchor="middle">사용자 클릭 · 입력</text><text x="80" y="64" text-anchor="middle" class="sub">#root 에서 받음 (위임)</text>
+        <rect x="200" y="26" width="160" height="48" rx="10" fill="var(--p2-soft)" stroke="var(--p2)"/><text x="280" y="47" text-anchor="middle">핸들러 → setState</text><text x="280" y="64" text-anchor="middle" class="sub">같은 값이면 여기서 끝</text>
+        <rect x="400" y="26" width="160" height="48" rx="10" fill="var(--p2-soft)" stroke="var(--p2)"/><text x="480" y="47" text-anchor="middle">scheduleUpdate</text><text x="480" y="64" text-anchor="middle" class="sub">queueMicrotask 1번만</text>
+        <rect x="600" y="26" width="160" height="48" rx="10" fill="var(--p2-soft)" stroke="var(--p2)"/><text x="680" y="47" text-anchor="middle">flush</text><text x="680" y="64" text-anchor="middle" class="sub">50번 연속이면 멈춤</text>
+        <rect x="800" y="26" width="160" height="48" rx="10" fill="var(--p2-soft)" stroke="var(--p2)"/><text x="880" y="47" text-anchor="middle">update()</text><text x="880" y="64" text-anchor="middle" class="sub">렌더 한 번 시작</text>
+
+        <rect x="800" y="140" width="160" height="48" rx="10" fill="var(--p2-soft)" stroke="var(--p2)"/><text x="880" y="161" text-anchor="middle">1. render()</text><text x="880" y="178" text-anchor="middle" class="sub">App() 다시 실행 → 새 VDOM</text>
+        <rect x="600" y="140" width="160" height="48" rx="10" fill="var(--core-soft)" stroke="var(--core)"/><text x="680" y="161" text-anchor="middle">2. diff()</text><text x="680" y="178" text-anchor="middle" class="sub">이전 ↔ 새 (Phase 1)</text>
+        <rect x="400" y="140" width="160" height="48" rx="10" fill="var(--core-soft)" stroke="var(--core)"/><text x="480" y="161" text-anchor="middle">3. patch()</text><text x="480" y="178" text-anchor="middle" class="sub">바뀐 노드만 (Phase 1)</text>
+        <rect x="200" y="140" width="160" height="48" rx="10" fill="var(--p2-soft)" stroke="var(--p2)"/><text x="280" y="161" text-anchor="middle">4. commit()</text><text x="280" y="178" text-anchor="middle" class="sub">VDOM · 핸들러 표 교체</text>
+        <rect x="0" y="140" width="160" height="48" rx="10" fill="var(--p2-soft)" stroke="var(--p2)"/><text x="80" y="161" text-anchor="middle">5. runEffects()</text><text x="80" y="178" text-anchor="middle" class="sub">deps 바뀐 effect</text>
+
+        <text x="30" y="242" class="sub">↺ 다음 입력을 기다림</text>
+        <rect x="200" y="222" width="760" height="58" rx="10" fill="none" stroke="var(--bad)" stroke-dasharray="5 4"/>
+        <text x="216" y="245" style="fill:var(--bad)">1~3에서 오류가 나면 (guard)</text>
+        <text x="216" y="265" class="sub">실제 DOM은 그대로 · 그 렌더에서 예약된 effect 취소 · 오류를 다시 던짐</text>
+      </g>
+    </svg>
+    </div>
+    <p class="note">처음 실행(<code>mount</code>)은 2~3 대신 노드를 모두 만든 뒤 <code>replaceChildren</code>으로 한 번에 넣습니다.</p>
+  </section>
+
+  <!-- ⑥ Hooks 저장 구조 -->
+  <section class="card" id="hooks">
+    <h2>⑥ Hooks 저장 구조 — 상태는 어디에 남나</h2>
+    <p class="key">함수는 매번 새로 실행되지만, 값은 인스턴스의 <code>hooks</code> 배열에 남습니다. Hook은 <b>불린 순서</b>로 칸을 찾습니다.</p>
+    <div class="grid2">
+      <div class="pane">
+        <h3>App() 실행 (렌더마다 새로)</h3>
+<pre>prepareHooks(app)        // current = app, hookIndex = 0
+useState(loadTodos)      // → hooks[0]
+useState("")             // → hooks[1]
+…                        // state 10개
+useMemo(통계, [todos])    // → hooks[10]
+useMemo(보이는 목록, …)   // → hooks[11]
+useEffect(저장, [todos])  // → hooks[12]
+…                        // effect 4개
+finishHooks()            // 개수 16개 그대로인지 확인</pre>
+      </div>
+      <div class="pane">
+        <h3>FunctionComponent 인스턴스 (계속 살아 있음)</h3>
+        <table>
+          <thead><tr><th>칸</th><th>kind</th><th>저장하는 것</th></tr></thead>
+          <tbody>
+            <tr><td>0 ~ 9</td><td><code>state</code></td><td><code>value</code> · <code>setState</code>(한 번만 만듦)</td></tr>
+            <tr><td>10 ~ 11</td><td><code>memo</code></td><td><code>value</code> · <code>deps</code></td></tr>
+            <tr><td>12 ~ 15</td><td><code>effect</code></td><td><code>callback</code> · <code>deps</code> · <code>cleanup</code> · <code>pending</code></td></tr>
+          </tbody>
+        </table>
+        <div class="rule">순서가 바뀌면 남의 칸을 읽습니다 → 종류가 다르거나 개수가 달라지면 <b>오류</b>. 자식(<code>stateless</code>) 안에서 Hook을 불러도 <b>오류</b>.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ⑦ 이벤트 연결 -->
+  <section class="card" id="event">
+    <h2>⑦ 이벤트 연결 — VDOM 형식을 지키면서 함수 연결</h2>
+    <p class="key">함수는 표에 넣고, VDOM 속성에는 <b>번호만</b> 남깁니다. 그래서 diff · patch는 함수를 모릅니다.</p>
+    <div class="grid3">
+      <div class="pane">
+        <h3>1. 컴포넌트가 돌려준 것</h3>
+<pre>h("button",
+  { class: "btn",
+    onClick: () => … },
+  "+1")</pre>
+      </div>
+      <div class="pane">
+        <h3>2. extractHandlers 뒤</h3>
+<pre>VDOM:  { type: "button",
+         props: { class: "btn",
+           "data-on-click": "0" } }
+표:    "0" → { type: "click", fn }</pre>
+      </div>
+      <div class="pane">
+        <h3>3. 클릭이 일어나면</h3>
+        <ol class="steps p2">
+          <li><b>#root 리스너가 받음</b><small>종류마다 리스너 1개</small></li>
+          <li><b>위로 올라가며 찾기</b><small><code>data-on-click</code>이 있는 요소</small></li>
+          <li><b>표에서 함수 실행</b><small>항상 최신 렌더의 표</small></li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ⑧ 자료구조 -->
+  <section class="card" id="data">
+    <h2>⑧ 자료구조</h2>
+    <p class="key">엔진이 주고받는 모양은 이 다섯 가지가 전부입니다.</p>
+    <div class="grid2">
+      <div class="pane">
+        <h3>VNode (팀 공통)</h3>
+<pre>{ type: "div",             // 태그 (소문자)
+  props: { id: "box" },     // HTML 속성 그대로
+  children: [ VNode | "글자" ] }
+"글자"                       // 텍스트 노드는 문자열</pre>
+        <h3>루트 VNode (컨테이너)</h3>
+<pre>{ type: "div", props: {}, children: [ …영역 안 내용 ] }</pre>
+      </div>
+      <div class="pane">
+        <h3>Patch (diff 결과)</h3>
+<pre>{ type: "CREATE",  path: [1], index: 2, node }
+{ type: "REMOVE",  path: [0, 2] }
+{ type: "REPLACE", path: [2], node }
+{ type: "TEXT",    path: [0, 0], value: "반가워" }
+{ type: "PROPS",   path: [0],
+  set: { class: "big" }, remove: ["title"] }</pre>
+        <p class="note"><code>path</code> = 루트에서 대상까지 자식 번호. 항상 <b>이전</b> 트리 기준.</p>
+      </div>
+      <div class="pane">
+        <h3>History 기록</h3>
+<pre>stack = [ { vdom, patchCount, label, time }, … ]
+index = 지금 위치 (-1 = 비어 있음)</pre>
+        <p class="note">넣고 꺼낼 때 <code>structuredClone</code>으로 깊은 복사. 읽기만 하면 <code>peek()</code>.</p>
+      </div>
+      <div class="pane">
+        <h3>FunctionComponent</h3>
+<pre>hooks            [ {kind, …}, … ]   상태 저장소
+vdom             마지막으로 반영한 VDOM
+handlers         Map("0" → {type, fn})
+listenedEvents   리스너를 단 이벤트 종류
+updateScheduled  렌더 예약 여부</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ⑨ 규칙 -->
+  <section class="card" id="rules">
+    <h2>⑨ 지켜야 할 규칙 (설계가 깨지지 않는 조건)</h2>
+    <table>
+      <thead><tr><th style="width:36%">규칙</th><th>지키지 않으면</th></tr></thead>
+      <tbody>
+        <tr><td>읽기(<code>domToVdom</code>)와 패치(<code>patch</code>)는 <b>같은 공백 규칙</b>으로 자식을 센다</td><td>"n번째 자식"이 서로 다른 노드를 가리켜 엉뚱한 곳을 고침</td></tr>
+        <tr><td>Phase 1 실제 영역에는 <b>클래스 · 속성을 붙이지 않는다</b></td><td>실제 DOM이 기록과 달라져 다음 diff가 틀어짐</td></tr>
+        <tr><td>patch는 <b>찾기 · 만들기를 먼저</b> 끝내고 적용한다</td><td>중간에 실패하면 화면이 반쯤만 바뀜</td></tr>
+        <tr><td>Hook은 <b>루트에서, 매번 같은 순서로</b> 부른다</td><td>다른 칸을 읽어 상태가 뒤섞임 (이 구현은 오류로 막음)</td></tr>
+        <tr><td>VDOM에는 <b>함수를 넣지 않는다</b> (이벤트는 번호로)</td><td>diff · patch · 검사가 함수를 처리하지 못함</td></tr>
+        <tr><td>렌더 중에는 <b>setState를 부르지 않는다</b></td><td>렌더가 끝없이 이어짐 (오류로 막음)</td></tr>
+        <tr><td><code>core/</code>의 파일 · 함수 이름은 <b>바꾸지 않는다</b> (팀 규칙)</td><td>코드리뷰 때 팀원 코드와 1:1 비교가 안 됨</td></tr>
+      </tbody>
+    </table>
+  </section>
+</main>
+</body>
+</html>
