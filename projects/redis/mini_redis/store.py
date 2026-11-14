@@ -28,6 +28,7 @@
 #   shortcut: 락 하나가 병목이 되면(초당 수만 요청) 칸 범위별로 락을 나눈다
 
 import math
+import sys
 import threading
 import time
 
@@ -62,9 +63,9 @@ class MiniRedis:
 
     # 값 조회. 없거나 만료됐으면 None (만료된 값은 절대 돌려주지 않음)
     # 값으로 None 을 저장한 경우와 "없음" 은 exists 로 구별한다
+    # get_with_ttl 의 값 부분 (만료 확인 · 지연 삭제 · 락은 그쪽이 한다)
     def get(self, key):
-        with self._lock:
-            return self._data.get(key) if self._alive(key) else None
+        return self.get_with_ttl(key)[0]
 
     # 값과 남은 만료 시간을 "한 번에" 조회 → (값, ttl). 없거나 만료됐으면 (None, -2)
     # get 과 ttl 을 따로 부르면 그 사이에 다른 요청이 끼어 "값은 있는데 ttl 은 -2" 같은 어긋난 조합이 나온다 (서버 GET 이 사용)
@@ -96,22 +97,19 @@ class MiniRedis:
             self._expires.set(key, self._clock() + ttl)
             return True
 
-    # 남은 만료 시간(초). 만료 없음 = -1, 키 없음 = -2 (실제 Redis 규칙)
+    # 남은 만료 시간(초). 만료 없음 = -1, 키 없음 = -2 (실제 Redis 규칙) — get_with_ttl 의 ttl 부분
     def ttl(self, key):
-        with self._lock:
-            return self._ttl_left(key) if self._alive(key) else -2
+        return self.get_with_ttl(key)[1]
 
     # 만료된 키를 메모리에서 정리하고 지운 개수 반환 (서버가 주기적으로 호출)
     # shortcut: 만료 키를 전부 훑는다(O(만료 키 수)). 수십만 개가 되면 실제 Redis 처럼 무작위 20개 표본 검사로 바꾼다
     def sweep(self):
         with self._lock:
             now = self._clock()  # 한 번만 읽어 같은 기준 시각으로 판단한다
-            removed = 0
-            for key in self._expires.keys():  # keys() 는 복사본이라 돌면서 지워도 안전
-                if self._expires.get(key) <= now:
-                    self._remove(key)
-                    removed += 1
-            return removed
+            expired = [key for key in self._expires.keys() if self._expires.get(key) <= now]  # 먼저 다 모은 뒤 지운다
+            for key in expired:
+                self._remove(key)
+            return len(expired)
 
     # 스냅샷용: 만료되지 않은 모든 키 → [(키, 값, 남은 초 또는 None)] (persistence.save_snapshot 이 사용, 김건희 님 브랜치와 같음)
     # 락 하나 안에서 한 번에 찍어서, 저장 도중 다른 요청이 끼어들어도 "한 시점의 사진" 이 된다.
@@ -159,11 +157,9 @@ class MiniRedis:
 # ttl 은 MIN_TTL 이상의 유한한 숫자(초)만 받는다 — 정수 · 소수 모두 (dev 와 같은 규칙).
 # 0 · 음수 · NaN · Infinity · 문자열 · None → ValueError (서버가 400 으로 바꾼다).
 # True 는 파이썬에서 int 의 한 종류(= 1)라 따로 막는다 — 그냥 두면 1초 ttl 로 들어간다
+# 범위 비교 한 번이 나머지를 모두 거른다:
+#   NaN 은 어떤 비교도 False · Infinity 는 float 최댓값보다 큼 ·
+#   9999...(수백 자리) 같은 너무 큰 정수도 최댓값보다 큼 (파이썬은 int 와 float 를 정확히 비교한다 — 그대로 두면 "지금 + ttl" 에서 OverflowError)
 def _check_ttl(ttl):
-    valid = not isinstance(ttl, bool) and isinstance(ttl, (int, float))
-    try:
-        valid = valid and math.isfinite(ttl) and ttl >= MIN_TTL
-    except OverflowError:  # 9999...(수백 자리) 같은 너무 큰 정수는 float 로 못 바꿔 isfinite 가 OverflowError 를 낸다
-        valid = False
-    if not valid:
+    if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not MIN_TTL <= ttl <= sys.float_info.max:
         raise ValueError(f"ttl은 {MIN_TTL}초 이상의 유한한 숫자여야 합니다")

@@ -5,6 +5,7 @@
 #   입력 검사 : 잘못된 JSON · NaN · 너무 깊은 중첩 · 짝 없는 반쪽 문자 · 객체가 아닌 본문 · null 값 · 잘못된 ttl · Content-Length 없음 · 1MB 초과 · 보내다 멈춘 클라이언트(408)
 #   키        : 한글 · "/" 가 든 키(URL 인코딩), 빈 키
 #   그 밖     : GET 응답의 ttl · 소수 ttl, /health, 405(PATCH · OPTIONS 포함) · 404 경로, 500 뒤에도 서버가 계속 동작, 주기 삭제, 여러 스레드 동시 요청
+#   연결      : HTTP/1.1 연결 재사용(keep-alive), 본문을 읽지 않은 응답 뒤에는 연결을 닫음
 #
 # 실제 서버를 빈 포트(port=0)에 띄우고 http.client 로 요청한다 (헤더 · 본문을 마음대로 만들 수 있게)
 
@@ -264,6 +265,43 @@ class ServerTest(unittest.TestCase):
             th.join()
         self.assertEqual(errors, [])
         self.assertTrue(all(self.store.get(f"burst{t}") == t for t in range(50)))
+
+    # ── 연결 재사용 (HTTP/1.1 keep-alive) ─────────────────────────────
+
+    def test_keep_alive_reuses_one_connection(self):
+        # 연결 하나로 저장 · 조회 · 오류 · 삭제를 이어서 보낸다 → 매번 같은 소켓, 서버가 닫지 않음
+        # 본문을 끝까지 읽은 뒤의 오류(잘못된 JSON → 400)도 연결을 끊지 않는다
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        self.addCleanup(conn.close)
+        steps = [
+            ("PUT", "/keys/ka", b'{"value": 1}', 200),
+            ("GET", "/keys/ka", None, 200),
+            ("PUT", "/keys/ka", b"{", 400),
+            ("GET", "/keys/ka/ttl", None, 200),
+            ("DELETE", "/keys/ka", None, 200),
+            ("GET", "/keys/ka", None, 404),
+        ]
+        sock = None
+        for method, path, body, status in steps:
+            conn.request(method, path, body=body)
+            res = conn.getresponse()
+            res.read()
+            self.assertEqual((res.status, res.will_close), (status, False), (method, path))
+            sock = sock or conn.sock
+            self.assertIs(conn.sock, sock, "같은 연결을 다시 써야 한다")
+
+    def test_unread_body_closes_connection(self):
+        # 본문(hello)을 읽지 않고 405 로 답한 뒤 연결을 닫는다. 닫지 않으면 "hello" 가 뒤에 붙여 보낸 GET 과 합쳐져
+        # "helloGET /health …" 라는 엉뚱한 요청으로 읽혀 응답이 하나 더 나간다
+        with socket.create_connection(("127.0.0.1", self.port)) as c:
+            c.settimeout(5)
+            c.sendall(b"POST /keys/a HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello" + b"GET /health HTTP/1.1\r\nHost: x\r\n\r\n")
+            data = b""
+            while chunk := c.recv(4096):  # 서버가 닫을 때까지 전부 받는다
+                data += chunk
+        self.assertEqual(data.count(b"HTTP/1.1 "), 1, data)
+        self.assertIn(b" 405 ", data)
+        self.assertIn(b"Connection: close", data)
 
 
 if __name__ == "__main__":

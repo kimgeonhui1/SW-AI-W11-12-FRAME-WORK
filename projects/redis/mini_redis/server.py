@@ -27,6 +27,7 @@
 
 import argparse
 import json
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote
@@ -50,59 +51,67 @@ class ApiError(Exception):
 
 
 class Handler(BaseHTTPRequestHandler):
-    # 요청 하나마다 Handler 객체가 새로 만들어진다. 저장소는 self.server.store 로 함께 쓴다
+    # 연결 하나마다 Handler 객체가 새로 만들어진다. 저장소는 self.server.store 로 함께 쓴다
+    #
+    # HTTP/1.1 = 연결 재사용(keep-alive): 클라이언트가 연결을 닫지 않으면 같은 연결로 다음 요청을 계속 받는다.
+    #   HTTP/1.0(표준 라이브러리 기본값)이면 요청마다 TCP 연결 + 스레드를 새로 만들어, 요청 한 번(약 170µs)의 대부분이 그 비용이었다.
+    #   연결을 재사용하는 클라이언트(http.client · requests.Session · 브라우저 fetch)는 그 비용이 사라진다.
+    #   urlopen 처럼 "Connection: close" 를 보내는 클라이언트는 예전처럼 요청마다 끊긴다.
+    #   쉬는 연결은 REQUEST_TIMEOUT 동안 다음 요청이 없으면 서버가 닫는다 (연결마다 스레드 하나를 쥐고 있으므로).
+    protocol_version = "HTTP/1.1"
 
     # 연결마다 소켓 읽기 제한 시간을 정한다. 클래스 속성(timeout = ...)으로 두면 import 때 한 번만 읽혀서
     # 나중에 REQUEST_TIMEOUT 을 바꿔도 적용되지 않는다 → 연결이 올 때마다 모듈 값을 읽는다
     def setup(self):
         self.timeout = REQUEST_TIMEOUT
         super().setup()
-
-    def do_GET(self):
-        self._handle("GET")
-
-    def do_PUT(self):
-        self._handle("PUT")
-
-    def do_DELETE(self):
-        self._handle("DELETE")
-
-    def do_POST(self):
-        self._handle("POST")
-
-    # 표준 라이브러리 기본값이면 HTML 501 로 답하는 메서드도 JSON 405 로 (모든 응답은 JSON 이라는 약속)
-    def do_PATCH(self):
-        self._handle("PATCH")
-
-    def do_OPTIONS(self):
-        self._handle("OPTIONS")
+        # 응답은 헤더 · 본문을 두 번에 나눠 쓴다. Nagle 알고리즘은 앞 조각의 ACK 가 올 때까지 뒤 조각을 붙잡고,
+        # 클라이언트는 응답이 다 와야 ACK 를 보내므로(지연 ACK) 연결을 재사용하면 요청마다 최대 40ms 씩 멈출 수 있다 (Linux).
+        # → 작은 조각도 바로 보낸다. 실제 Redis 도 연결마다 TCP_NODELAY 를 켠다
+        self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
     # 모든 응답을 여기서 한 번에 보낸다 — 예상한 오류(ApiError)도, 예상 못 한 오류(500)도 JSON 으로
-    def _handle(self, method):
+    # 메서드 이름(GET · PUT …)은 표준 라이브러리가 요청 줄에서 읽어 self.command 에 넣어 둔다
+    def _handle(self):
+        self._body_read = False  # _read_json 이 본문을 끝까지 읽으면 True
         try:
-            status, body = self._route(method)
+            status, body = self._route(self.command)
         except ApiError as e:
             status, body = e.status, {"error": str(e)}
         except Exception:  # 예상 못 한 오류에도 이 요청의 스레드만 500 으로 끝나고 서버는 계속 돈다
             status, body = 500, {"error": "서버 내부 오류"}
+        # 본문이 있는 요청인데 읽지 않고 답하면(405 · 404 · Content-Length 오류 · 408 · chunked …) 남은 본문이
+        # 같은 연결의 "다음 요청" 으로 읽혀 엉뚱한 응답이 나간다 → 이 응답을 끝으로 연결을 닫는다 (HTTP/1.1 이라 생긴 일)
+        if not self._body_read and (self.headers.get("Transfer-Encoding") or self.headers.get("Content-Length", "0").strip() != "0"):
+            self.close_connection = True
         self._send(status, body)
+
+    # 표준 라이브러리는 "do_" + 메서드 이름 함수를 부른다 → 모두 _handle 한 곳으로.
+    # PATCH · OPTIONS 도 받는 이유: 기본값이면 HTML 501 로 답하는데, 모든 응답은 JSON 이라는 약속을 지켜 405 JSON 으로 답하려고
+    do_GET = do_PUT = do_DELETE = do_POST = do_PATCH = do_OPTIONS = _handle
 
     # 경로 · 메서드 → 저장소 명령. (상태 코드, 응답 본문) 을 돌려준다
     def _route(self, method):
         path = self.path.split("?", 1)[0]  # ?뒤 쿼리는 쓰지 않는다
         parts = [unquote(p) for p in path.split("/")[1:]]  # "/keys/a%2Fb/ttl" → ["keys", "a/b", "ttl"]
         store = self.server.store
+
+        # 경로는 맞는데 메서드가 다르면 405. 문구는 허용 메서드를 이은 것 ("GET / PUT / DELETE만 지원합니다" — dev 와 같은 문구)
+        def allow(*methods):
+            if method not in methods:
+                raise ApiError(405, f"{' / '.join(methods)}만 지원합니다")
+
         if parts == ["health"]:  # 상태 확인 — 저장된 키 수 (아직 sweep 안 된 만료 키 포함)
-            if method != "GET":
-                raise ApiError(405, "GET만 지원합니다")
+            allow("GET")
             return 200, {"keys": len(store)}
-        if len(parts) not in (2, 3) or parts[0] != "keys":
+        # 경로는 /keys/{key} · /keys/{key}/ttl · /keys/{key}/expire 셋뿐.
+        # /keys/ 처럼 빈 키도 없는 경로로 본다 (dev 와 같음). 저장소 자체는 빈 키도 받는다
+        if len(parts) not in (2, 3) or parts[0] != "keys" or parts[1] == "" or parts[2:] not in ([], ["ttl"], ["expire"]):
             raise ApiError(404, "없는 경로입니다")
         key = parts[1]
-        if key == "":  # /keys/ 처럼 빈 키는 없는 경로로 본다 (dev 와 같음). 저장소 자체는 빈 키도 받는다
-            raise ApiError(404, "없는 경로입니다")
 
         if len(parts) == 2:  # /keys/{key}
+            allow("GET", "PUT", "DELETE")
             if method == "GET":
                 # 값과 ttl 을 락 하나 안에서 함께 읽는다 (따로 읽으면 사이에 끼어든 요청 때문에 둘이 어긋날 수 있다)
                 value, ttl = store.get_with_ttl(key)
@@ -115,23 +124,17 @@ class Handler(BaseHTTPRequestHandler):
                     raise ApiError(400, "value가 필요합니다 (null은 저장할 수 없습니다)")
                 self._call(store.set, key, body["value"], body.get("ttl"))
                 return 200, {"ok": True}
-            if method == "DELETE":
-                return 200, {"deleted": store.delete(key)}
-            raise ApiError(405, "GET / PUT / DELETE만 지원합니다")  # 경로는 맞는데 메서드가 다름
+            return 200, {"deleted": store.delete(key)}  # DELETE (allow 를 지났으므로 남은 것은 이것뿐)
         if parts[2] == "ttl":  # /keys/{key}/ttl
-            if method == "GET":
-                return 200, {"ttl": store.ttl(key)}
-            raise ApiError(405, "GET만 지원합니다")
-        if parts[2] == "expire":  # /keys/{key}/expire
-            if method == "POST":
-                body = self._read_json()
-                if "ttl" not in body:
-                    raise ApiError(400, "ttl이 필요합니다")
-                if not self._call(store.expire, key, body["ttl"]):
-                    raise ApiError(404, "키가 없습니다")
-                return 200, {"ok": True}
-            raise ApiError(405, "POST만 지원합니다")
-        raise ApiError(404, "없는 경로입니다")
+            allow("GET")
+            return 200, {"ttl": store.ttl(key)}
+        allow("POST")  # /keys/{key}/expire
+        body = self._read_json()
+        if "ttl" not in body:
+            raise ApiError(400, "ttl이 필요합니다")
+        if not self._call(store.expire, key, body["ttl"]):
+            raise ApiError(404, "키가 없습니다")
+        return 200, {"ok": True}
 
     # 저장소 명령 실행. 잘못된 ttl 로 ValueError 가 나면 400 (ttl 규칙은 store 한 곳에서만 관리한다)
     def _call(self, fn, *args):
@@ -142,34 +145,33 @@ class Handler(BaseHTTPRequestHandler):
 
     # 요청 본문을 읽어 JSON 객체(dict)로 돌려준다. 잘못되면 ApiError
     def _read_json(self):
-        length = self.headers.get("Content-Length")
+        length = self.headers.get("Content-Length", "")
         # 없거나 숫자가 아님(음수 포함). isascii: "²" 처럼 isdigit() 은 True 인데 int() 는 실패하는 글자를 막는다
-        if length is None or not (length.isascii() and length.isdigit()):
+        if not (length.isascii() and length.isdigit()):
             raise ApiError(400, "Content-Length가 올바르지 않습니다")
-        if int(length) > MAX_BODY:
-            self._discard(int(length))
+        length = int(length)
+        if length > MAX_BODY:
+            self._discard(length)
             self.close_connection = True  # 남은 본문이 다음 요청으로 읽히지 않게 연결을 닫는다
             raise ApiError(413, "요청 본문이 너무 큽니다 (최대 1MB)")
         try:
-            raw = self.rfile.read(int(length))
+            raw = self.rfile.read(length)
         except TimeoutError:
             raise ApiError(408, "요청 본문을 제한 시간 안에 다 받지 못했습니다")
+        self._body_read = True  # 여기부터 오류가 나도 본문은 다 읽었으므로 연결을 계속 쓸 수 있다
         try:
             # NaN · Infinity 는 파이썬 json 이 받아 주지만 표준 JSON 이 아니라 다른 언어 클라이언트가 응답을 못 읽는다 → 거부
             body = json.loads(raw, parse_constant=_reject_constant)
+            if not isinstance(body, dict):
+                raise ApiError(400, "본문은 JSON 객체({...})여야 합니다")  # ApiError 는 아래 except 들에 걸리지 않고 그대로 나간다
+            # 응답으로 다시 쓸 수 없는 값은 저장 전에 거부한다 (저장은 됐는데 조회 때 500 · 끊김이 되지 않게) — 지금 한 번 써 본다
+            json.dumps(body, ensure_ascii=False).encode("utf-8")
+        except RecursionError:  # 아주 깊게 중첩된 값([[[[...]]]]) — 파이썬 버전에 따라 읽을 때, 또는 다시 쓸 때(3.14) 이 오류
+            raise ApiError(400, "JSON이 너무 깊게 중첩되어 있습니다")
+        except UnicodeEncodeError:  # 짝 없는 반쪽 문자("\ud800") — JSON 문법으로는 통과하지만 UTF-8 로 못 바꾼다 (ValueError 의 한 종류라 그보다 먼저)
+            raise ApiError(400, "UTF-8로 표현할 수 없는 문자(짝 없는 서로게이트)가 들어 있습니다")
         except ValueError:  # JSONDecodeError · UnicodeDecodeError · _reject_constant 모두 ValueError 계열
             raise ApiError(400, "본문이 올바른 JSON이 아닙니다 (NaN / Infinity 불가)")
-        except RecursionError:  # 파이썬 버전에 따라 읽을 때 재귀 한도를 넘기도 한다
-            raise ApiError(400, "JSON이 너무 깊게 중첩되어 있습니다")
-        if not isinstance(body, dict):
-            raise ApiError(400, "본문은 JSON 객체({...})여야 합니다")
-        # 응답으로 다시 쓸 수 없는 값은 저장 전에 거부한다 (저장은 됐는데 조회 때 500 · 끊김이 되지 않게) — 지금 한 번 써 본다
-        try:
-            json.dumps(body, ensure_ascii=False).encode("utf-8")
-        except RecursionError:  # 아주 깊게 중첩된 값([[[[...]]]]) — Python 3.14 는 읽기는 되는데 다시 쓸 때 이 오류
-            raise ApiError(400, "JSON이 너무 깊게 중첩되어 있습니다")
-        except UnicodeEncodeError:  # 짝 없는 반쪽 문자("\ud800") — JSON 문법으로는 통과하지만 UTF-8 로 못 바꾼다
-            raise ApiError(400, "UTF-8로 표현할 수 없는 문자(짝 없는 서로게이트)가 들어 있습니다")
         return body
 
     # 너무 큰 본문을 응답 전에 읽어서 버린다 (최대 MAX_DISCARD).
@@ -179,10 +181,8 @@ class Handler(BaseHTTPRequestHandler):
     def _discard(self, length):
         left = min(length, MAX_DISCARD)
         try:
-            while left > 0:
-                chunk = self.rfile.read(min(left, 64 * 1024))
-                if not chunk:  # 클라이언트가 보내기를 멈추고 연결을 닫음
-                    break
+            # 64KB 씩 읽는다 (한 번에 16MB 를 읽으면 그만큼 메모리를 잡는다). 빈 조각 = 클라이언트가 보내기를 멈추고 연결을 닫음
+            while left > 0 and (chunk := self.rfile.read(min(left, 64 * 1024))):
                 left -= len(chunk)
         except TimeoutError:  # 보내다 멈춘 클라이언트 — 기다리지 않고 바로 413
             pass
@@ -195,7 +195,9 @@ class Handler(BaseHTTPRequestHandler):
             data = json.dumps(body).encode("ascii")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Length", str(len(data)))  # HTTP/1.1 에서 클라이언트가 응답 끝을 아는 방법 (연결이 안 끊기므로 필수)
+        if self.close_connection:
+            self.send_header("Connection", "close")  # 이 응답 뒤 닫는다고 알려야 클라이언트가 이 연결로 다음 요청을 보내지 않는다
         self.end_headers()
         self.wfile.write(data)
 

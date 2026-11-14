@@ -59,11 +59,16 @@ class GuiServerTest(unittest.TestCase):
         root = PAGE.parent.parent  # projects/redis
         server_src = (root / "mini_redis/server.py").read_text(encoding="utf-8") + (root / "mini_redis/store.py").read_text(encoding="utf-8")
         expected = set(re.findall(r'\{ error: "([^"]+)" \}', page))
-        expected |= set(re.findall(r'\["[A-Z]+", "/[^"]*", "([^"]+)"\]', page))  # 405 표의 문구
         self.assertGreater(len(expected), 5)
         for message in expected:
             # store 의 ttl 문구는 f-string 이라 {MIN_TTL} 을 실제 값으로 바꿔 비교한다
             self.assertTrue(message in server_src or message.replace("0.001", "{MIN_TTL}") in server_src, message)
+        # 405 표: 서버가 허용 메서드를 이어 문구를 만들므로(allow) 소스 글자가 아니라 실제로 보내서 응답 문구를 비교한다
+        cases = re.findall(r'\["([A-Z]+)", "(/[^"]*)", "([^"]+)"\]', page)
+        self.assertGreater(len(cases), 3)
+        for method, path, message in cases:
+            status, _, data = self.request(method, path)
+            self.assertEqual((status, json.loads(data)), (405, {"error": message}), (method, path))
 
 
 if __name__ == "__main__":
