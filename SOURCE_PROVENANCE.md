@@ -10,7 +10,7 @@
 
 ## 이후 변경 (2026-11-16, `feat/poker-ui`)
 
-방 대전 화면(`room.html`)의 테이블을 CSS 3D로 바꿨습니다. 이 변경은 위 공유 준비 이후의 것이며 실행 소스의 화면 동작을 바꿉니다. 서버·엔진·DBMS·Redis·Mini React 코어(`src/core/`)·연습 모드(`poker.html`)는 바꾸지 않았습니다. 상세 내용과 검증 결과는 `docs/3D_UI_PLAN.md` 15절에 있습니다.
+방 대전 화면(`room.html`)의 테이블을 CSS 3D로 바꿨습니다. 이 변경은 위 공유 준비 이후의 것이며 실행 소스의 화면 동작을 바꿉니다. 서버·엔진·DBMS·Redis·Mini React 코어(`src/core/`)·연습 모드(`poker.html`)는 바꾸지 않았습니다. 상세 내용과 검증 결과는 `docs/3D/3D_UI_PLAN.md` 15절(코드별 설명은 `docs/3D/ROOM_3D_CHANGES.md`)에 있습니다.
 
 - 원본 코드 중 수정한 파일 (모두 README의 UI 담당 파일 범위 안):
   - `projects/react/src/poker/RoomApp.js` (테이블을 3D 평면 구조로, 3D 카드·칩, 딜러 버튼, 2D/3D·빛 번짐 토글)
@@ -18,6 +18,6 @@
   - `projects/react/src/styles/room.css` (테이블 부분을 CSS 3D로 다시 작성)
   - `projects/react/room.html` (캐시 버전만)
   - `projects/react/tests/room-logic.test.js` (보기 설정 테스트 1개 추가)
-- 새로 만든 파일: `docs/3D_UI_PLAN.md`, `docs/POKER_DEMO_REPORT.md` (문서만)
+- 새로 만든 파일: `docs/3D/` 폴더의 문서 3개 (`3D_UI_PLAN.md`, `POKER_DEMO_REPORT.md`, `ROOM_3D_CHANGES.md`)
 - 외부 라이브러리·제3자 코드는 추가하지 않았습니다. 처음에 three.js로 만들었던 버전은 저장소에 넣지 않고 되돌렸습니다.
 - 위 원본 코드의 원저작자 표기와 "외부 재배포 전 사용 조건 확인" 원칙은 이 변경 이후에도 그대로 적용됩니다.

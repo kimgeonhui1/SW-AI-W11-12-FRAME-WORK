@@ -38,7 +38,7 @@
 | `projects/react/tests/room-logic.test.js` | +12 | 보기 설정 테스트 1개 |
 | `SOURCE_PROVENANCE.md` | +14 | 변경 기록 |
 
-새 파일은 문서뿐입니다: 이 리포트, `docs/3D_UI_PLAN.md`, `docs/POKER_DEMO_REPORT.md`.
+새 파일은 문서뿐입니다: 이 리포트, `docs/3D/3D_UI_PLAN.md`, `docs/3D/POKER_DEMO_REPORT.md`.
 
 ## 3. 동작 원리
 
@@ -52,18 +52,18 @@
      └ .table     ← 테이블 평면. 좌석·카드·칩·팟이 모두 이 안에
 ```
 
-- **`perspective`**([room.css:50](../projects/react/src/styles/room.css:50)): `.arena`에 주면, 안쪽 3D 요소가 멀수록 작게 보입니다.
+- **`perspective`**([room.css:50](../../projects/react/src/styles/room.css:50)): `.arena`에 주면, 안쪽 3D 요소가 멀수록 작게 보입니다.
 - **`transform-style: preserve-3d`**: `.scene`, `.table`, `.seat` 등에 줍니다. 자식이 납작해지지 않고 같은 3D 공간에 남습니다.
-- **카메라 각도 `--tilt`**: `.scene`을 `rotateX(var(--tilt))`로 눕힙니다([room.css:63](../projects/react/src/styles/room.css:63)).
+- **카메라 각도 `--tilt`**: `.scene`을 `rotateX(var(--tilt))`로 눕힙니다([room.css:63](../../projects/react/src/styles/room.css:63)).
   - 3D는 52°, 2D는 0°입니다.
   - 2D가 되면 테이블이 화면과 나란해져 위에서 내려다본 모습이 됩니다.
-- **부드러운 전환**: `@property --tilt`([room.css:48](../projects/react/src/styles/room.css:48))로 변수를 각도 타입으로 등록했습니다.
+- **부드러운 전환**: `@property --tilt`([room.css:48](../../projects/react/src/styles/room.css:48))로 변수를 각도 타입으로 등록했습니다.
   - 그래서 `.arena`의 `transition: --tilt .45s`가 동작합니다.
   - 등록하지 않으면 CSS 변수는 애니메이션 없이 바로 바뀝니다.
 
 ### 3.2 세운 글자 (billboard)
 
-이름표(HUD), 팟 글자, 베팅 금액, 로비 방 코드, 칩 이동 글자는 평면에 눕히면 읽기 어렵습니다. 그래서 세웁니다([room.css:139](../projects/react/src/styles/room.css:139)).
+이름표(HUD), 팟 글자, 베팅 금액, 로비 방 코드, 칩 이동 글자는 평면에 눕히면 읽기 어렵습니다. 그래서 세웁니다([room.css:139](../../projects/react/src/styles/room.css:139)).
 
 ```css
 .hud, .bet-chip { transform-origin: 50% 100%; transform: translate(-50%, -100%) translateZ(2px) var(--stand); }
@@ -76,7 +76,7 @@
 
 ### 3.3 좌석 배치
 
-`Seat` 컴포넌트의 구조는 원본 그대로입니다(카드·HUD·칩·베팅 금액). 원본은 이 조각들을 가로 한 줄로 늘어놓는 grid였는데, 지금은 `.seat`가 테이블 평면 전체를 덮고 조각마다 평면 좌표(%)를 줍니다([room.css:129-138](../projects/react/src/styles/room.css:129)).
+`Seat` 컴포넌트의 구조는 원본 그대로입니다(카드·HUD·칩·베팅 금액). 원본은 이 조각들을 가로 한 줄로 늘어놓는 grid였는데, 지금은 `.seat`가 테이블 평면 전체를 덮고 조각마다 평면 좌표(%)를 줍니다([room.css:129-138](../../projects/react/src/styles/room.css:129)).
 
 | 조각 | 내 좌석(아래) | 상대 좌석(위) |
 |---|---|---|
@@ -86,16 +86,16 @@
 | 베팅 금액 `.bet-chip` (세움) | 44%, 57% | 44%, 36% |
 | 딜러 버튼 `.dealer-btn` | 46%, 72% | 46%, 22% |
 
-세로 값은 `.seat`의 CSS 변수(`--cards-y` 등)로 두었습니다. `.seat-top`은 이 변수만 다시 정합니다([room.css:131](../projects/react/src/styles/room.css:131)).
+세로 값은 `.seat`의 CSS 변수(`--cards-y` 등)로 두었습니다. `.seat-top`은 이 변수만 다시 정합니다([room.css:131](../../projects/react/src/styles/room.css:131)).
 
 ### 3.4 3D 카드와 뒤집기
 
-**[RoomApp.js:37](../projects/react/src/poker/RoomApp.js:37) `Card`:**
+**[RoomApp.js:37](../../projects/react/src/poker/RoomApp.js:37) `Card`:**
 - 카드 값이 있으면 `.card3d.is-up`, 비공개(값 없음)면 `.card3d.is-down`입니다.
 - 안에는 뒷면(`.side-back`, "JP")과 앞면(`.side-front`)을 겹쳐 둡니다.
 - 비공개 카드의 앞면 자리는 빈 카드(`.card-blank`)입니다. 상대 카드 값은 쇼다운 전에는 브라우저에 아예 없습니다(서버 규칙 그대로).
 
-**CSS([room.css:180-183](../projects/react/src/styles/room.css:180)):**
+**CSS([room.css:180-183](../../projects/react/src/styles/room.css:180)):**
 ```css
 .card3d.is-down { rotate: y 180deg; }                 /* 뒷면이 위 */
 .card3d .card { backface-visibility: hidden; }        /* 뒤를 보는 면은 안 보임 */
@@ -103,12 +103,12 @@
 .card3d { transition: rotate .45s ease; }             /* is-down → is-up 이 되면 뒤집힘 */
 ```
 
-**key 변경([RoomApp.js:53-54](../projects/react/src/poker/RoomApp.js:53)):**
+**key 변경([RoomApp.js:53-54](../../projects/react/src/poker/RoomApp.js:53)):**
 - 원본은 좌석 카드 key에 카드 값을 넣었습니다(`…-index-value`). 그러면 값이 오는 순간 다른 요소로 바뀌어 뒤집기가 보이지 않습니다.
 - 지금은 key를 `handKey-좌석-번호`로 고정했습니다. 같은 요소가 `is-down` → `is-up`으로 바뀌면서 뒤집힙니다.
 - 새 핸드면 `handKey`가 바뀌어 새로 나눠 줍니다.
 
-**딜링 애니메이션([room.css:192-194](../projects/react/src/styles/room.css:192)):**
+**딜링 애니메이션([room.css:192-194](../../projects/react/src/styles/room.css:192)):**
 - `card-deal`: 위(`translateZ(90px)`)에서 떨어져 놓입니다.
 - 보드 카드는 `card-deal-flip`: 떨어지면서 뒷면에서 앞면으로 뒤집힙니다.
 - 보드 카드 key에는 원본처럼 값이 들어 있어서, 새 카드가 나올 때마다 새 요소가 생기고 애니메이션이 한 번 돕니다.
@@ -116,12 +116,12 @@
 
 ### 3.5 칩 높이
 
-**[RoomApp.js:28](../projects/react/src/poker/RoomApp.js:28) `ChipStack`:**
+**[RoomApp.js:28](../../projects/react/src/poker/RoomApp.js:28) `ChipStack`:**
 - 원본: 각 칩에 `style: { bottom: i * 5px }`를 줘서 화면상 위로 쌓은 그림이었습니다.
 - 지금: `style: { "--i": i }`만 넘깁니다.
 - 칩 탑 개수 규칙(금액의 log2)은 그대로입니다.
 
-**[room.css:161](../projects/react/src/styles/room.css:161):**
+**[room.css:161](../../projects/react/src/styles/room.css:161):**
 ```css
 .chip { border-radius: 50%; transform: translateZ(calc(var(--i, 0) * 4px + 1px)); }
 ```
@@ -130,13 +130,13 @@
 
 ### 3.6 가운데(팟·보드)와 칩 이동
 
-**가운데([room.css:167-176](../projects/react/src/styles/room.css:167)):**
+**가운데([room.css:167-176](../../projects/react/src/styles/room.css:167)):**
 - 보드 카드는 평면 가운데에 눕혀 놓습니다.
 - 팟 글자(`.pot`)는 보드 위쪽에 세웁니다.
 - 팟 칩은 보드 오른쪽에 놓습니다.
 - 로비의 방 코드(`.center-lobby`)는 아래 가장자리를 기준으로 세웁니다.
 
-**칩 이동(`.fly`, [room.css:197-205](../projects/react/src/styles/room.css:197)):**
+**칩 이동(`.fly`, [room.css:197-205](../../projects/react/src/styles/room.css:197)):**
 - 원본은 화면 위아래(`top`)로만 움직였습니다.
 - 지금은 테이블 평면 좌표(`left`/`top` %)를 따라 좌석 베팅 자리와 팟 사이를 오갑니다.
 - 중간에 위로 60px 떴다가(`translate: 0 0 60px`) 내려와서 포물선을 그립니다.
@@ -144,7 +144,7 @@
 
 ### 3.7 배경 (연습 모드와 같은 구성)
 
-[RoomApp.js:448](../projects/react/src/poker/RoomApp.js:448)의 `.backdrop` 안에 넣었고, 색과 간격은 연습 모드 `poker.css` 값을 그대로 썼습니다([room.css:64-104](../projects/react/src/styles/room.css:64)).
+[RoomApp.js:448](../../projects/react/src/poker/RoomApp.js:448)의 `.backdrop` 안에 넣었고, 색과 간격은 연습 모드 `poker.css` 값을 그대로 썼습니다([room.css:64-104](../../projects/react/src/styles/room.css:64)).
 
 | 요소 | 연습 모드 원본 | 3D에서 |
 |---|---|---|
@@ -160,7 +160,7 @@
 
 ### 3.8 2D/3D·빛 번짐 토글과 설정 기억
 
-**[roomLogic.js:126-145](../projects/react/src/poker/roomLogic.js:126):**
+**[roomLogic.js:126-145](../../projects/react/src/poker/roomLogic.js:126):**
 ```js
 VIEW_PREF  = { key: "jungle-poker-lab.view",  allowed: ["3d", "2d"],  fallback: "3d" }
 BLOOM_PREF = { key: "jungle-poker-lab.bloom", allowed: ["off", "on"], fallback: "off" }
@@ -170,19 +170,19 @@ writePref(storage, pref, value) // 허용된 값만 저장, 실패해도 조용�
 DOM 없이 저장소 객체를 인자로 받아서 node에서도 테스트할 수 있습니다.
 
 **RoomApp:**
-- [96-97줄](../projects/react/src/poker/RoomApp.js:96): 처음 그릴 때 저장된 값을 읽어 `view`, `bloom` 상태를 만듭니다.
-- [229-238줄](../projects/react/src/poker/RoomApp.js:229): 버튼을 누르면 상태를 바꾸고 저장합니다.
-- [442줄](../projects/react/src/poker/RoomApp.js:442): `.arena`에 `view-3d`/`view-2d`, `bloom-on` 클래스를 붙입니다. 화면 변화는 전부 CSS가 합니다.
-- [74줄](../projects/react/src/poker/RoomApp.js:74) `ViewToggles`: props만 받는 버튼 두 개입니다. Mini React 규칙상 Hook은 루트에서만 씁니다. `aria-pressed`로 켜짐 상태를 알립니다.
+- [96-97줄](../../projects/react/src/poker/RoomApp.js:96): 처음 그릴 때 저장된 값을 읽어 `view`, `bloom` 상태를 만듭니다.
+- [229-238줄](../../projects/react/src/poker/RoomApp.js:229): 버튼을 누르면 상태를 바꾸고 저장합니다.
+- [442줄](../../projects/react/src/poker/RoomApp.js:442): `.arena`에 `view-3d`/`view-2d`, `bloom-on` 클래스를 붙입니다. 화면 변화는 전부 CSS가 합니다.
+- [74줄](../../projects/react/src/poker/RoomApp.js:74) `ViewToggles`: props만 받는 버튼 두 개입니다. Mini React 규칙상 Hook은 루트에서만 씁니다. `aria-pressed`로 켜짐 상태를 알립니다.
 
-**빛 번짐([room.css:57-61](../projects/react/src/styles/room.css:57)):**
+**빛 번짐([room.css:57-61](../../projects/react/src/styles/room.css:57)):**
 - 네온 그림자 크기에 `--glow`(기본 1, 켜면 2.2)를 곱합니다(레일, 펠트 선, 간판, 기둥, 패널).
 - 켜면 화면 위에 빛 막(`.arena::after`, `mix-blend-mode: screen`)이 한 장 더 겹칩니다.
 - 3D 장면에 `filter`를 걸면 3D가 납작해지므로 쓰지 않았습니다.
 
 ### 3.9 딜러 버튼
 
-[RoomApp.js:69](../projects/react/src/poker/RoomApp.js:69): 서버가 준 `seat.isButton`이 참이고 로비가 아니면, 그 좌석에 "D" 원판을 그립니다. 핸드가 바뀌면 서버 값에 따라 상대 쪽으로 옮겨집니다.
+[RoomApp.js:69](../../projects/react/src/poker/RoomApp.js:69): 서버가 준 `seat.isButton`이 참이고 로비가 아니면, 그 좌석에 "D" 원판을 그립니다. 핸드가 바뀌면 서버 값에 따라 상대 쪽으로 옮겨집니다.
 
 ## 4. 원본에서 지운 것
 
@@ -198,7 +198,7 @@ DOM 없이 저장소 객체를 인자로 받아서 node에서도 테스트할 �
 
 | 문제 | 원인 | 해결 |
 |---|---|---|
-| 버튼을 누르면 테이블이 옆으로 365px 밀림 | 넓은 바닥·기둥이 상자 밖으로 퍼져 있어, 포커스 때 브라우저가 `overflow: hidden` 상자를 스크롤함 | `overflow: clip`(스크롤 불가) ([room.css:52](../projects/react/src/styles/room.css:52)) |
+| 버튼을 누르면 테이블이 옆으로 365px 밀림 | 넓은 바닥·기둥이 상자 밖으로 퍼져 있어, 포커스 때 브라우저가 `overflow: hidden` 상자를 스크롤함 | `overflow: clip`(스크롤 불가) ([room.css:52](../../projects/react/src/styles/room.css:52)) |
 | 로비 방 코드가 반쯤 묻힘 | 가운데 기준으로 세워 아래 절반이 평면 아래로 들어감 | 아래 가장자리 기준으로 세움 |
 | 간판 글자가 테이블에 가림 | 바닥에 세운 간판 아래쪽이 테이블 높이보다 낮음 | 키를 키우고 글자를 위쪽에 |
 | 기둥 끝이 잘려 보임 | 기둥 길이가 화면보다 짧음 | 길이를 키우고 뒤로 젖혀 아래 끝을 테이블 뒤로 |
