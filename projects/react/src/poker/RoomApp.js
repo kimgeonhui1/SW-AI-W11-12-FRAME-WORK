@@ -4,11 +4,15 @@
 //   · 화면은 결과를 정하지 않는다. 버튼은 "요청"만 보내고, 칩·팟·보드·승패는 서버가 준 값만 그린다
 //   · state  = 서버가 준 최신 정답 / display = 지금 그리는 값(재생 중에는 과거). 재생이 끝나면 둘은 같다
 //   · 상대 카드는 서버가 쇼다운 때만 보내 준다. 그 전에는 화면에 뒷면만 있다(값 자체가 브라우저에 없다)
+//
+// 3D 테이블 (외부 라이브러리 없이 CSS 3D): .table 이 하나의 3D 평면이고, 좌석·카드·칩·팟이 모두 그 안에 있다.
+//   카메라 각도는 CSS 변수 --tilt 하나로 정한다 (3D 52°, 2D 0°). 이름표(HUD)·팟 글자는 평면 위에 세워
+//   카메라를 바라보게 하므로(-tilt 만큼 되돌림) 각도가 바뀌어도 좌석을 따라간다. 모든 값은 room.css에 있다.
 import { h } from "../core/vdom.js";
 import { useEffect, useRef, useState } from "../core/hooks.js";
 import {
-  STREET_LABELS, actionText, applyEvent, clampWager, displayFromState, eventDelay, normalizeCode,
-  planUpdate, positionLabel, remainingSeconds, seatOrder, validName,
+  BLOOM_PREF, STREET_LABELS, VIEW_PREF, actionText, applyEvent, clampWager, displayFromState, eventDelay, normalizeCode,
+  planUpdate, positionLabel, readPref, remainingSeconds, seatOrder, validName, writePref,
 } from "./roomLogic.js";
 
 function newId() {
@@ -20,28 +24,34 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // ── 자식 컴포넌트 (상태 없이 props만 받는다) ──
 
 // 금색 칩 탑: 높이는 금액의 크기만 어림해 보여 준다. 정확한 값은 옆의 숫자다
+// 칩은 테이블 평면에 눕힌 원판이고, --i 번째 칩은 그만큼 위(translateZ)로 쌓인다
 function ChipStack({ value }) {
   const levels = value > 0 ? Math.min(10, Math.max(1, Math.ceil(Math.log2(value + 1)))) : 0;
   return h("div", { className: "chips", "aria-hidden": "true" },
     ...[0, 1, 2].map((column) => h("span", { className: "chip-tower", key: column },
-      ...Array.from({ length: Math.max(0, levels - column * 2) }, (_, i) => h("i", { key: i, className: "chip", style: { bottom: i * 5 + "px" } })))));
+      ...Array.from({ length: Math.max(0, levels - column * 2) }, (_, i) => h("i", { key: i, className: "chip", style: { "--i": String(i) } })))));
 }
 
+// 카드: 앞면·뒷면 두 장을 겹친 3D 카드. 값이 없으면 뒷면이 위, 값이 오면 뒤집혀 앞면이 위 (CSS transition)
+// 상대 카드는 쇼다운 전에 값이 없으므로 앞면 자리는 비어 있다
 function Card({ value, hidden = false }) {
-  if (hidden) return h("div", { className: "card card-back", "aria-label": "비공개 카드" }, h("span", {}, "JP"));
-  if (!value) return h("div", { className: "card card-empty", "aria-hidden": "true" });
-  const suit = value.slice(-1);
-  const rank = value.slice(0, -1).replace("T", "10");
-  return h("div", { className: "card card-face" + (/[♥♦]/.test(suit) ? " red" : ""), "aria-label": rank + suit },
-    h("b", {}, rank), h("span", {}, suit));
+  if (!value && !hidden) return h("div", { className: "card card-empty", "aria-hidden": "true" });
+  const suit = value ? value.slice(-1) : "";
+  const rank = value ? value.slice(0, -1).replace("T", "10") : "";
+  return h("div", { className: "card3d " + (value ? "is-up" : "is-down"), "aria-label": value ? rank + suit : "비공개 카드" },
+    h("div", { className: "card card-back side-back", "aria-hidden": "true" }, h("span", {}, "JP")),
+    value
+      ? h("div", { className: "card card-face side-front" + (/[♥♦]/.test(suit) ? " red" : ""), "aria-hidden": "true" }, h("b", {}, rank), h("span", {}, suit))
+      : h("div", { className: "card side-front card-blank", "aria-hidden": "true" }));
 }
 
 function Seat({ seat, where, you, stack, committed, cards, faceDown, turn, seconds, lastText, phase, handKey, winner }) {
   const empty = !seat.occupied;
   const status = empty ? "빈 자리" : !seat.connected ? "연결 끊김" : phase === "lobby" || phase === "hand_over" ? (seat.ready ? "준비 완료" : "대기 중") : "접속 중";
+  // key에 카드 값을 넣지 않는다: 같은 카드 요소가 뒷면 → 앞면으로 바뀌어야 뒤집히는 애니메이션이 보인다 (새 핸드면 handKey가 바뀌어 새로 나눠 준다)
   const cardNodes = cards
-    ? cards.map((value, index) => h(Card, { key: handKey + "-" + where + "-" + index + "-" + value, value }))
-    : Array.from({ length: faceDown }, (_, index) => h(Card, { key: handKey + "-" + where + "-back-" + index, hidden: true }));
+    ? cards.map((value, index) => h(Card, { key: handKey + "-" + where + "-" + index, value }))
+    : Array.from({ length: faceDown }, (_, index) => h(Card, { key: handKey + "-" + where + "-" + index, hidden: true }));
   return h("section", { className: "seat seat-" + where + (turn ? " is-turn" : "") + (empty ? " is-empty" : "") + (winner ? " is-winner" : ""), "aria-current": turn ? "step" : null },
     h("div", { className: "seat-cards" }, ...cardNodes),
     h("div", { className: "hud" },
@@ -56,7 +66,15 @@ function Seat({ seat, where, you, stack, committed, cards, faceDown, turn, secon
         turn ? h("span", { className: "turn-clock" }, "차례" + (seconds === null ? "" : " · " + seconds + "초")) : null),
       lastText ? h("div", { className: "hud-last" }, lastText) : null),
     h("div", { className: "seat-chips" }, h(ChipStack, { value: empty ? 0 : stack })),
+    !empty && phase !== "lobby" && seat.isButton ? h("i", { className: "dealer-btn", "aria-hidden": "true" }, "D") : null,
     committed > 0 ? h("div", { className: "bet-chip" }, h("i", { className: "chip" }), h("span", {}, Number(committed).toLocaleString())) : null);
+}
+
+// 2D/3D·빛 번짐 토글 (선택은 이 브라우저에 기억한다)
+function ViewToggles({ view, bloom, onView, onBloom }) {
+  return h("div", { className: "view-toggles", role: "group", "aria-label": "테이블 보기 설정" },
+    h("button", { type: "button", className: "view-btn", "aria-pressed": view === "2d" ? "true" : "false", onClick: onView }, view === "3d" ? "2D로 보기" : "3D로 보기"),
+    h("button", { type: "button", className: "view-btn", "aria-pressed": bloom ? "true" : "false", onClick: onBloom }, "빛 번짐 " + (bloom ? "켬" : "끔")));
 }
 
 // ── 루트 컴포넌트 (상태와 Hook은 여기에만 둔다) ──
@@ -75,6 +93,8 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
   const [retry, setRetry] = useState(null);
   const [preview, setPreview] = useState(null);
   const [now, setNow] = useState(() => performance.now());
+  const [view, setView] = useState(() => readPref(globalThis.localStorage, VIEW_PREF));
+  const [bloom, setBloom] = useState(() => readPref(globalThis.localStorage, BLOOM_PREF) === "on");
   // 렌더링과 무관하게 유지하는 동기화 장부: 마지막으로 받은 버전·이벤트 번호, 재생 대기열
   const sync = useRef({ instance: null, version: null, gameVersion: null, lastSeq: 0, queue: [], target: null, playing: false, timer: null, receivedAt: 0, hasDisplay: false, alive: true, inFlight: false });
 
@@ -206,6 +226,15 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
     path: "/api/rooms/" + code + "/action",
     body: { action_id: newId(), expected_version: state.gameVersion, action, ...(to === undefined ? {} : { to }) },
   });
+  const toggleView = () => {
+    const next = view === "3d" ? "2d" : "3d";
+    setView(next);
+    writePref(globalThis.localStorage, VIEW_PREF, next);
+  };
+  const toggleBloom = () => {
+    setBloom(!bloom);
+    writePref(globalThis.localStorage, BLOOM_PREF, bloom ? "off" : "on");
+  };
   const exitRoom = async () => {
     if (state && state.phase === "lobby") await send({ path: "/api/rooms/" + code + "/leave", body: {} });
     leaveLocal("");
@@ -410,15 +439,25 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
   controls.push(h("button", { key: "exit", className: "btn btn-ghost", disabled: busy, onClick: exitRoom }, state.phase === "lobby" ? "방 나가기" : "로비로"));
 
   return h("div", { className: "room-shell" }, header,
-    h("main", { className: "arena" },
-      h("div", { className: "backdrop", "aria-hidden": "true" }, h("i", { className: "wall wall-left" }), h("i", { className: "wall wall-right" }), h("i", { className: "wall wall-top" })),
-      h("div", { className: "table", "aria-hidden": "true" }, h("div", { className: "felt" }, h("div", { className: "felt-line" }),
-        h("div", { className: "felt-logo" }, h("span", {}, "JUNGLE"), h("b", {}, "POKER LAB")))),
+    h("main", { className: "arena view-" + view + (bloom ? " bloom-on" : "") },
       h("div", { className: "hand-label" }, state.phase === "lobby" ? "LOBBY" : "HAND " + display.handNo + (state.street && synced ? " · " + (STREET_LABELS[state.street] || state.street) : "")),
-      seatNode(topSeat, "top"),
-      center,
-      flight,
-      seatNode(bottomSeat, "bottom")),
+      h(ViewToggles, { view, bloom, onView: toggleView, onBloom: toggleBloom }),
+      // 3D 공간: 배경(바닥·벽)과 테이블 평면. 좌석·카드·칩·팟은 모두 테이블 평면 안에 있다
+      h("div", { className: "scene" },
+        // 배경: 연습 모드(poker.html)와 같은 구성 — 바닥 격자, 보라 바닥 빛, 네온 기둥 2개, 육각 간판, 양옆 벽 패널 — 을 3D 공간에 세움
+        h("div", { className: "backdrop", "aria-hidden": "true" },
+          h("i", { className: "floor" }), h("i", { className: "floor-glow" }),
+          h("i", { className: "stand pillar pillar-left" }), h("i", { className: "stand pillar pillar-right" }),
+          h("div", { className: "stand portal" }, h("span", {}, "POKER LAB"), h("small", {}, "N E O N   D I S T R I C T   /   0 1")),
+          h("div", { className: "stand wall-panel panel-left" }, h("span", {}, "◇"), h("i", {}), h("i", {}), h("i", {})),
+          h("div", { className: "stand wall-panel panel-right" }, h("span", {}, "♠"), h("i", {}), h("i", {}), h("i", {}))),
+        h("div", { className: "table" },
+          h("div", { className: "felt", "aria-hidden": "true" }, h("div", { className: "felt-line" }),
+            h("div", { className: "felt-logo" }, h("span", {}, "JUNGLE"), h("b", {}, "POKER LAB"))),
+          seatNode(topSeat, "top"),
+          center,
+          flight,
+          seatNode(bottomSeat, "bottom")))),
     h("p", { className: "status", role: "status" },
       h("span", { className: "status-dot" }),
       showResult ? resultText : synced ? state.notice : lastText || "진행 상황을 재생하는 중…"),

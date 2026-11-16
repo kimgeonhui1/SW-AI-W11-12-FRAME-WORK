@@ -71,6 +71,18 @@ test("API 주소는 페이지를 연 호스트를 따른다", () => {
   eq(L.resolveApiBase({ search: "", protocol: "http:", hostname: "x" }, " http://meta:1/ "), "http://meta:1", "meta");
   eq([L.guestStorageKey(""), L.guestStorageKey("?guest=2"), L.guestStorageKey("?guest=<b>")], ["jungle-poker-lab.guest.v1", "jungle-poker-lab.guest.v1.2", "jungle-poker-lab.guest.v1.b"], "guest key");
 });
+test("보기 설정은 허용된 값만, 저장소가 막혀도 기본값", () => {
+  const store = new Map();
+  const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
+  eq(L.readPref(storage, L.VIEW_PREF), "3d", "default");
+  L.writePref(storage, L.VIEW_PREF, "2d");
+  eq(L.readPref(storage, L.VIEW_PREF), "2d", "saved");
+  L.writePref(storage, L.VIEW_PREF, "4d");
+  eq(L.readPref(storage, L.VIEW_PREF), "2d", "invalid value ignored");
+  const broken = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
+  eq([L.readPref(broken, L.BLOOM_PREF), L.readPref(undefined, L.BLOOM_PREF)], ["off", "off"], "blocked storage");
+  L.writePref(broken, L.BLOOM_PREF, "on");
+});
 
 const failed = results.filter((r) => !r.ok);
 const summary = (results.length - failed.length) + "/" + results.length + " 통과";

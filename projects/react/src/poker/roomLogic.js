@@ -121,3 +121,23 @@ export function remainingSeconds(remainingMs, receivedAt, now) {
   if (remainingMs === null || remainingMs === undefined) return null;
   return Math.max(0, Math.ceil((remainingMs - (now - receivedAt)) / 1000));
 }
+
+// 화면 보기 설정 (브라우저에만 기억한다. 게임과 무관)
+export const VIEW_PREF = { key: "jungle-poker-lab.view", allowed: ["3d", "2d"], fallback: "3d" };
+export const BLOOM_PREF = { key: "jungle-poker-lab.bloom", allowed: ["off", "on"], fallback: "off" };
+
+// 저장소를 쓸 수 없거나(사생활 보호 창 등) 값이 이상하면 기본값
+export function readPref(storage, pref) {
+  try {
+    const value = storage?.getItem(pref.key);
+    return pref.allowed.includes(value) ? value : pref.fallback;
+  } catch {
+    return pref.fallback;
+  }
+}
+
+export function writePref(storage, pref, value) {
+  try {
+    if (pref.allowed.includes(value)) storage?.setItem(pref.key, value);
+  } catch { /* 저장이 막혀 있어도 화면은 그대로 동작 */ }
+}

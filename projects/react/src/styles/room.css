@@ -40,31 +40,107 @@ button, input { font: inherit; }
 .btn-ghost { background: transparent; color: var(--dim); }
 .btn-quick { height: 36px; padding: 0 10px; font-size: 13px; }
 
-/* ── 테이블 ── */
-.arena { position: relative; height: clamp(520px, 62vw, 680px); margin-top: 4px; overflow: hidden; border: 1px solid rgba(37, 230, 242, .18);
-  background: linear-gradient(180deg, #0b0a1f 0%, #070512 100%); perspective: 1100px; }
-.backdrop .wall { position: absolute; border: 1px solid rgba(37, 230, 242, .35); background:
-  repeating-linear-gradient(0deg, rgba(37, 230, 242, .09) 0 1px, transparent 1px 14px), linear-gradient(180deg, rgba(200, 75, 255, .12), rgba(37, 230, 242, .04)); box-shadow: 0 0 22px rgba(37, 230, 242, .15); }
-.wall-left { left: -3%; top: 4%; width: 20%; height: 30%; transform: skewY(8deg); }
-.wall-right { right: -3%; top: 4%; width: 20%; height: 30%; transform: skewY(-8deg); border-color: rgba(88, 240, 167, .35); }
-.wall-top { left: 34%; top: -2%; width: 32%; height: 15%; border-color: rgba(200, 75, 255, .45); }
-.table { position: absolute; left: 5%; right: 5%; top: 13%; bottom: 9%; transform: rotateX(24deg); transform-origin: 50% 60%; }
+/* ── 테이블: CSS 3D (외부 라이브러리 없음) ──────────────────────────────────
+   .scene 은 하나의 3D 공간이고, .table 은 그 안의 테이블 평면이다. 좌석·카드·칩·팟은 모두 .table 안에 있다.
+   카메라 각도는 --tilt 하나: 3D 52°, 2D 0°. @property로 등록해 두어 각도가 부드럽게 바뀐다.
+   글자(HUD·팟·베팅 금액)는 평면에 세워 -tilt 만큼 되돌린다 → 언제나 화면을 정면으로 보고, 좌석을 따라 움직인다.
+   주의: preserve-3d 요소에 opacity·filter·overflow를 주면 3D가 납작해진다. 이런 효과는 끝 요소(카드 면, 칩)에만 쓴다. */
+@property --tilt { syntax: "<angle>"; inherits: true; initial-value: 52deg; }
+@property --glow { syntax: "<number>"; inherits: true; initial-value: 1; }
+.arena { --tilt: 52deg; --glow: 1; --stand: rotateX(calc(-1 * var(--tilt)));
+  /* overflow: clip — 넓은 바닥·벽이 밖으로 퍼져 있어서, hidden이면 버튼 포커스 때 브라우저가 이 상자를 옆으로 스크롤해 버린다 */
+  position: relative; height: clamp(520px, 62vw, 680px); margin-top: 4px; overflow: hidden; overflow: clip;
+  border: 1px solid #7361b93b; border-radius: 20px; /* 배경색·테두리는 연습 모드 .table-wrap과 같다 */
+  background: radial-gradient(ellipse at 50% 72%, #47216b 0, #17172f 48%, #080c19 85%); perspective: 1300px; perspective-origin: 50% 32%;
+  transition: --tilt .45s ease, --glow .3s ease; }
+.arena.view-2d { --tilt: 0deg; }
+.arena.bloom-on { --glow: 2.2; }
+/* 빛 번짐(강하게): 3D 장면에 filter를 걸면 납작해지므로, 위에 빛 막을 한 장 더 겹친다 */
+.arena::after { content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none; mix-blend-mode: screen; opacity: 0; transition: opacity .3s;
+  background: radial-gradient(ellipse 60% 42% at 50% 62%, rgba(37, 230, 242, .2), transparent 70%), radial-gradient(ellipse 40% 30% at 50% 8%, rgba(200, 75, 255, .18), transparent 70%); }
+.arena.bloom-on::after { opacity: 1; }
+
+.scene { position: absolute; inset: 0; transform-style: preserve-3d; transform-origin: 50% 58%; transform: translateY(4%) rotateX(var(--tilt)); }
+
+/* 배경: 연습 모드(poker.css의 .casino-room · .portal · .wall-panel · .floor-grid · .table-glow)와 같은 구성과 색을 3D 공간에 세운다.
+   바닥(-120px)에 눕힌 것: 격자, 보라 빛. 세운 것(.stand): 네온 기둥, 육각 간판, 벽 패널.
+   세운 것은 아래 가장자리를 축으로 -90° 돌려 바닥에서 일으킨다. 2D(위에서 내려다봄)에서는 옆면만 보이므로 숨긴다. */
+.backdrop { position: absolute; inset: 0; transform-style: preserve-3d; pointer-events: none; }
+.floor { position: absolute; inset: -60% -50%; transform: translateZ(-120px);
+  background: repeating-linear-gradient(90deg, transparent 0 79px, #8e52da44 80px 81px), repeating-linear-gradient(0deg, transparent 0 59px, #5cefff33 60px 61px);
+  -webkit-mask-image: linear-gradient(transparent 8%, #000 55%); mask-image: linear-gradient(transparent 8%, #000 55%); }
+.floor-glow { position: absolute; left: 5%; right: 5%; top: 22%; bottom: 0; border-radius: 50%; transform: translateZ(-110px);
+  background: #873edb; filter: blur(45px); opacity: calc(.2 * var(--glow)); }
+.stand { position: absolute; transform-origin: 50% 100%; transition: opacity .3s; }
+.arena.view-2d .stand { opacity: 0; }
+
+/* 네온 기둥: 안쪽으로 19° 기운 막대 (청록 선 + 보라 그림자) */
+/* 키를 화면 위로 넘치게 키우고, 위쪽은 멀리·아래쪽은 가까이 오게 뒤로 젖힌다(-90°가 아니라 -64°).
+   아래 끝(평면 +6%)이 테이블 뒤로 들어가 가려지므로 기둥의 잘린 끝이 보이지 않는다 */
+.pillar { top: -134%; width: 10%; height: 140%; border-left: 4px solid #43f4ff; background: linear-gradient(90deg, #151c32, transparent);
+  box-shadow: -9px 0 0 #0c1825, -12px 0 0 #bd4cff, 0 0 calc(22px * var(--glow)) #37e9ff77; }
+.pillar-left { left: 20%; transform: translateZ(-120px) rotateX(-64deg) rotateZ(-19deg); }
+.pillar-right { right: 20%; transform: translateZ(-120px) rotateX(-64deg) rotateZ(19deg) scaleX(-1); }
+
+/* 육각 간판: POKER LAB / NEON DISTRICT */
+/* 바닥(-120px)에 세우면 아래쪽이 테이블에 가려지므로, 연습 모드보다 키를 키우고 글자를 위쪽에 둔다 */
+.portal { left: 29%; width: 42%; top: -64%; height: 62%; transform: translateZ(-120px) rotateX(-90deg);
+  clip-path: polygon(16% 0, 84% 0, 100% 55%, 82% 100%, 18% 100%, 0 55%);
+  background: repeating-linear-gradient(0deg, #15344755 0 1px, transparent 1px 8px), linear-gradient(135deg, #102539, #0a1226);
+  border: 3px solid #5cefff; box-shadow: inset 0 0 calc(35px * var(--glow)) #3cecff55;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding-top: 22%; color: #79efff; text-shadow: 0 0 calc(14px * var(--glow)) #23dfff; }
+.portal::before { content: ""; position: absolute; inset: 15px; border: 2px solid #874df1; clip-path: inherit; }
+.portal span { font-size: 26px; font-weight: 700; letter-spacing: .25em; }
+.portal small { font-size: 9px; margin-top: 9px; white-space: pre; }
+
+/* 양옆 벽 패널: 왼쪽 청록 ◇, 오른쪽 분홍 ♠, 가로줄 3개 */
+.wall-panel { top: -36%; width: 20%; height: 30%; padding: 20px; border: 1px solid #4eeaff70; color: #4ef5ff;
+  background: linear-gradient(140deg, #13263d, #080c20); box-shadow: 0 0 0 7px #080b18, 0 0 0 8px #70559777, inset 0 0 calc(18px * var(--glow)) #53cbff33; }
+/* 기둥(가장자리에서 20%, 위로 갈수록 바깥으로 19° 기욺)과 3D로 교차하지 않도록 패널을 바깥쪽에 둔다 */
+.panel-left { left: -10%; transform: translateZ(-70px) rotateX(-90deg) rotateY(30deg) rotateZ(-8deg); }
+.panel-right { right: -10%; transform: translateZ(-70px) rotateX(-90deg) rotateY(-30deg) rotateZ(8deg); color: #f184ff; }
+.wall-panel span { font-size: 30px; }
+.wall-panel i { display: block; height: 3px; width: 70%; margin: 7px 0; background: currentColor; opacity: .5; box-shadow: 0 0 calc(7px * var(--glow)) currentColor; }
+.wall-panel i:nth-child(3) { width: 45%; }
+
+/* 테이블 평면 */
+.table { position: absolute; left: 6%; right: 6%; top: 10%; bottom: 8%; transform-style: preserve-3d; }
+.table::before { content: ""; position: absolute; inset: 1.5% 1%; border-radius: 50% / 46%; transform: translateZ(-30px);
+  background: linear-gradient(180deg, #120b26, #05030c); box-shadow: 0 0 40px rgba(0, 0, 0, .8); } /* 테이블 두께: 아래쪽 판 */
 .felt { position: absolute; inset: 0; border-radius: 50% / 46%; border: 3px solid var(--cyan);
   background: radial-gradient(ellipse at 50% 42%, #4a1d78 0%, var(--violet) 48%, var(--violet-deep) 100%);
-  box-shadow: 0 0 34px var(--cyan-soft), 0 26px 0 -4px #0b0718, 0 30px 46px rgba(0, 0, 0, .8), inset 0 0 70px rgba(0, 0, 0, .5); }
-.felt-line { position: absolute; inset: 9% 7%; border-radius: 50% / 46%; border: 2px solid rgba(37, 230, 242, .75); box-shadow: 0 0 14px var(--cyan-soft), inset 0 0 14px rgba(37, 230, 242, .2); }
-.felt-logo { position: absolute; left: 50%; top: 5%; transform: translateX(-50%); display: grid; place-items: center; width: 150px; height: 74px; border-radius: 50%;
+  box-shadow: 0 0 calc(34px * var(--glow)) var(--cyan-soft), 0 0 0 9px #0b0718, 0 0 0 11px rgba(37, 230, 242, calc(.5 * var(--glow))), inset 0 0 70px rgba(0, 0, 0, .5); }
+.felt-line { position: absolute; inset: 9% 7%; border-radius: 50% / 46%; border: 2px solid rgba(37, 230, 242, .75);
+  box-shadow: 0 0 calc(14px * var(--glow)) var(--cyan-soft), inset 0 0 14px rgba(37, 230, 242, .2); }
+.felt-logo { position: absolute; left: 50%; top: 9%; transform: translateX(-50%); display: grid; place-items: center; width: 150px; height: 74px; border-radius: 50%;
   border: 2px solid var(--cyan); box-shadow: 0 0 16px var(--cyan-soft); text-align: center; line-height: 1.05; letter-spacing: .12em; }
 .felt-logo span { font-size: 12px; color: var(--cyan); }
 .felt-logo b { font-size: 15px; color: #ff9df2; text-shadow: 0 0 10px var(--magenta); }
-.hand-label { position: absolute; left: 14px; top: 10px; font-size: 12px; letter-spacing: .16em; color: var(--dim); }
+.hand-label { position: absolute; left: 14px; top: 10px; z-index: 3; font-size: 12px; letter-spacing: .16em; color: var(--dim); }
 
-.seat { position: absolute; left: 50%; transform: translateX(-50%); display: grid; grid-template-columns: auto auto auto; align-items: end; gap: 12px; z-index: 2; }
-.seat-top { top: 3%; }
-.seat-bottom { bottom: 2%; }
-.seat-cards { display: flex; gap: 6px; min-width: 104px; justify-content: center; }
-.hud { min-width: 190px; padding: 9px 12px; background: linear-gradient(160deg, rgba(90, 150, 255, .2), rgba(24, 18, 60, .78)); border: 1px solid rgba(160, 220, 255, .55);
-  box-shadow: 0 0 16px rgba(37, 230, 242, .16); backdrop-filter: blur(3px); }
+/* 2D/3D·빛 번짐 토글 */
+.view-toggles { position: absolute; top: 8px; right: 10px; z-index: 4; display: flex; gap: 6px; }
+.view-btn { height: 30px; padding: 0 10px; font-size: 12px; color: var(--ink); background: rgba(8, 6, 20, .72); border: 1px solid var(--cyan-soft); cursor: pointer; }
+.view-btn:hover { border-color: var(--cyan); }
+.view-btn[aria-pressed="true"] { border-color: var(--cyan); color: var(--cyan); box-shadow: 0 0 10px var(--cyan-soft); }
+.view-btn:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+/* 좌석: 테이블 평면 전체를 덮는 층. 안의 조각을 평면 좌표(%)로 놓는다. 위 좌석 = 먼 쪽, 아래 좌석 = 내 쪽 */
+.seat { position: absolute; inset: 0; transform-style: preserve-3d; pointer-events: none;
+  --cards-y: 70%; --hud-y: 100%; --chips-y: 72%; --bet-y: 57%; --btn-y: 72%; }
+.seat-top { --cards-y: 22%; --hud-y: 6%; --chips-y: 20%; --bet-y: 36%; --btn-y: 22%; }
+.seat > * { position: absolute; transform-style: preserve-3d; }
+.seat-cards { left: 58%; top: var(--cards-y); display: flex; gap: 6px; transform: translate(-50%, -50%) translateZ(1px); }
+.seat-chips { left: 77%; top: var(--chips-y); width: 96px; height: 62px; transform: translate(-50%, -50%); }
+.dealer-btn { left: 46%; top: var(--btn-y); width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; font-style: normal; font-size: 13px; font-weight: 800;
+  color: #1b1538; background: radial-gradient(circle at 50% 40%, #fff, #d8dcef); border: 2px solid #1b1538; box-shadow: 0 0 0 2px #f4f6ff, 0 2px 6px rgba(0, 0, 0, .6);
+  transform: translate(-50%, -50%) translateZ(3px); }
+/* 세운 글자: 아래 가운데를 기준점에 두고 -tilt 만큼 세운다 */
+.hud, .bet-chip { transform-origin: 50% 100%; transform: translate(-50%, -100%) translateZ(2px) var(--stand); }
+.hud { left: 26%; top: var(--hud-y); min-width: 190px; padding: 9px 12px; background: linear-gradient(160deg, rgba(90, 150, 255, .22), rgba(14, 10, 40, .88)); border: 1px solid rgba(160, 220, 255, .55);
+  box-shadow: 0 0 16px rgba(37, 230, 242, .16); }
+.bet-chip { left: 44%; top: var(--bet-y); display: flex; align-items: center; gap: 6px; padding: 3px 9px 3px 5px; font-size: 13px; font-weight: 700;
+  color: var(--gold); background: rgba(8, 6, 20, .85); border: 1px solid rgba(246, 196, 83, .5); border-radius: 999px; white-space: nowrap; }
 .is-turn .hud { border-color: var(--cyan); box-shadow: 0 0 0 2px rgba(37, 230, 242, .35), 0 0 26px var(--cyan-soft); }
 .is-winner .hud { border-color: var(--gold); box-shadow: 0 0 26px rgba(246, 196, 83, .45); }
 .is-empty .hud { opacity: .7; border-style: dashed; }
@@ -77,50 +153,56 @@ button, input { font: inherit; }
 .presence.on { color: var(--ok); } .presence.lost { color: var(--danger); } .presence.off { color: var(--dim); }
 .turn-clock { color: var(--cyan); font-weight: 700; }
 .hud-last { margin-top: 5px; padding-top: 5px; border-top: 1px solid rgba(160, 220, 255, .25); font-size: 12px; color: #d9e7ff; }
-.seat-chips { width: 96px; height: 62px; position: relative; }
-.bet-chip { position: absolute; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 3px 9px 3px 5px; font-size: 13px; font-weight: 700;
-  color: var(--gold); background: rgba(8, 6, 20, .8); border: 1px solid rgba(246, 196, 83, .5); border-radius: 999px; white-space: nowrap; }
-.seat-top .bet-chip { top: calc(100% + 10px); }
-.seat-bottom .bet-chip { bottom: calc(100% + 10px); }
-.bet-chip .chip { position: static; }
 
-/* 금색 칩: 납작한 타원을 조금씩 올려 쌓아 입체로 보이게 한다 */
-.chips { position: relative; width: 96px; height: 62px; margin: 0 auto; }
-.chip-tower { position: absolute; bottom: 0; width: 30px; height: 100%; }
-.chip-tower:nth-child(1) { left: 33px; z-index: 2; } .chip-tower:nth-child(2) { left: 6px; bottom: 6px; } .chip-tower:nth-child(3) { left: 60px; bottom: 6px; }
-.chip { position: absolute; left: 0; display: block; width: 30px; height: 13px; border-radius: 50%;
-  background: radial-gradient(ellipse at 50% 35%, #fff3c4 0%, var(--gold) 45%, #d99a25 100%); border: 1px solid var(--gold-deep);
-  box-shadow: 0 3px 0 #8a560c, 0 4px 5px rgba(0, 0, 0, .55), 0 0 7px rgba(246, 196, 83, .45); }
+/* 금색 칩: 평면에 눕힌 원판을 --i 번째만큼 위로 쌓는다 (진짜 높이가 생긴다. 2D에서는 위에서 본 원판) */
+.chips { position: relative; width: 96px; height: 62px; transform-style: preserve-3d; }
+.chip-tower { position: absolute; width: 28px; height: 28px; transform-style: preserve-3d; }
+.chip-tower:nth-child(1) { left: 34px; top: 26px; } .chip-tower:nth-child(2) { left: 4px; top: 8px; } .chip-tower:nth-child(3) { left: 64px; top: 8px; }
+.chip { position: absolute; inset: 0; display: block; border-radius: 50%; transform: translateZ(calc(var(--i, 0) * 4px + 1px));
+  background: radial-gradient(circle at 50% 40%, #fff3c4 0%, var(--gold) 45%, #d99a25 100%); border: 2px dashed #fff0b4; outline: 1px solid var(--gold-deep);
+  box-shadow: 0 0 0 1px #8a560c, 0 0 7px rgba(246, 196, 83, .45); }
+.bet-chip .chip, .fly .chip { position: static; width: 14px; height: 14px; transform: none; border-width: 1px; }
 
-.center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -40%); display: grid; justify-items: center; gap: 8px; z-index: 1; }
+/* 가운데: 보드는 평면에 눕히고, 팟 글자는 세우고, 팟 칩은 보드 오른쪽 */
+.center { position: absolute; left: 50%; top: 50%; transform-style: preserve-3d; transform: translate(-50%, -50%) translateZ(1px); }
 .center-label { font-size: 11px; letter-spacing: .2em; color: var(--dim); }
-.pot { display: flex; align-items: baseline; gap: 8px; }
+.pot { position: absolute; left: 50%; bottom: calc(100% + 4px); display: flex; align-items: baseline; gap: 8px; white-space: nowrap; padding: 2px 12px;
+  background: rgba(8, 6, 20, .6); border-radius: 999px; transform-origin: 50% 100%; transform: translateX(-50%) var(--stand); }
 .pot-value { font-size: 26px; color: var(--gold); font-variant-numeric: tabular-nums; text-shadow: 0 0 12px rgba(246, 196, 83, .5); }
-.board { display: flex; gap: 7px; }
-.center-lobby { gap: 4px; text-align: center; }
+.board { display: flex; gap: 7px; transform-style: preserve-3d; }
+.center > .chips { position: absolute; left: calc(100% + 14px); top: 50%; transform: translateY(-50%); }
+.center-lobby { display: grid; justify-items: center; gap: 4px; text-align: center; transform-origin: 50% 100%; transform: translate(-50%, -100%) translateZ(2px) var(--stand); }
 .big-code { font-size: 44px; letter-spacing: .3em; color: var(--cyan); text-shadow: 0 0 18px var(--cyan-soft); padding-left: .3em; }
 .center-lobby small { color: var(--dim); font-size: 13px; }
 
+/* 카드: 앞면·뒷면 두 장을 겹친 3D 카드. 뒷면이 위면 Y축으로 180° (rotate 속성 → transition으로 뒤집힌다) */
 .card { width: 50px; height: 70px; border-radius: 5px; display: grid; place-items: center; }
-.card-face { background: linear-gradient(180deg, #fff, #e8edf7); color: #10131f; border: 1px solid #c9d2e6; box-shadow: 0 4px 10px rgba(0, 0, 0, .55), 0 0 10px rgba(37, 230, 242, .25);
-  grid-template-rows: 1fr 1fr; line-height: 1; animation: card-in .32s ease-out; }
+.card3d { position: relative; width: 50px; height: 70px; transform-style: preserve-3d; transition: rotate .45s ease; animation: card-deal .4s ease-out both; }
+.card3d.is-down { rotate: y 180deg; }
+.card3d .card { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+.card3d .side-back { transform: rotateY(180deg); }
+.card-face { background: linear-gradient(180deg, #fff, #e8edf7); color: #10131f; border: 1px solid #c9d2e6; box-shadow: 0 2px 6px rgba(0, 0, 0, .55), 0 0 10px rgba(37, 230, 242, .25);
+  grid-template-rows: 1fr 1fr; line-height: 1; }
 .card-face b { font-size: 19px; align-self: end; } .card-face span { font-size: 22px; align-self: start; }
 .card-face.red { color: #d0153a; }
 .card-back { background: repeating-linear-gradient(45deg, #2a1150 0 6px, #3c1a70 6px 12px); border: 1px solid var(--cyan); box-shadow: 0 0 10px var(--cyan-soft); color: var(--cyan); font-size: 12px; letter-spacing: .1em; }
+.card-blank { background: #e8edf7; border: 1px solid #c9d2e6; }
 .card-empty { border: 1px dashed rgba(37, 230, 242, .3); background: rgba(8, 6, 20, .25); }
-@keyframes card-in { from { transform: translateY(-14px) scale(.92); opacity: 0; } to { transform: none; opacity: 1; } }
+/* 딜링: 위에서 떨어져 놓인다. 보드 카드는 뒷면으로 떨어지며 뒤집힌다 */
+@keyframes card-deal { from { transform: translateZ(90px) translateY(-40%); } to { transform: none; } }
+@keyframes card-deal-flip { from { transform: translateZ(90px) translateY(-40%) rotateY(180deg); } to { transform: none; } }
+.board .card3d { animation-name: card-deal-flip; animation-duration: .5s; }
 
-/* 칩 이동 연출: 보여 주기만 한다. 값은 서버 이벤트가 정한다 */
-.fly { position: absolute; left: 50%; z-index: 3; display: flex; align-items: center; gap: 6px; padding: 3px 9px 3px 5px; font-size: 13px; font-weight: 700; color: var(--gold);
-  background: rgba(8, 6, 20, .85); border: 1px solid rgba(246, 196, 83, .6); border-radius: 999px; pointer-events: none; animation: .62s cubic-bezier(.4, .14, .3, 1) both; }
-.fly .chip { position: static; }
+/* 칩 이동 연출: 테이블 평면 위를 포물선으로 날아간다. 보여 주기만 하고, 값은 서버 이벤트가 정한다 */
+.fly { position: absolute; z-index: 3; display: flex; align-items: center; gap: 6px; padding: 3px 9px 3px 5px; font-size: 13px; font-weight: 700; color: var(--gold);
+  background: rgba(8, 6, 20, .85); border: 1px solid rgba(246, 196, 83, .6); border-radius: 999px; pointer-events: none;
+  transform-origin: 50% 100%; transform: translate(-50%, -100%) var(--stand); animation: .62s cubic-bezier(.4, .14, .3, 1) both; }
 .fly-bottom-to-pot { animation-name: fly-bottom-pot; } .fly-top-to-pot { animation-name: fly-top-pot; }
 .fly-pot-to-bottom { animation-name: fly-pot-bottom; } .fly-pot-to-top { animation-name: fly-pot-top; }
-@keyframes fly-bottom-pot { from { top: 76%; opacity: 1; } 85% { opacity: 1; } to { top: 44%; opacity: 0; } }
-@keyframes fly-top-pot { from { top: 20%; opacity: 1; } 85% { opacity: 1; } to { top: 44%; opacity: 0; } }
-@keyframes fly-pot-bottom { from { top: 44%; opacity: 1; } 85% { opacity: 1; } to { top: 76%; opacity: 0; } }
-@keyframes fly-pot-top { from { top: 44%; opacity: 1; } 85% { opacity: 1; } to { top: 20%; opacity: 0; } }
-.fly { transform: translateX(-50%); }
+@keyframes fly-bottom-pot { from { left: 44%; top: 57%; translate: 0 0 0; } 50% { translate: 0 0 60px; } to { left: 72%; top: 50%; translate: 0 0 0; } }
+@keyframes fly-top-pot { from { left: 44%; top: 36%; translate: 0 0 0; } 50% { translate: 0 0 60px; } to { left: 72%; top: 50%; translate: 0 0 0; } }
+@keyframes fly-pot-bottom { from { left: 72%; top: 50%; translate: 0 0 0; } 50% { translate: 0 0 60px; } to { left: 26%; top: 92%; translate: 0 0 0; } }
+@keyframes fly-pot-top { from { left: 72%; top: 50%; translate: 0 0 0; } 50% { translate: 0 0 60px; } to { left: 26%; top: 10%; translate: 0 0 0; } }
 
 .status { display: flex; align-items: center; gap: 10px; margin: 12px 0 0; padding: 10px 12px; background: rgba(14, 26, 54, .8); border: 1px solid var(--cyan-soft); font-size: 15px; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 8px var(--cyan); flex: none; }
@@ -133,15 +215,22 @@ button, input { font: inherit; }
 .fine { margin-top: 12px; font-size: 12.5px; }
 
 @media (max-width: 720px) {
-  .arena { height: 600px; }
-  .table { left: -6%; right: -6%; top: 16%; bottom: 14%; }
-  .seat { grid-template-columns: auto auto; gap: 8px; }
+  .arena { height: 600px; perspective: 900px; }
+  .table { left: 1%; right: 1%; top: 14%; bottom: 10%; }
   .seat-chips { display: none; }
-  .hud { min-width: 150px; }
-  .card { width: 42px; height: 60px; } .card-face b { font-size: 16px; } .card-face span { font-size: 18px; }
+  .hud { min-width: 140px; padding: 6px 8px; left: 25%; }
+  .hud-name { font-size: 13px; max-width: 120px; } .hud-stack { font-size: 16px; }
+  .seat-cards { left: 66%; }
+  .card, .card3d { width: 40px; height: 56px; } .card-face b { font-size: 15px; } .card-face span { font-size: 17px; }
   .board { gap: 4px; }
+  .center > .chips { display: none; }
   .felt-logo { display: none; }
+  .big-code { font-size: 32px; }
   .btn { flex: 1 1 auto; }
   .wager { width: 100%; } .wager-range { flex: 1 1 120px; }
 }
-@media (prefers-reduced-motion: reduce) { .fly, .card-face { animation: none; } .fly { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .arena { transition: none; }
+  .card3d, .board .card3d { animation: none; transition: none; }
+  .fly { display: none; }
+}
