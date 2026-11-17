@@ -497,7 +497,8 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
   controls.push(h("button", { key: "exit", className: "btn btn-ghost", disabled: busy, onClick: exitRoom }, state.phase === "lobby" ? "방 나가기" : "로비로 (자리 유지)"));
 
   return h("div", { className: "room-shell" }, header,
-    h("main", { className: "arena view-" + view + (bloom ? " bloom-on" : "") },
+    // seats-N: 테이블 밖(행동 기록 등)도 인원수에 맞춰 배치할 수 있게 화면 상자에도 붙인다
+    h("main", { className: "arena seats-" + state.seats.length + " view-" + view + (bloom ? " bloom-on" : "") },
       h("div", { className: "hand-label" }, state.phase === "lobby" ? "LOBBY" : "HAND " + display.handNo + (state.street && synced ? " · " + (STREET_LABELS[state.street] || state.street) : "")),
       h(ViewToggles, { view, bloom, onView: toggleView, onBloom: toggleBloom }),
       // 최근 행동 기록 (이번 핸드만, 새 핸드가 시작되면 비운다)

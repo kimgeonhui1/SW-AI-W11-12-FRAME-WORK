@@ -142,16 +142,45 @@ button, input { font: inherit; }
 /* 옆 자리: 이름표는 테이블 가장자리 뒤쪽에 세우고, 카드는 그 앞(화면 아래쪽)에 눕혀 서로 가리지 않게 한다 */
 .seat-left { --hud-x: 12%; --hud-y: 36%; --cards-x: 13%; --cards-y: 56%; --chips-x: 13%; --chips-y: 76%; --bet-x: 22%; --bet-y: 45%; --btn-x: 28%; --btn-y: 62%; }
 .seat-right { --hud-x: 88%; --hud-y: 36%; --cards-x: 87%; --cards-y: 56%; --chips-x: 87%; --chips-y: 76%; --bet-x: 78%; --bet-y: 45%; --btn-x: 72%; --btn-y: 62%; }
-/* 3·4인 방: 위 좌석의 칩 탑이 오른쪽 좌석 이름표와 겹치지 않게 안쪽으로 (2인 배치는 그대로) */
-.seats-3 .seat-top, .seats-4 .seat-top { --chips-x: 69%; }
+/* 3·4인 방: 위 좌석의 칩 탑이 오른쪽 좌석 이름표와 겹치지 않게 안쪽으로 (2인 배치는 그대로).
+   위 좌석 이름표는 왼쪽 좌석 이름표 바로 위에 서므로 30%로 비켜 둔다 (26%에서는 이름표 높이에 따라 맞닿았다) */
+.seats-3 .seat-top, .seats-4 .seat-top { --chips-x: 69%; --hud-x: 30%; }
+/* 3·4인 방의 칩 탑: 옆 자리 칩(13%·87%, 세로 76%)이 내 이름표(3D에서 가까운 쪽이라 크게 선다)·내 칩(77%)에 닿았다
+   → 옆 자리 칩은 바깥쪽, 이름표와 카드 사이(세로 46%)로, 내 칩은 안쪽으로 */
+.seats-3 .seat-left, .seats-4 .seat-left { --chips-x: 10%; --chips-y: 46%; }
+.seats-3 .seat-right, .seats-4 .seat-right { --chips-x: 90%; --chips-y: 46%; }
+.seats-3 .seat-bottom, .seats-4 .seat-bottom { --chips-x: 72%; }
+/* 3·4인 방의 최근 행동 기록: 테이블 위 가운데에 두면 위 좌석 이름표(2D에서는 화면 맨 위)와 간판을 덮는다
+   → 폭과 상관없이 테이블 아래 목록으로 (2인 방은 그대로 테이블 위) */
+.arena.seats-3 .action-log, .arena.seats-4 .action-log { display: none; }
+.arena.seats-3 ~ .action-log-below, .arena.seats-4 ~ .action-log-below { display: grid; position: static; transform: none; max-width: none; margin: 8px 0 0; }
+/* 중간 폭(721~1100px, 모든 인원): 이름표가 고정 크기(190px)라 테이블이 좁아질수록 서로·보드·배지에 붙는다
+   (2인 방도 행동 표시 줄이 생긴 뒤로 768px에서 겹쳤다) → 비율로 줄이고, 테이블 위 행동 기록은 위 좌석을 덮으므로 아래 목록으로.
+   3·4인 방은 위 좌석 이름표를 34%까지 더 비킨다 */
+@media (max-width: 1100px) and (min-width: 721px) {
+  .table { --ui-scale: .86; }
+  .seats-3 .seat-top, .seats-4 .seat-top { --hud-x: 34%; }
+  .arena .action-log { display: none; }
+  .arena ~ .action-log-below { display: grid; position: static; transform: none; max-width: none; margin: 8px 0 0; }
+}
+@media (max-width: 900px) and (min-width: 721px) {
+  .table { --ui-scale: .74; }
+}
+/* 2D(위에서 내려다봄)에서 위 좌석 이름표는 화면 맨 위에 붙는다. 쇼다운 때 족보·칩 변화 줄로 높아지면 화면 위로 나가므로 기준점을 내린다 */
+.view-2d .seat-top { --hud-y: 10%; }
+/* 1040px 이하에서는 네 자리의 칩 탑이 이름표·옆 자리 카드에 닿는다 → 좁은 화면(720px 이하)처럼 좌석 칩 탑은 숨긴다. 금액은 이름표 숫자로 보인다 */
+@media (max-width: 1040px) and (min-width: 721px) {
+  .seats-3 .seat-chips, .seats-4 .seat-chips { display: none; }
+}
 .seat > * { position: absolute; transform-style: preserve-3d; }
 .seat-cards { left: var(--cards-x); top: var(--cards-y); display: flex; gap: 6px; transform: translate(-50%, -50%) translateZ(1px); }
 .seat-chips { left: var(--chips-x); top: var(--chips-y); width: 96px; height: 62px; transform: translate(-50%, -50%); }
 .dealer-btn { left: var(--btn-x); top: var(--btn-y); width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; font-style: normal; font-size: 13px; font-weight: 800;
   color: #1b1538; background: radial-gradient(circle at 50% 40%, #fff, #d8dcef); border: 2px solid #1b1538; box-shadow: 0 0 0 2px #f4f6ff, 0 2px 6px rgba(0, 0, 0, .6);
   transform: translate(-50%, -50%) translateZ(3px); }
-/* 세운 글자: 아래 가운데를 기준점에 두고 -tilt 만큼 세운다 */
-.hud, .bet-chip { transform-origin: 50% 100%; transform: translate(-50%, -100%) translateZ(2px) var(--stand); }
+/* 세운 글자: 아래 가운데를 기준점에 두고 -tilt 만큼 세운다.
+   --ui-scale: 3·4인 방의 좁은·중간 폭에서 이름표·배지·팟 글자를 줄이는 비율. 맨 끝(먼저 적용)에 두어 기준점(아래 가운데)은 그대로 둔 채 줄어든다 */
+.hud, .bet-chip { transform-origin: 50% 100%; transform: translate(-50%, -100%) translateZ(2px) var(--stand) scale(var(--ui-scale, 1)); }
 .hud { left: var(--hud-x); top: var(--hud-y); min-width: 190px; padding: 9px 12px; background: linear-gradient(160deg, rgba(90, 150, 255, .22), rgba(14, 10, 40, .88)); border: 1px solid rgba(160, 220, 255, .55);
   box-shadow: 0 0 16px rgba(37, 230, 242, .16); }
 .bet-chip { left: var(--bet-x); top: var(--bet-y); display: flex; align-items: center; gap: 6px; padding: 3px 9px 3px 5px; font-size: 13px; font-weight: 700;
@@ -196,7 +225,7 @@ button, input { font: inherit; }
 .center { position: absolute; left: 50%; top: 50%; transform-style: preserve-3d; transform: translate(-50%, -50%) translateZ(1px); }
 .center-label { font-size: 11px; letter-spacing: .2em; color: var(--dim); }
 .pot { position: absolute; left: 50%; bottom: calc(100% + 4px); display: flex; align-items: baseline; gap: 8px; white-space: nowrap; padding: 2px 12px;
-  background: rgba(8, 6, 20, .6); border-radius: 999px; transform-origin: 50% 100%; transform: translateX(-50%) var(--stand); }
+  background: rgba(8, 6, 20, .6); border-radius: 999px; transform-origin: 50% 100%; transform: translateX(-50%) var(--stand) scale(var(--ui-scale, 1)); }
 .pot-value { font-size: 26px; color: var(--gold); font-variant-numeric: tabular-nums; text-shadow: 0 0 12px rgba(246, 196, 83, .5); }
 .pot-split { font-size: 11px; color: var(--ink); opacity: .85; }
 .board { display: flex; gap: 7px; transform-style: preserve-3d; }
@@ -264,9 +293,16 @@ button, input { font: inherit; }
   /* 3·4인 방의 옆 자리: 이름표를 좁혀 안쪽으로, 보드는 좁은 화면에서 가로 18~82%를 차지하므로
      옆 자리 카드·배지는 바깥 끝으로, 위 자리 배지는 왼쪽 이름표와 겹치지 않게 가운데로. 2인 배치(위 두 줄)는 그대로 */
   .seat-left .hud, .seat-right .hud { min-width: 108px; padding: 5px 6px; }
-  .seats-3 .seat-left, .seats-4 .seat-left { --hud-x: 20%; --cards-x: 9%; --bet-x: 9%; --bet-y: 44%; }
-  .seats-3 .seat-right, .seats-4 .seat-right { --hud-x: 80%; --cards-x: 91%; --bet-x: 91%; --bet-y: 44%; }
-  .seats-3 .seat-top, .seats-4 .seat-top { --bet-x: 50%; }
+  /* 3·4인 좁은 화면 (모두 2인 배치는 건드리지 않는다):
+     - 옆 자리 카드: 91%·9%는 원근으로 화면 밖에 나가고 56%는 보드(세로 44~56%)에 걸렸다 → 안쪽(14%·86%), 보드 아래(66%)
+     - 위 자리 카드: 74%는 오른쪽 이름표(가로 65~95%) 바로 위였다 → 가운데(50%). 배지는 그 아래, 팟 글자 위(세로 32%)
+     - 내 카드: 74%면 오른쪽 자리 카드와 맞닿는다 → 63%. 내 배지는 왼쪽 자리 카드와 비켜 35%
+     - 이름표·배지·팟 글자: 쇼다운 때 족보·칩 변화 줄로 높아지면 서로 닿는다 → 기준점은 두고 .86배 (430px 이하는 .8배) */
+  .seats-3 .seat-left, .seats-4 .seat-left { --hud-x: 18%; --cards-x: 14%; --cards-y: 66%; --bet-x: 13%; --bet-y: 44%; }
+  .seats-3 .seat-right, .seats-4 .seat-right { --hud-x: 82%; --cards-x: 84%; --cards-y: 66%; --bet-x: 87%; --bet-y: 44%; }
+  .seats-3, .seats-4 { --ui-scale: .86; }
+  .seats-3 .seat-top, .seats-4 .seat-top { --hud-x: 37%; --cards-x: 50%; --cards-y: 20%; --bet-x: 50%; --bet-y: 32%; }
+  .seats-3 .seat-bottom, .seats-4 .seat-bottom { --cards-x: 63%; --bet-x: 35%; }
   .seat-left .seat-cards, .seat-right .seat-cards { scale: .72; }
   .hud-name { font-size: 13px; max-width: 120px; } .hud-stack { font-size: 16px; }
   .card, .card3d { width: 40px; height: 56px; } .card-face b { font-size: 15px; } .card-face span { font-size: 17px; }
@@ -276,6 +312,11 @@ button, input { font: inherit; }
   .big-code { font-size: 32px; }
   .btn { flex: 1 1 auto; }
   .wager { width: 100%; } .wager-range { flex: 1 1 120px; }
+}
+/* 3·4인 방의 아주 좁은 화면(430px 이하, 일반 휴대폰): 이름표·팟 글자는 내용(행동 표시 줄, 사이드 팟 문구)에 따라
+   너비가 달라 위치만으로는 서로 맞닿는다 → 기준점은 그대로 두고 조금 줄인다 */
+@media (max-width: 430px) {
+  .seats-3, .seats-4 { --ui-scale: .8; }
 }
 @media (prefers-reduced-motion: reduce) {
   .arena { transition: none; }
