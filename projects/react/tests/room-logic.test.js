@@ -9,9 +9,19 @@ const seat = (index, extra = {}) => ({ seat: index, name: index ? "Bravo" : "Alp
 const state = (extra = {}) => ({ handNo: 1, board: ["Q♠", "J♠", "T♠"], pot: 40, seats: [seat(0), seat(1)], events: [], lastEventSeq: 5, ...extra });
 const ev = (seq, extra = {}) => ({ seq, type: "action", handNo: 1, board: [], pot: 40, stacks: [980, 980], committed: [20, 20], seat: 0, action: "call", paid: 10, auto: false, ...extra });
 
-test("본인 좌석이 아래, 상대가 위", () => {
-  eq(L.seatOrder(0), [1, 0], "seat 0");
-  eq(L.seatOrder(1), [0, 1], "seat 1");
+test("본인 좌석이 아래, 나머지는 테이블 순서대로 왼쪽 → 위 → 오른쪽", () => {
+  const spots = (you, cap) => L.seatLayout(you, cap).map((s) => s.seat + s.where[0]).join(" ");
+  eq([spots(0, 2), spots(1, 2)], ["0b 1t", "1b 0t"], "2인: 상대가 위");
+  eq([spots(0, 3), spots(2, 3)], ["0b 1l 2r", "2b 0l 1r"], "3인");
+  eq([spots(0, 4), spots(1, 4), spots(3, 4)], ["0b 1l 2t 3r", "1b 2l 3t 0r", "3b 0l 1t 2r"], "4인");
+  for (const cap of [2, 3, 4]) for (let you = 0; you < cap; you += 1) {
+    eq(L.seatLayout(you, cap).map((s) => s.seat).sort(), Array.from({ length: cap }, (_, i) => i), "모든 좌석이 한 번씩 " + cap + "/" + you);
+  }
+});
+test("칩 이동 경로는 좌석 화면 위치를 따른다", () => {
+  const where = { 0: "bottom", 1: "left", 2: "top", 3: "right" };
+  eq(L.flightPath({ from: 1, to: "pot" }, where), { "--fx": "22%", "--fy": "45%", "--tx": "72%", "--ty": "50%" }, "left → pot");
+  eq(L.flightPath({ from: "pot", to: 3 }, where), { "--fx": "72%", "--fy": "50%", "--tx": "88%", "--ty": "36%" }, "pot → right");
 });
 test("서버 상태 그대로의 표시 상태", () => {
   const d = L.displayFromState(state());
@@ -57,12 +67,32 @@ test("표시 문구와 입력 보정", () => {
   eq(L.actionText({ seat: 1, action: "raise", paid: 60, auto: false }, ["Alpha", "Bravo"]), "Bravo · 레이즈 60", "action text");
   eq(L.actionText({ seat: 0, action: "fold", paid: 0, auto: true }, ["Alpha", "Bravo"]), "Alpha · 폴드 (시간 초과 자동)", "auto text");
   eq(L.actionText(null, []), "", "no action");
-  eq([L.positionLabel({ isButton: true }), L.positionLabel({ isButton: false })], ["D · SB", "BB"], "position");
+  eq([L.positionLabel({ isButton: true, isSmallBlind: true }), L.positionLabel({ isBigBlind: true }), L.positionLabel({ isButton: true }), L.positionLabel({})],
+    ["D · SB", "BB", "D", ""], "position");
+  eq([L.potsText([{ amount: 40 }]), L.potsText([{ amount: 2800 }, { amount: 300 }, { amount: 200 }])], ["", "메인 2,800 · 사이드1 300 · 사이드2 200"], "pots");
   eq(L.normalizeCode(" ab-c2 3xyz"), "ABC23X", "code");
   eq([L.clampWager("55.4", 40, 980), L.clampWager(5, 40, 980), L.clampWager(5000, 40, 980), L.clampWager("x", 40, 980)], [55, 40, 980, 40], "wager");
   eq([L.validName(" 지원 "), L.validName(""), L.validName("x".repeat(25)), L.validName("a\nb")], [true, false, false, false], "name");
   eq([L.remainingSeconds(30000, 1000, 1000), L.remainingSeconds(30000, 1000, 12500), L.remainingSeconds(1000, 0, 9000), L.remainingSeconds(null, 0, 0)], [30, 19, 0, null], "timer");
   eq([L.eventDelay(ev(1)) > 0, L.eventDelay(ev(1, { type: "street" })) > 0], [true, true], "delays");
+});
+test("여러 팟의 결과와 돌려받은 칩", () => {
+  const names = ["Alpha", "Bravo", "Carol", "Delta"];
+  const showdown = { reason: "showdown", pot: 3300, winnerSeat: null, payouts: [2800, 0, 300, 200], hands: ["원 페어", "하이 카드", "원 페어", "원 페어"],
+    pots: [{ amount: 2800, winners: [0] }, { amount: 300, winners: [2] }, { amount: 200, winners: [3] }] };
+  eq(L.resultText(showdown, names, 2), "승리 +300 · 메인 2,800 → Alpha(원 페어) · 사이드1 300 → Carol(원 페어) · 사이드2 200 → Delta(원 페어)", "side pots");
+  eq(L.resultText(showdown, names, 1).startsWith("패배 · 메인 2,800"), true, "loser");
+  eq(L.resultText(showdown, names, 1, false).startsWith("메인 2,800"), true, "spectator gets no outcome word");
+  const split = { reason: "showdown", pot: 135, winnerSeat: null, payouts: [0, 68, 67], hands: null, pots: [{ amount: 135, winners: [1, 2] }] };
+  eq([L.resultText(split, names, 0), L.resultText(split, names, 2)], ["패배 · 팟 135 → Bravo, Carol 분배", "무승부 +67 · 팟 135 → Bravo, Carol 분배"], "split");
+  const fold = { reason: "fold", pot: 30, winnerSeat: 0, payouts: [30, 0, 0], pots: [{ amount: 30, winners: [0] }] };
+  eq([L.resultText(fold, names, 0), L.resultText(fold, names, 1)], ["승리 · Alpha +30 · 나머지 모두 폴드", "패배 · Alpha +30 · 나머지 모두 폴드"], "fold");
+  const start = L.displayFromState(state({ pots: [{ amount: 40, eligible: [0, 1] }] }));
+  eq(start.pots, [{ amount: 40, eligible: [0, 1] }], "pots from state");
+  const back = L.applyEvent(start, ev(9, { type: "returned", seat: 3, amount: 700, pots: [{ amount: 2800, eligible: [0, 1] }] }));
+  eq([back.flight.from, back.flight.to, back.flight.amount, back.pots.length], ["pot", 3, 700, 1], "unmatched chips fly back");
+  const end = L.applyEvent(back, ev(10, { type: "hand_end", winnerSeat: null, potWon: 3300, pots: [{ amount: 2800, eligible: [0], winners: [0] }] }));
+  eq([end.flight, end.pots], [null, []], "split payout has no single flight");
 });
 test("API 주소는 페이지를 연 호스트를 따른다", () => {
   eq(L.resolveApiBase({ search: "", protocol: "http:", hostname: "192.168.0.7" }, ""), "http://192.168.0.7:18784", "LAN host");

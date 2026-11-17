@@ -18,7 +18,8 @@ from test_engine import deck_with_prefix
 A, B, C = "A" * 43, "B" * 43, "C" * 43
 # Hand 1 (seat 0 is the button): seat 0 holds 2♦ 3♦, seat 1 holds A♠ K♠, board Q♠ J♠ T♠ 4♦ 5♥ -> seat 1 wins.
 # Hand 2 (seat 1 is the button): the hole cards swap, so seat 0 wins.
-DECK = deck_with_prefix("2♦", "A♠", "3♦", "K♠", "4♥", "Q♠", "J♠", "T♠", "6♥", "4♦", "7♥", "5♥")
+# Cards are dealt one at a time starting left of the button (heads-up: the big blind first).
+DECK = deck_with_prefix("A♠", "2♦", "K♠", "3♦", "4♥", "Q♠", "J♠", "T♠", "6♥", "4♦", "7♥", "5♥")
 
 
 class FakeClock:
@@ -47,7 +48,7 @@ class RoomTests(unittest.TestCase):
     def wire_rooms(self):
         self.rooms = self.demo.rooms
         self.rooms.clock = self.clock
-        self.rooms.engine_factory = partial(PokerEngine, deck_factory=lambda: list(DECK))
+        self.rooms.deck_factory = lambda: list(DECK)
 
     def call(self, token, path, body=None, method=None, timeout=10):
         conn = http.client.HTTPConnection("127.0.0.1", self.api.server_port, timeout=timeout)
@@ -73,7 +74,7 @@ class RoomTests(unittest.TestCase):
         return result["state"]
 
     def create_and_join(self):
-        status, result = self.call(A, "/api/rooms", {"request_id": self.new_id("create")})
+        status, result = self.call(A, "/api/rooms", {"request_id": self.new_id("create"), "max_seats": 2})
         self.assertEqual(status, 200, result)
         code = result["state"]["code"]
         status, result = self.call(B, f"/api/rooms/{code}/join", {})
@@ -113,7 +114,17 @@ class RoomTests(unittest.TestCase):
         self.fail("hand did not finish")
 
     def ledger(self):
-        return [dict(row) for row, _ in self.database.tables["hand_results"].rows]
+        """Stored room hands; two-seat views (start_a/b, end_a/b, winner) are derived for the two-seat tests."""
+        rows = []
+        for row, _ in self.database.tables["room_hand_results"].rows:
+            row = dict(row)
+            seats = {p["seat"]: p for p in json.loads(row["participants"])}
+            if set(seats) == {0, 1}:
+                row.update(start_a=seats[0]["start"], start_b=seats[1]["start"], end_a=seats[0]["end"], end_b=seats[1]["end"])
+                net = row["end_a"] - row["start_a"]
+                row["winner"] = "human" if net > 0 else "bot" if net < 0 else "tie"
+            rows.append(row)
+        return rows
 
     def fault_dbms(self, table, durable=False):
         """Make INSERTs into one table look unanswered. durable=True: the row is stored but the reply is lost."""
@@ -132,18 +143,18 @@ class RoomTests(unittest.TestCase):
     # ── room, seats, start ──────────────────────────────────────────────────
 
     def test_create_join_ready_start_and_both_views_agree(self):
-        status, created = self.call(A, "/api/rooms", {"request_id": "create-0000001"})
+        status, created = self.call(A, "/api/rooms", {"request_id": "create-0000001", "max_seats": 2})
         self.assertEqual(status, 200, created)
         code = created["state"]["code"]
-        self.assertEqual(created["state"]["you"], {"seat": 0, "name": "Alpha"})
+        self.assertEqual(created["state"]["you"], {"seat": 0, "name": "Alpha", "isHost": True})
         self.assertEqual(created["state"]["phase"], "lobby")
         # a double-clicked create returns the same room
-        self.assertEqual(self.call(A, "/api/rooms", {"request_id": "create-0000001"})[1]["state"]["code"], code)
+        self.assertEqual(self.call(A, "/api/rooms", {"request_id": "create-0000001", "max_seats": 2})[1]["state"]["code"], code)
         self.assertEqual(len(self.rooms.rooms), 1)
 
         status, joined = self.call(B, f"/api/rooms/{code.lower()}/join", {})  # codes are case-insensitive
         self.assertEqual(status, 200, joined)
-        self.assertEqual(joined["state"]["you"], {"seat": 1, "name": "Bravo"})
+        self.assertEqual(joined["state"]["you"], {"seat": 1, "name": "Bravo", "isHost": False})
         self.assertEqual(self.call(B, f"/api/rooms/{code}/join", {})[1]["state"]["you"]["seat"], 1)  # idempotent
 
         status, result = self.ready(A, code, 0)
@@ -161,10 +172,11 @@ class RoomTests(unittest.TestCase):
         self.assertEqual(a["legalActions"], ["fold", "call", "raise", "all_in"])
         self.assertEqual(b["legalActions"], [])  # only the player on turn is offered actions
         self.assertEqual(a["events"][0]["type"], "hand_start")
-        matches = [row for row, _ in self.database.tables["matches"].rows]
-        self.assertEqual(len(matches), 1)
-        self.assertEqual(matches[0]["player_b"], joined["state"] and matches[0]["player_b"])
-        self.assertNotEqual(matches[0]["player_a"], matches[0]["player_b"])
+        matches = [row for row, _ in self.database.tables["room_matches"].rows]
+        self.assertEqual((len(matches), matches[0]["capacity"]), (1, 2))
+        buy_ins = [row for row, _ in self.database.tables["room_seat_events"].rows]
+        self.assertEqual(sorted((r["kind"], r["seat"], r["amount"]) for r in buy_ins), [("buyin", 0, 1000), ("buyin", 1, 1000)])
+        self.assertNotEqual(buy_ins[0]["user_db"], buy_ins[1]["user_db"])
 
     def test_hole_cards_are_private_in_every_response_and_cache(self):
         code = self.start_match()
@@ -243,7 +255,9 @@ class RoomTests(unittest.TestCase):
         self.assertEqual(self.state(A, code)["seats"][0]["cards"], ["A♠", "K♠"])
         status, result = self.act(B, code, "fold")
         self.assertEqual(status, 200, result)
-        self.assertEqual(result["state"]["result"], {"winnerSeat": 0, "reason": "fold", "pot": 20, "payouts": [20, 0], "hands": None})  # the unmatched 10 went back
+        result = result["state"]["result"]
+        self.assertEqual({k: result[k] for k in ("winnerSeat", "reason", "pot", "payouts", "hands")},
+                         {"winnerSeat": 0, "reason": "fold", "pot": 20, "payouts": [20, 0], "hands": None})  # the unmatched 10 went back
         self.assertIsNone(self.state(B, code)["seats"][0]["cards"])  # no reveal after a fold
         self.ready(A, code, 2)
         self.ready(B, code, 2)
@@ -279,7 +293,7 @@ class RoomTests(unittest.TestCase):
             self.assertNotIn("state", result)
             status, result = self.call(None, path, body)
             self.assertEqual(status, 401, path)
-        self.assertEqual(self.call(C, f"/api/rooms/{code}/join", {})[1]["error"], "room_in_progress")
+        self.assertEqual(self.call(C, f"/api/rooms/{code}/join", {})[1]["error"], "room_full")  # a free seat would be joinable mid-match
         self.assertEqual(self.state(A, code)["gameVersion"], version)  # nothing changed
         # B cannot act for A: the seat comes from the token, not from the request
         status, result = self.act(B, code, "fold", version=version)
@@ -460,7 +474,7 @@ class RoomTests(unittest.TestCase):
 
     def test_match_start_needs_a_confirmed_match_row(self):
         code = self.create_and_join()
-        original = self.fault_dbms("matches")
+        original = self.fault_dbms("room_matches")
         self.ready(A, code, 0)
         status, result = self.ready(B, code, 0)
         self.assertEqual((status, result["error"]), (503, "match_storage_unknown"))
@@ -469,11 +483,11 @@ class RoomTests(unittest.TestCase):
         self.demo._call = original
         self.ready(A, code, 0)
         self.assertEqual(self.ready(B, code, 0)[1]["state"]["phase"], "playing")
-        self.assertEqual(len(self.database.tables["matches"].rows), 1)
+        self.assertEqual(len(self.database.tables["room_matches"].rows), 1)
 
     def check_result_storage_failure(self, durable):
         code = self.start_match()
-        original = self.fault_dbms("hand_results", durable=durable)
+        original = self.fault_dbms("room_hand_results", durable=durable)
         end = self.play_to_showdown(code)
         self.assertEqual((end["phase"], end["recordStatus"]), ("hand_over", "unknown"))
         self.assertIn("결과 저장 확인 중", end["notice"])
@@ -572,7 +586,7 @@ class RoomTests(unittest.TestCase):
         self.assertEqual([row["hand_no"] for row in rows], [1, 2])
         self.assertEqual(rows[1]["prev_result_id"], rows[0]["id"])
         self.assertEqual((rows[1]["start_a"], rows[1]["start_b"]), (980, 1020))
-        self.assertEqual(len(self.database.tables["matches"].rows), 1)
+        self.assertEqual(len(self.database.tables["room_matches"].rows), 1)
 
     def test_api_restart_loses_a_room_that_never_started(self):
         code = self.create_and_join()
@@ -630,7 +644,7 @@ class RoomTests(unittest.TestCase):
         original = self.demo._call
 
         def down(service, method, url, body=None, trace_id=None):
-            if service == "Mini DBMS" and body and "FROM hand_results" in body.get("sql", ""):
+            if service == "Mini DBMS" and body and "hand_results" in body.get("sql", "") and body["sql"].startswith("SELECT"):
                 return None, {"traceId": trace_id, "service": service, "method": method, "path": "/sql", "outcome": "unavailable"}
             return original(service, method, url, body, trace_id)
 

@@ -19,7 +19,7 @@ import unittest
 
 import test_server as integration
 from engine import PokerEngine, RANKS, SUITS
-from rooms import match_key_for
+from rooms import match_key_for, replay_ledger
 import test_rooms
 from test_rooms import A, B
 
@@ -47,13 +47,13 @@ class RoomFaultSoakTests(unittest.TestCase):
     def wire_rooms(self):
         test_rooms.RoomTests.wire_rooms(self)
         rng = self.deck_rng
-        self.rooms.engine_factory = partial(PokerEngine, deck_factory=lambda: rng.sample(FULL_DECK, 52))
+        self.rooms.deck_factory = lambda: rng.sample(FULL_DECK, 52)
 
     def arm_faults(self):
         original = self.demo._call
 
         def call(service, method, url, body=None, trace_id=None):
-            if self.fault and service == "Mini DBMS" and body and body.get("sql", "").startswith("INSERT INTO hand_results"):
+            if self.fault and service == "Mini DBMS" and body and body.get("sql", "").startswith("INSERT INTO room_hand_results"):
                 if self.fault == "lost_reply":
                     original(service, method, url, body, trace_id)
                 return None, {"traceId": trace_id, "service": service, "method": method, "path": "/sql/insert-once", "outcome": "unavailable"}
@@ -75,6 +75,12 @@ class RoomFaultSoakTests(unittest.TestCase):
         self.dbms_thread = self._start(self.dbms)
         self.demo.dbms_url = f"http://127.0.0.1:{self.dbms.server_port}"
 
+    def replayed(self, code):
+        key = match_key_for(code)
+        seat_rows = [dict(r) for r, _ in self.database.tables["room_seat_events"].rows if r["match_key"] == key]
+        hand_rows = [dict(r) for r, _ in self.database.tables["room_hand_results"].rows if r["match_key"] == key]
+        return replay_ledger(key, seat_rows, hand_rows)
+
     def rows_for(self, code):
         key = match_key_for(code)
         return sorted((row for row in self.ledger() if row["match_key"] == key), key=lambda row: row["id"])
@@ -87,7 +93,7 @@ class RoomFaultSoakTests(unittest.TestCase):
         self.assertEqual(sum(stacks) + a["pot"], 2000, (code, a["phase"], stacks, a["pot"]))
         self.assertTrue(all(value >= 0 for value in stacks))
         rows = self.rows_for(code)
-        history = self.demo._validated_rows(match_key_for(code), rows)  # raises on a broken chain or duplicate key
+        history = self.replayed(code)  # raises on a broken chain, duplicate key or chips that do not add up
         last = rows[-1] if rows else None
         ledger_stacks = [last["end_a"], last["end_b"]] if last else [1000, 1000]
         self.assertNotEqual(a["recordStatus"], "blocked")
@@ -184,14 +190,14 @@ class RoomFaultSoakTests(unittest.TestCase):
         # final ledger: every match is an unbroken chain and agrees with what the players were shown
         for code in codes:
             rows = self.rows_for(code)
-            history = self.demo._validated_rows(match_key_for(code), rows)
+            history = self.replayed(code)
             self.assertEqual([row["hand_no"] for row in rows], list(range(1, history["hand_no"] + 1)))
             for row in rows:
                 self.assertEqual((row["start_a"] + row["start_b"], row["end_a"] + row["end_b"]), (2000, 2000))
                 if (code, row["hand_no"]) in observed:
                     self.assertEqual(observed[(code, row["hand_no"])], [row["end_a"], row["end_b"]])
         self.assertEqual(len({row["operation_key"] for row in self.ledger()}), len(self.ledger()))
-        self.assertEqual(len(self.database.tables["matches"].rows), len(codes))
+        self.assertEqual(len(self.database.tables["room_matches"].rows), len(codes))
         for scenario in ("api_restart", "dbms_restart", "fault_down", "fault_lost_reply", "timeouts", "duplicates", "stale", "waited_for_storage"):
             self.assertGreater(stats[scenario], 0, (scenario, dict(stats)))
         print(f"\n  seed {seed}: {dict(stats)}, hands stored {len(self.ledger())}, matches {len(codes)}", flush=True)

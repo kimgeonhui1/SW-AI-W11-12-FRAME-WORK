@@ -1,13 +1,13 @@
 # JUNGLE POKER LAB — UI 인계 문서
 
-작성 2026-11-16. 대상: 2인 온라인 대전 화면을 새로 만들거나 고치는 UI 담당자.
+작성 2026-11-16, 2~4인 확장 반영 2026-11-17. 대상: 온라인 대전 화면을 새로 만들거나 고치는 UI 담당자.
 서버·엔진·DBMS·Redis와 화면의 현재 계약을 아래에 기록합니다. 검증 범위는 README 및 VALIDATION.md를 확인하세요.
 가상 칩만 사용합니다.
 
 ## 1. 먼저 알아둘 원칙 다섯 가지
 
 1. **화면은 결과를 정하지 않습니다.** 버튼은 요청만 보내고, 칩·팟·보드·차례·승패는 서버가 준 값만 그립니다.
-2. **상대 홀카드는 쇼다운 전에는 브라우저에 오지 않습니다.** 숨기는 게 아니라 값 자체가 없습니다. 뒷면 카드는 `cardCount`만 보고 그립니다.
+2. **다른 사람 홀카드는 쇼다운 전에는 브라우저에 오지 않습니다(폴드한 카드는 끝까지 안 옴).** 숨기는 게 아니라 값 자체가 없습니다. 뒷면 카드는 `cardCount`만 보고 그립니다.
 3. **애니메이션은 판정과 무관합니다.** 이벤트를 순서대로 재생한 뒤에는 반드시 `state` 값으로 화면을 맞춥니다.
 4. **같은 요청 재전송은 안전합니다.** 서버에 닿지 못했을 때(네트워크 오류)만 같은 본문·같은 ID로 다시 보냅니다. 서버가 오류로 답했으면 다시 보내지 않습니다.
 5. **방 코드는 권한이 아닙니다.** 좌석 권한은 브라우저의 게스트 토큰에만 있습니다.
@@ -23,6 +23,7 @@
 | `projects/react/src/styles/room.css` | 참고 스타일 | 자유롭게 교체 |
 | `projects/react/tests/room-logic.test.js` | `roomLogic.js` 테스트 | 로직을 바꾸면 함께 갱신 |
 | `projects/poker_demo/rooms.py` | 방·좌석·동기화 서버 | 수정 불필요 |
+| `projects/poker_demo/table.py` | 2~4인 한 핸드(순서·사이드 팟·정산) | 수정 불필요 |
 | `projects/poker_demo/MULTIPLAYER.md` | 서버 규칙·저장 설계 | 참고 |
 
 기존 연습 모드(`poker.html`, 사람 대 봇)와 Mini React 과제 페이지(`index.html`, `app.html`)는 그대로입니다.
@@ -128,10 +129,13 @@ http://192.168.0.7:5500/room.html
    └ 방 만들기 ─ POST /api/rooms              ┐
    └ 코드로 참가 ─ GET .../public(미리보기) → POST .../join ┘
         └ 동기화 루프 시작 ─ GET .../state (계속 반복)
-             로비: POST .../ready {ready:true, hand_no:0}  → 둘 다 준비하면 핸드 시작
+             로비: POST .../ready {ready:true, hand_no:0}  → 앉은 사람 모두 준비하면 시작
+                   방장: POST .../start {hand_no:0}        → 준비 2명 이상이면 그 사람들로 시작 (state.canStart)
              대전: 내 차례면 POST .../action
-             핸드 끝: POST .../ready {ready:true, hand_no:<지금 handNo>} 또는 12초 뒤 자동 시작
-             매치 끝: 새 방을 만든다
+             핸드 끝: POST .../ready {ready:true, hand_no:<지금 handNo>} 또는 12초 뒤 준비한 사람끼리 자동 시작
+             진행 중에 앉은 사람·쉬는 사람: POST .../ready {ready:true, hand_no:<지금 handNo>} → 다음 핸드 참가
+             칩 정산 퇴장(핸드 사이): POST .../leave → {left, cashOut}. 같은 매치 재착석 불가
+             매치 끝(칩 가진 사람 1명 이하): 새 방을 만든다
 ```
 
 새로고침했을 때는 저장된 토큰으로 `POST /api/guest`(같은 이름)를 다시 보내고, 주소의 방 코드로 `POST .../join`을 부르면 본인 좌석으로 복귀합니다. 참고 구현은 방 코드를 주소 끝 `#room=ABC234`에 둡니다.
@@ -151,13 +155,14 @@ http://192.168.0.7:5500/room.html
 
 | 요청 | 본문 | 성공 응답 |
 |---|---|---|
-| `POST /api/rooms` | `{"request_id": "<8~128자 고유값>"}` | `{"state": …}` (만든 사람은 0번 좌석) |
-| `POST /api/rooms/{code}/join` | `{}` | `{"state": …}` (이미 앉아 있으면 본인 좌석 그대로) |
+| `POST /api/rooms` | `{"request_id": "<8~128자 고유값>", "max_seats": 2~4(생략 시 4)}` | `{"state": …}` (만든 사람은 0번 좌석·방장) |
+| `POST /api/rooms/{code}/join` | `{}` | `{"state": …}` (빈 좌석 중 앞 번호. 이미 앉아 있으면 본인 좌석 그대로. 진행 중이면 다음 핸드부터) |
 | `POST /api/rooms/{code}/ready` | `{"ready": true/false, "hand_no": <state.handNo>}` | `{"state": …}` |
+| `POST /api/rooms/{code}/start` | `{"hand_no": 0}` | `{"state": …}` (방장만, 로비에서 준비 2명 이상) |
 | `POST /api/rooms/{code}/action` | `{"action_id": "<8~128자 고유값>", "expected_version": <state.gameVersion>, "action": "…", "to": <정수, bet/raise만>}` | `{"state": …}` 또는 `{"state": …, "replayed": true}` |
 | `GET /api/rooms/{code}/state?since=&after=&wait=` | — | `{"state": …}` |
 | `GET /api/rooms/{code}/public` | — (토큰 불필요) | `{"room": …, "cache": "HIT"|"MISS"|"BYPASS"}` |
-| `POST /api/rooms/{code}/leave` | `{}` | `{"left": true}` (게임 시작 전에만) |
+| `POST /api/rooms/{code}/leave` | `{}` | 로비 `{"left": true}` / 매치 중 `{"left": true, "cashOut": <칩>}` (내가 든 핸드 도중엔 409) |
 
 - `action`: `fold` `check` `call` `bet` `raise` `all_in` 중 `state.legalActions`에 있는 것만 보냅니다.
 - `to`: 이번 스트리트에서 **내가 낸 총액을 얼마로 만들지**입니다(“얼마 더”가 아님). `minRaiseTo` 이상 `maxRaiseTo` 이하 정수.
@@ -182,7 +187,7 @@ http://192.168.0.7:5500/room.html
 4. `instance`가 바뀌면 서버가 재시작돼 방이 복구된 것이므로, 가진 번호를 모두 버리고 1번처럼 바로 맞춤.
 5. 네트워크 오류면 0.7~5초 간격으로 다시 시도. `403`·`404`면 루프를 멈추고 방 밖으로.
 
-**요청 간격이 8초를 넘으면 상대 화면에 "연결 끊김"으로 보입니다.** 루프를 멈추지 마세요. `roomLogic.js`의 `planUpdate`·`applyEvent`·`displayFromState`가 1~4를 구현하고 있습니다.
+**요청 간격이 8초를 넘으면 다른 사람 화면에 "연결 끊김"으로 보이고, 다음 핸드에서 빠집니다.** 루프를 멈추지 마세요. `roomLogic.js`의 `planUpdate`·`applyEvent`·`displayFromState`가 1~4를 구현하고 있습니다.
 
 ### 5.4 오류 응답
 
@@ -193,13 +198,16 @@ http://192.168.0.7:5500/room.html
 | 400 | `invalid_*_request`, `illegal_action` | 잘못된 본문·규칙 위반. 메시지를 보여 주고 재시도하지 않음 |
 | 401 | `guest_auth_required`, `guest_auth_invalid` | 토큰 없음·미등록. `/api/guest`부터 다시 |
 | 403 | `not_seated` | 이 방의 좌석 주인이 아님 |
+| 403 | `not_host` | 방장이 아닌데 시작 요청 |
 | 404 | `room_not_found`, `not_found` | 방 없음(코드 오타, 또는 시작 전 방이 서버 재시작으로 사라짐) |
 | 409 | `stale_state` | 화면이 본 상태가 이미 지남. 함께 온 `state`로 맞춤 |
 | 409 | `not_your_turn`, `hand_not_active`, `hand_active` | 차례·단계가 맞지 않음. `state`로 맞춤 |
 | 409 | `request_id_reused` | 같은 ID에 다른 본문. 새 ID로 다시 |
-| 409 | `room_full`, `room_in_progress`, `room_left`, `match_in_progress`, `match_over` | 참가·이탈 불가. 메시지 표시 |
+| 409 | `room_full`, `left_match`, `match_in_progress`, `match_over`, `result_storage_pending` | 참가·이탈 불가. 메시지 표시 |
+| 409 | `not_enough_ready`, `busted` | 시작 조건 부족 / 칩 0이라 참가 불가 |
 | 409 | `guest_name_immutable` | 이 브라우저 게스트는 다른 이름으로 이미 등록됨 |
 | 503 | `match_storage_unknown` | 매치 시작 기록을 저장하지 못함. 준비가 풀렸으니 다시 준비 |
+| 503 | `seat_storage_unknown` | 매치 중 참가·퇴장 기록을 저장하지 못함. 일어나지 않은 것으로 처리. 다시 시도 |
 | 503 | `room_store_unavailable`, `room_recovery_failed`, `guest_store_unavailable` | DBMS 연결 문제. 잠시 뒤 재시도 |
 | 503 | `too_many_rooms`, `room_code_exhausted` | 방 생성 불가. 잠시 뒤 재시도 |
 
@@ -212,12 +220,16 @@ http://192.168.0.7:5500/room.html
 | `version` | int | 보이는 무엇이든 바뀌면 증가(접속·준비 표시 포함). 동기화 커서 |
 | `gameVersion` | int | 게임 진행(핸드 시작·행동·시간 초과)에서만 증가. `expected_version`에 그대로 보냄 |
 | `phase` | string | `lobby` `playing` `hand_over` `match_over` |
-| `you` | `{seat, name}` | 내 좌석 번호(0 또는 1)와 이름. **내 좌석을 아래에 그리세요** |
-| `seats` | array(2) | 아래 표 |
+| `capacity` | int | 좌석 수 2~4 (`seats` 길이) |
+| `hostSeat` | int\|null | 방장 좌석 |
+| `you` | `{seat, name, isHost}` | 내 좌석 번호와 이름. **내 좌석을 아래에, 나머지는 좌석 번호 순서대로 왼쪽 → 위 → 오른쪽**(`roomLogic.seatLayout`) |
+| `seats` | array(capacity) | 아래 표 |
+| `readyCount` / `canStart` | int / bool | 로비 준비 인원 / 내가 방장이고 지금 시작할 수 있는지 |
 | `handNo` | int | 핸드 번호(로비는 0) |
 | `street` | string\|null | `preflop` `flop` `turn` `river` `showdown` `complete`(폴드로 끝남). 로비는 `null` |
 | `board` | string[] | 공개 카드 0·3·4·5장 |
-| `pot` | int | 이번 핸드 팟. 정산 뒤 0 |
+| `pot` | int | 이번 핸드 팟 합계. 정산 뒤 0 |
+| `pots` | `[{amount, eligible[]}]` | 팟 구성(메인 먼저). 올인한 사람이 있을 때만 여러 개. 진행 중이 아니면 `[]` |
 | `turnSeat` | int\|null | 차례인 좌석(`playing`일 때만) |
 | `turnRemainingMs` | int\|null | 차례 남은 시간(ms). 받은 시각부터 화면에서 줄여 보여 주기만 함 |
 | `turnSeconds` | number | 차례 제한(30) |
@@ -236,7 +248,7 @@ http://192.168.0.7:5500/room.html
 
 | 필드 | 뜻 |
 |---|---|
-| `seat` | 0 또는 1 |
+| `seat` | 좌석 번호 0~3 |
 | `occupied` | 앉은 사람이 있는지 |
 | `name` | 닉네임(빈 자리는 `null`) |
 | `connected` | 최근 8초 안에 요청이 있었는지 |
@@ -244,14 +256,18 @@ http://192.168.0.7:5500/room.html
 | `stack` | 앞에 남은 칩 |
 | `committed` | **이번 핸드에** 낸 총액 |
 | `streetBet` | **이번 스트리트에** 낸 금액(좌석 앞 베팅 칩 표시에 적합) |
-| `isButton` | 딜러 버튼(2인이라 스몰 블라인드). 아니면 빅 블라인드 |
+| `isButton` / `isSmallBlind` / `isBigBlind` | 이번 핸드 포지션(2인이면 버튼이 SB) |
+| `isHost` | 방장 |
 | `isTurn` | 지금 차례인지 |
-| `cardCount` | 홀카드 장수(핸드가 있으면 2) |
-| `cards` | 카드 배열 또는 `null`. 내 좌석은 항상, 상대는 `street == "showdown"`일 때만 값이 옴 |
+| `inHand` | 이번 핸드 참가자인지(진행 중 착석·쉬는 사람은 `false`) |
+| `sittingIn` | 다음 핸드 참가 예약 |
+| `folded` / `allIn` / `busted` | 폴드 / 올인 / 칩 0(관전) |
+| `cardCount` | 홀카드 장수(이번 핸드 참가자면 2) |
+| `cards` | 카드 배열 또는 `null`. 내 좌석은 항상, 다른 사람은 `street == "showdown"`이고 폴드하지 않았을 때만 |
 
 카드 문자열: 랭크 `2…9 T J Q K A` + 무늬 `♠ ♥ ♦ ♣` (예: `"T♠"`는 스페이드 10).
 
-`result`: `{winnerSeat: 0|1|null(무승부), reason: "fold"|"showdown", pot, payouts: [좌석0, 좌석1], hands: [족보 이름 2개] | null}`. `hands`는 쇼다운일 때만 있습니다(예: `"투 페어"`).
+`result`: `{reason: "fold"|"showdown", pot, pots: [{amount, eligible, winners, shares: [[좌석, 금액], …]}], payouts: [좌석별], winnerSeats: [], winnerSeat: 혼자 다 가져갔으면 그 좌석 아니면 null, hands: [좌석별 족보 이름|null] | null}`. `hands`는 쇼다운일 때만, 끝까지 남은 좌석만 값이 있습니다(예: `"투 페어"`). 내 승·패·무는 `roomLogic.outcomeWord`(팟별 `winners` 기준).
 
 `recordStatus`:
 
@@ -262,16 +278,17 @@ http://192.168.0.7:5500/room.html
 | `unknown` | 결과는 정해졌지만 저장 확인 전. 서버가 2초마다 다시 시도 | "결과 저장 확인 중" 표시, 다음 판 버튼 비활성 |
 | `blocked` | 저장 기록 충돌. 이 방은 더 진행 불가 | 오류 안내 |
 
-## 7. 이벤트 (두 화면이 같은 순서로 받음)
+## 7. 이벤트 (모든 화면이 같은 순서로 받음)
 
-모든 이벤트의 공통 필드: `seq`(1씩 증가, 빈 번호 없음), `type`, `gameVersion`, `handNo`, 그리고 **그 이벤트 직후의 테이블**인 `board`, `pot`, `stacks[2]`, `committed[2]`.
+모든 이벤트의 공통 필드: `seq`(1씩 증가, 빈 번호 없음), `type`, `gameVersion`, `handNo`, 그리고 **그 이벤트 직후의 테이블**인 `board`, `pot`, `pots`, `stacks[capacity]`, `committed[capacity]`.
 
 | type | 추가 필드 | 의미 |
 |---|---|---|
-| `hand_start` | `button`, `smallBlind`, `bigBlind` | 블라인드까지 낸 직후 |
+| `hand_start` | `button`, `sb`, `bb`(좌석), `participants`(좌석 배열) | 블라인드까지 낸 직후 |
 | `action` | `seat`, `action`, `paid`, `allIn`, `auto`, `to`(bet/raise) | 한 사람의 행동. `auto: true`는 시간 초과 자동 처리 |
+| `returned` | `seat`, `amount` | 아무도 맞추지 못한 초과 베팅을 돌려줌 |
 | `street` | `street`(`flop`/`turn`/`river`) | 보드 카드 공개 |
-| `hand_end` | `reason`, `potWon`, `winnerSeat`(무승부 `null`), `payouts[2]` | 정산. 이 이벤트에서만 칩이 승자에게 감 |
+| `hand_end` | `reason`, `potWon`, `pots`(승자 포함), `winnerSeat`, `winnerSeats`, `payouts` | 정산. 이 이벤트에서만 칩이 승자에게 감 |
 | `recovered` | — | 서버 재시작 후 방 복구 |
 
 - 올인 콜 한 번에 `action` → `street` ×3 → `hand_end`가 한꺼번에 올 수 있습니다. 순서대로 재생하세요.
@@ -293,9 +310,10 @@ http://192.168.0.7:5500/room.html
 }}
 ```
 
-최근 기록 한 줄: `matchKey`, `id`, `handNo`, `mode`(`practice`/`online`), `seat`, `result`(`win`/`loss`/`draw`, **내 기준**), `reason`, `startStack`, `endStack`(내 좌석 기준), `board`, `opponent`(온라인만).
+최근 기록 한 줄: `matchKey`, `id`, `handNo`, `mode`(`practice`/`online`), `seat`, `result`(`win`/`loss`/`draw`, **내 기준**), `reason`, `startStack`, `endStack`(내 좌석 기준), `board`, `opponent`(온라인만). 2~4인 방 기록은 `source: "room"`, `net`, `players`(참가 인원), `opponents`(이름 배열)가 더 있습니다.
 
-- 방장(0번)과 참가자(1번) 모두 자기 좌석 기준으로 집계됩니다.
+- 모든 좌석이 자기 좌석 기준으로 집계됩니다. 2~4인 방은 핸드마다 내 칩 증감으로 승(+)·패(−)·무(0)를 셉니다.
+- 이전 2인 방 기록(`matches`/`hand_results`)도 계속 합산됩니다.
 - `winner` 필드도 남아 있지만 내부 값(`human`/`bot`/`tie`)이라 화면에는 `result`를 쓰세요.
 - DBMS에 저장이 확인된 핸드만 셉니다. DBMS에 연결할 수 없으면 숫자 대신 `503 profile_store_unavailable`을 돌려줍니다.
 
@@ -303,11 +321,13 @@ http://192.168.0.7:5500/room.html
 
 | 항목 | 규칙 |
 |---|---|
-| 블라인드·시작 칩 | 10/20, 각자 1,000 |
+| 인원 | 방마다 2~4석, 준비 2명 이상이면 시작 가능 |
+| 블라인드·시작 칩 | 10/20, 각자 1,000(매치 중 참가도 1,000) |
+| 순서·팟 | 버튼 → SB → BB, 헤즈업은 버튼=SB. 사이드 팟은 팟마다 따로 정산, 홀수 칩은 버튼 왼쪽부터. 자세히는 `MULTIPLAYER.md` |
 | 차례 제한 | 30초. 넘기면 체크, 베팅을 받은 상태면 폴드. 서버 시계로만 판정 |
-| 다음 핸드 | 둘 다 준비하면 즉시, 아니면 결과 저장 확인 후 12초 뒤 자동(둘 다 접속 중일 때만) |
-| 연결 끊김 | 8초간 요청이 없으면 표시. 진행 중 핸드는 차례 제한대로 계속 |
-| 매치 종료 | 한쪽 칩이 0. 같은 방에서 재대결 없음 → 새 방 |
+| 다음 핸드 | 참가 예약한 사람이 모두 준비하면 즉시, 아니면 결과 저장 확인 후 12초 뒤 준비한 사람끼리 자동(칩 있고 접속 중인 사람만) |
+| 연결 끊김 | 8초간 요청이 없으면 표시. 진행 중 핸드는 차례 제한대로 계속, 다음 핸드에서 빠짐 |
+| 매치 종료 | 칩 가진 사람이 1명 이하. 칩 0 좌석은 관전. 같은 방에서 재대결 없음 → 새 방 |
 | 서버 재시작 | 좌석과 마지막 **저장 확인된** 핸드의 칩으로 복구. 진행 중이던 핸드와 저장 확인 전 결과는 무효 |
 | 시작 전 방 | 저장하지 않음. 서버 재시작 시 사라짐(`404`) |
 | 중복 탭 | 같은 좌석을 봄. 먼저 도착한 행동만 반영되고 나머지는 `409 stale_state` |
@@ -323,7 +343,9 @@ http://192.168.0.7:5500/room.html
 | `roomLogic.js` 7개 | 통과 | node |
 | 한 PC의 독립 브라우저 두 세션: 방 생성~5핸드, 새로고침, 네트워크 끊김, API 프로세스 재시작, 제3자 차단, 전적 대칭 | 72항목 통과 | 작업 공간 사본(해시 일치 확인), Linux Chrome |
 
-**확인하지 못한 것**: 서로 다른 두 컴퓨터의 LAN 접속, Windows·Python 3.14에서의 실행, 인터넷 접속.
+**2026-11-17 2~4인 확장 (기준 커밋 6e117d0, 작업 공간 사본)**: Poker 서버 133개, DBMS 17개, Redis 87개, `roomLogic.js` 10개, Mini React 브라우저 스위트 10종 통과. 독립 브라우저 세션 4개 E2E 31/31, 기존 2인 브라우저 E2E 118/121(실패 3개는 375px HUD 잘림 D1, 보류).
+
+**확인하지 못한 것**: 서로 다른 컴퓨터(2~4대)의 LAN 접속, Windows·Python 3.14에서의 실행, 인터넷 접속.
 
 테스트 실행:
 

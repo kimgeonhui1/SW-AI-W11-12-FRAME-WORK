@@ -1,0 +1,166 @@
+{
+ "results": [
+  {
+   "name": "four independent guests",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo: public preview shows capacity",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: public preview shows capacity",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Delta: public preview shows capacity",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "seats 0..3 in join order",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "all 4 screens equal their server state (lobby with four)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "host sees the start button, others do not",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "button 0, SB 1, BB 2, UTG 3 acts first",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "hand 1: showdown reveals all four hands to everyone",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "hand 1: result line names the pot",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "hand 2: folded hands stay hidden for others",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "cash-out shows the amount",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "others see the seat freed",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "no re-seat after cash-out in the same match",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "stale action 4xx: notice shown, no retry lock, actions still enabled",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "stale action changed nothing",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "after the 4xx the same player acted normally",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "hand 3: chips conserved on screen",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "hand 3: side pots listed in the result line",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "busted seats show 칩 없음",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "hand 4: busted player was not dealt in",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "ledger: hands 1..N stored once",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "table chips == buy-ins - cash-outs",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha: profile equals the ledger",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo: profile equals the ledger",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: profile equals the ledger",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Delta: profile equals the ledger",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha: no script errors in console",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo: no script errors in console",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: no script errors in console",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Delta: no script errors in console",
+   "ok": true,
+   "detail": ""
+  }
+ ],
+ "ports": {
+  "dbms": 48383,
+  "redis": 57117,
+  "api": 60633,
+  "static": 52577
+ },
+ "data": "/tmp/jpl-e2e4-db-oim2ql34"
+}

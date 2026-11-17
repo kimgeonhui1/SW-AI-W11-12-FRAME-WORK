@@ -599,8 +599,46 @@ class Demo:
                 if opponent is not None:
                     entry["opponent"] = opponent
                 recent[mode].append(entry)
+        # 2-4 seat rooms: every match this guest bought into; each hand counted from the guest's own seat
+        # by net chips (win > 0, loss < 0, draw = 0).
+        payload, trace = self._sql("SELECT match_key, kind FROM room_seat_events WHERE user_db = ?", [user["dbId"]], trace_id)
+        self._record(user["userId"], [trace])
+        if trace["outcome"] != "ok":
+            return unavailable("Mini DBMS could not load room seats")
+        joined = sorted({row["match_key"] for row in payload.get("result", {}).get("rows", []) if row["kind"] == "buyin"})
+        for match_key in joined:
+            ledger, error = self.rooms.load_ledger(match_key, trace_id)
+            if ledger is None:
+                if error == "unavailable":
+                    return unavailable("Mini DBMS could not load room hands")
+                return self._error(503, "profile_data_corrupt", "stored room history failed validation", self._traces(user["userId"]), trace_id)
+            totals["online"]["matches"] += 1
+            for row in ledger["hands"]:
+                participants = json.loads(row["participants"])
+                mine = next((p for p in participants if p["user"] == user["dbId"]), None)
+                if mine is None:
+                    continue
+                others = [p["user"] for p in participants if p["user"] != user["dbId"]]
+                for other in others:
+                    if other not in names:
+                        found, trace = self._sql("SELECT id, display_name FROM guest_users WHERE id = ?", [other], trace_id)
+                        rows = found.get("result", {}).get("rows", []) if trace["outcome"] == "ok" else None
+                        if not rows:
+                            return unavailable("Mini DBMS could not load a room opponent")
+                        names[other] = rows[0]["display_name"]
+                net = mine["end"] - mine["start"]
+                result = "win" if net > 0 else "loss" if net < 0 else "draw"
+                totals["online"]["hands"] += 1
+                totals["online"][{"win": "wins", "loss": "losses", "draw": "draws"}[result]] += 1
+                recent["online"].append({
+                    "matchKey": match_key, "id": row["id"], "source": "room", "handNo": row["hand_no"], "mode": "online",
+                    "seat": mine["seat"], "result": result, "net": net, "reason": row["reason"],
+                    "startStack": mine["start"], "endStack": mine["end"], "board": json.loads(row["board"]),
+                    "players": len(participants), "opponents": [names[o] for o in others],
+                    "opponent": ", ".join(names[o] for o in others)})
         for rows in recent.values():
-            rows.sort(key=lambda row: row["id"], reverse=True)
+            # rows of the 2-4 seat tables are newer than any row of the earlier two-seat tables
+            rows.sort(key=lambda row: (row.get("source") == "room", row["id"]), reverse=True)
         profile = {
             "userId": user["userId"], "displayName": user["displayName"], "createdAt": user["createdAt"],
             "practice": totals["practice"],
@@ -701,7 +739,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(500, {"error": "internal_error"})
 
     def _send(self, status, value):
+        if getattr(self, "_disconnected", False):
+            return  # the client is gone; never write a second response to it
         raw = json.dumps(value, ensure_ascii=False).encode("utf-8")
+        try:
+            self._write_response(status, raw)
+        except (BrokenPipeError, ConnectionResetError):
+            self._disconnected = True  # client closed the connection before reading the answer
+            self.close_connection = True
+
+    def _write_response(self, status, raw):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))

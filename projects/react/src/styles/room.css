@@ -1,4 +1,4 @@
-/* [room.css] JUNGLE POKER LAB 2인 대전 화면 — 보라색 펠트, 청록 네온, 금색 입체 칩, 유리판 좌석 HUD */
+/* [room.css] JUNGLE POKER LAB 2~4인 대전 화면 — 보라색 펠트, 청록 네온, 금색 입체 칩, 유리판 좌석 HUD */
 :root {
   --bg: #07060f; --ink: #eafcff; --dim: #8fa3c4; --cyan: #25e6f2; --cyan-soft: rgba(37, 230, 242, .35);
   --violet: #3a1560; --violet-deep: #1d0b36; --magenta: #c84bff; --gold: #f6c453; --gold-deep: #a86b12; --danger: #ff5d7a; --ok: #58f0a7;
@@ -125,27 +125,39 @@ button, input { font: inherit; }
 .view-btn[aria-pressed="true"] { border-color: var(--cyan); color: var(--cyan); box-shadow: 0 0 10px var(--cyan-soft); }
 .view-btn:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 
-/* 좌석: 테이블 평면 전체를 덮는 층. 안의 조각을 평면 좌표(%)로 놓는다. 위 좌석 = 먼 쪽, 아래 좌석 = 내 쪽 */
+/* 좌석: 테이블 평면 전체를 덮는 층. 안의 조각을 평면 좌표(%)로 놓는다. 위 좌석 = 먼 쪽, 아래 좌석 = 내 쪽, 왼쪽·오른쪽 = 3·4인 방의 옆 자리
+   좌석 위치는 변수 --*-x / --*-y 로만 바꾼다. 칩이 날아가는 출발·도착점(roomLogic.FLIGHT_POINTS)도 같은 값이다 */
 .seat { position: absolute; inset: 0; transform-style: preserve-3d; pointer-events: none;
+  --cards-x: 58%; --hud-x: 26%; --chips-x: 77%; --bet-x: 44%; --btn-x: 46%;
   --cards-y: 70%; --hud-y: 100%; --chips-y: 72%; --bet-y: 57%; --btn-y: 72%; }
 .seat-top { --cards-y: 22%; --hud-y: 6%; --chips-y: 20%; --bet-y: 36%; --btn-y: 22%; }
+/* 옆 자리: 이름표는 테이블 가장자리 뒤쪽에 세우고, 카드는 그 앞(화면 아래쪽)에 눕혀 서로 가리지 않게 한다 */
+.seat-left { --hud-x: 12%; --hud-y: 36%; --cards-x: 13%; --cards-y: 56%; --chips-x: 13%; --chips-y: 76%; --bet-x: 22%; --bet-y: 45%; --btn-x: 28%; --btn-y: 62%; }
+.seat-right { --hud-x: 88%; --hud-y: 36%; --cards-x: 87%; --cards-y: 56%; --chips-x: 87%; --chips-y: 76%; --bet-x: 78%; --bet-y: 45%; --btn-x: 72%; --btn-y: 62%; }
+/* 3·4인 방: 위 좌석의 칩 탑이 오른쪽 좌석 이름표와 겹치지 않게 안쪽으로 (2인 배치는 그대로) */
+.seats-3 .seat-top, .seats-4 .seat-top { --chips-x: 69%; }
 .seat > * { position: absolute; transform-style: preserve-3d; }
-.seat-cards { left: 58%; top: var(--cards-y); display: flex; gap: 6px; transform: translate(-50%, -50%) translateZ(1px); }
-.seat-chips { left: 77%; top: var(--chips-y); width: 96px; height: 62px; transform: translate(-50%, -50%); }
-.dealer-btn { left: 46%; top: var(--btn-y); width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; font-style: normal; font-size: 13px; font-weight: 800;
+.seat-cards { left: var(--cards-x); top: var(--cards-y); display: flex; gap: 6px; transform: translate(-50%, -50%) translateZ(1px); }
+.seat-chips { left: var(--chips-x); top: var(--chips-y); width: 96px; height: 62px; transform: translate(-50%, -50%); }
+.dealer-btn { left: var(--btn-x); top: var(--btn-y); width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; font-style: normal; font-size: 13px; font-weight: 800;
   color: #1b1538; background: radial-gradient(circle at 50% 40%, #fff, #d8dcef); border: 2px solid #1b1538; box-shadow: 0 0 0 2px #f4f6ff, 0 2px 6px rgba(0, 0, 0, .6);
   transform: translate(-50%, -50%) translateZ(3px); }
 /* 세운 글자: 아래 가운데를 기준점에 두고 -tilt 만큼 세운다 */
 .hud, .bet-chip { transform-origin: 50% 100%; transform: translate(-50%, -100%) translateZ(2px) var(--stand); }
-.hud { left: 26%; top: var(--hud-y); min-width: 190px; padding: 9px 12px; background: linear-gradient(160deg, rgba(90, 150, 255, .22), rgba(14, 10, 40, .88)); border: 1px solid rgba(160, 220, 255, .55);
+.hud { left: var(--hud-x); top: var(--hud-y); min-width: 190px; padding: 9px 12px; background: linear-gradient(160deg, rgba(90, 150, 255, .22), rgba(14, 10, 40, .88)); border: 1px solid rgba(160, 220, 255, .55);
   box-shadow: 0 0 16px rgba(37, 230, 242, .16); }
-.bet-chip { left: 44%; top: var(--bet-y); display: flex; align-items: center; gap: 6px; padding: 3px 9px 3px 5px; font-size: 13px; font-weight: 700;
+.bet-chip { left: var(--bet-x); top: var(--bet-y); display: flex; align-items: center; gap: 6px; padding: 3px 9px 3px 5px; font-size: 13px; font-weight: 700;
   color: var(--gold); background: rgba(8, 6, 20, .85); border: 1px solid rgba(246, 196, 83, .5); border-radius: 999px; white-space: nowrap; }
 .is-turn .hud { border-color: var(--cyan); box-shadow: 0 0 0 2px rgba(37, 230, 242, .35), 0 0 26px var(--cyan-soft); }
 .is-winner .hud { border-color: var(--gold); box-shadow: 0 0 26px rgba(246, 196, 83, .45); }
 .is-empty .hud { opacity: .7; border-style: dashed; }
 .hud-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .hud-name { font-weight: 700; font-size: 15px; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hud-host { font-size: 11px; color: var(--cyan); border: 1px solid var(--cyan-soft); padding: 1px 5px; margin-left: auto; }
+.seat-badge { font-size: 11px; padding: 1px 6px; border: 1px solid currentColor; }
+.badge-fold { color: #ffc2cd; } .badge-allin { color: var(--gold); } .badge-wait { color: var(--dim); } .badge-out { color: var(--danger); }
+/* 폴드한 자리는 카드를 흐리게. opacity는 끝 요소(카드 면)에만 준다 (preserve-3d 요소에 주면 3D가 납작해진다) */
+.is-folded .seat-cards .card { opacity: .35; }
 .hud-pos { font-size: 11px; color: var(--gold); border: 1px solid rgba(246, 196, 83, .5); padding: 1px 5px; }
 .hud-label { font-size: 11px; letter-spacing: .14em; color: var(--dim); }
 .hud-stack { font-size: 19px; color: var(--cyan); font-variant-numeric: tabular-nums; }
@@ -169,6 +181,7 @@ button, input { font: inherit; }
 .pot { position: absolute; left: 50%; bottom: calc(100% + 4px); display: flex; align-items: baseline; gap: 8px; white-space: nowrap; padding: 2px 12px;
   background: rgba(8, 6, 20, .6); border-radius: 999px; transform-origin: 50% 100%; transform: translateX(-50%) var(--stand); }
 .pot-value { font-size: 26px; color: var(--gold); font-variant-numeric: tabular-nums; text-shadow: 0 0 12px rgba(246, 196, 83, .5); }
+.pot-split { font-size: 11px; color: var(--ink); opacity: .85; }
 .board { display: flex; gap: 7px; transform-style: preserve-3d; }
 .center > .chips { position: absolute; left: calc(100% + 14px); top: 50%; transform: translateY(-50%); }
 .center-lobby { display: grid; justify-items: center; gap: 4px; text-align: center; transform-origin: 50% 100%; transform: translate(-50%, -100%) translateZ(2px) var(--stand); }
@@ -197,12 +210,9 @@ button, input { font: inherit; }
 .fly { position: absolute; z-index: 3; display: flex; align-items: center; gap: 6px; padding: 3px 9px 3px 5px; font-size: 13px; font-weight: 700; color: var(--gold);
   background: rgba(8, 6, 20, .85); border: 1px solid rgba(246, 196, 83, .6); border-radius: 999px; pointer-events: none;
   transform-origin: 50% 100%; transform: translate(-50%, -100%) var(--stand); animation: .62s cubic-bezier(.4, .14, .3, 1) both; }
-.fly-bottom-to-pot { animation-name: fly-bottom-pot; } .fly-top-to-pot { animation-name: fly-top-pot; }
-.fly-pot-to-bottom { animation-name: fly-pot-bottom; } .fly-pot-to-top { animation-name: fly-pot-top; }
-@keyframes fly-bottom-pot { from { left: 44%; top: 57%; translate: 0 0 0; } 50% { translate: 0 0 60px; } to { left: 72%; top: 50%; translate: 0 0 0; } }
-@keyframes fly-top-pot { from { left: 44%; top: 36%; translate: 0 0 0; } 50% { translate: 0 0 60px; } to { left: 72%; top: 50%; translate: 0 0 0; } }
-@keyframes fly-pot-bottom { from { left: 72%; top: 50%; translate: 0 0 0; } 50% { translate: 0 0 60px; } to { left: 26%; top: 92%; translate: 0 0 0; } }
-@keyframes fly-pot-top { from { left: 72%; top: 50%; translate: 0 0 0; } 50% { translate: 0 0 60px; } to { left: 26%; top: 10%; translate: 0 0 0; } }
+/* 출발점(--fx, --fy)·도착점(--tx, --ty)은 좌석 화면 위치에 맞춰 roomLogic.flightPath가 넣는다 */
+.fly { animation-name: fly-path; }
+@keyframes fly-path { from { left: var(--fx); top: var(--fy); translate: 0 0 0; } 50% { translate: 0 0 60px; } to { left: var(--tx); top: var(--ty); translate: 0 0 0; } }
 
 .status { display: flex; align-items: center; gap: 10px; margin: 12px 0 0; padding: 10px 12px; background: rgba(14, 26, 54, .8); border: 1px solid var(--cyan-soft); font-size: 15px; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 8px var(--cyan); flex: none; }
@@ -212,15 +222,17 @@ button, input { font: inherit; }
 .wager-range { width: 150px; accent-color: var(--cyan); }
 .wager-number { flex: 0 0 96px; height: 36px; }
 .auto-next { color: var(--dim); font-size: 14px; }
+.seat-count { display: flex; gap: 6px; }
+.seat-count .btn[aria-pressed="true"] { border-color: var(--cyan); color: var(--cyan); box-shadow: 0 0 10px var(--cyan-soft); }
 .fine { margin-top: 12px; font-size: 12.5px; }
 
 @media (max-width: 720px) {
   .arena { height: 600px; perspective: 900px; }
   .table { left: 1%; right: 1%; top: 14%; bottom: 10%; }
   .seat-chips { display: none; }
-  .hud { min-width: 140px; padding: 6px 8px; left: 25%; }
+  .hud { min-width: 140px; padding: 6px 8px; }
+  .seat-bottom, .seat-top { --hud-x: 25%; --cards-x: 66%; }
   .hud-name { font-size: 13px; max-width: 120px; } .hud-stack { font-size: 16px; }
-  .seat-cards { left: 66%; }
   .card, .card3d { width: 40px; height: 56px; } .card-face b { font-size: 15px; } .card-face span { font-size: 17px; }
   .board { gap: 4px; }
   .center > .chips { display: none; }

@@ -9,9 +9,25 @@ export const ACTION_LABELS = { fold: "폴드", check: "체크", call: "콜", bet
 export const STREET_LABELS = { preflop: "프리플롭", flop: "플롭", turn: "턴", river: "리버", showdown: "쇼다운", complete: "종료" };
 export const MAX_REPLAY_EVENTS = 16; // 이보다 많이 밀렸으면(오래 끊겼다 복귀) 재생하지 않고 최신 상태로 바로 맞춘다
 
-// 본인 좌석이 아래, 상대가 위 → [위 좌석 번호, 아래 좌석 번호]
-export function seatOrder(youSeat) {
-  return youSeat === 0 ? [1, 0] : [0, 1];
+// 화면 자리: 본인이 아래, 나머지는 테이블 순서(좌석 번호가 커지는 쪽 = 행동 순서)대로 시계 방향 왼쪽 → 위 → 오른쪽
+//   2인: 아래·위 / 3인: 아래·왼쪽·오른쪽 / 4인: 아래·왼쪽·위·오른쪽
+export const SPOTS = { 2: ["bottom", "top"], 3: ["bottom", "left", "right"], 4: ["bottom", "left", "top", "right"] };
+export function seatLayout(youSeat, capacity) {
+  const spots = SPOTS[capacity] || SPOTS[2];
+  return spots.map((where, offset) => ({ seat: (youSeat + offset) % spots.length, where }));
+}
+
+// 칩이 날아가는 연출의 출발·도착점 (테이블 평면 %, room.css 좌석 위치와 같은 값). 값과 무관한 연출이다
+export const FLIGHT_POINTS = {
+  pot: [72, 50],
+  bottom: { bet: [44, 57], hud: [26, 92] }, top: { bet: [44, 36], hud: [26, 10] },
+  left: { bet: [22, 45], hud: [12, 36] }, right: { bet: [78, 45], hud: [88, 36] },
+};
+export function flightPath(flight, whereOf) {
+  const point = (end, kind) => (end === "pot" ? FLIGHT_POINTS.pot : (FLIGHT_POINTS[whereOf[end]] || FLIGHT_POINTS.top)[kind]);
+  const from = point(flight.from, "bet");
+  const to = point(flight.to, "hud");
+  return { "--fx": from[0] + "%", "--fy": from[1] + "%", "--tx": to[0] + "%", "--ty": to[1] + "%" };
 }
 
 // 서버 상태 그대로의 표시 상태 (재생이 끝났을 때의 모습)
@@ -22,6 +38,7 @@ export function displayFromState(state) {
     pot: state.pot,
     stacks: state.seats.map((seat) => seat.stack),
     committed: state.seats.map((seat) => seat.committed),
+    pots: (state.pots || []).map((pot) => ({ amount: pot.amount, eligible: [...pot.eligible] })),
     last: null,
     flight: null,
     synced: true,
@@ -37,6 +54,7 @@ export function applyEvent(display, event) {
     pot: event.pot,
     stacks: [...event.stacks],
     committed: [...event.committed],
+    pots: event.type === "hand_end" ? [] : (event.pots || []).map((pot) => ({ amount: pot.amount, eligible: [...pot.eligible] })),
     synced: false,
     flight: null,
   };
@@ -45,8 +63,11 @@ export function applyEvent(display, event) {
     if (event.paid > 0) next.flight = { id: "f" + event.seq, from: event.seat, to: "pot", amount: event.paid };
   } else if (event.type === "hand_start") {
     next.last = null;
+  } else if (event.type === "returned") {
+    // 아무도 받지 못한 초과 베팅은 낸 사람에게 돌아간다
+    next.flight = { id: "f" + event.seq, from: "pot", to: event.seat, amount: event.amount };
   } else if (event.type === "hand_end" && event.potWon > 0) {
-    // 무승부면 양쪽으로 나뉘므로 날아가는 칩은 승자가 있을 때만 그린다
+    // 팟이 여러 명에게 나뉘면(무승부·사이드 팟) 한 사람에게 날아가는 칩을 그리지 않는다
     if (event.winnerSeat !== null && event.winnerSeat !== undefined) next.flight = { id: "f" + event.seq, from: "pot", to: event.winnerSeat, amount: event.potWon };
   }
   return next;
@@ -80,8 +101,42 @@ export function actionText(last, names) {
   return who + " · " + what + (last.paid > 0 ? " " + last.paid.toLocaleString() : "") + (last.auto ? " (시간 초과 자동)" : "");
 }
 
+// 포지션 표시: 버튼 D, 스몰 블라인드 SB, 빅 블라인드 BB (2인이면 버튼이 SB라 "D · SB")
 export function positionLabel(seat) {
-  return seat.isButton ? "D · SB" : "BB";
+  return [seat.isButton && "D", seat.isSmallBlind && "SB", seat.isBigBlind && "BB"].filter(Boolean).join(" · ");
+}
+
+// 팟 구성: 한 개면 빈 문자열, 여러 개면 "메인 2,800 · 사이드1 300 · 사이드2 200"
+export function potsText(pots) {
+  if (!pots || pots.length < 2) return "";
+  return pots.map((pot, index) => (index ? "사이드" + index + " " : "메인 ") + pot.amount.toLocaleString()).join(" · ");
+}
+
+// 핸드 결과 한 줄 (서버 result 그대로). 내 결과(승리·패배·무승부) + 팟마다 누가 가져갔는지
+//   played: 내가 이 핸드에 참가했는가 (관전자에게는 승패를 붙이지 않는다)
+//   무승부 = 내가 받은 모든 팟을 다른 사람과 나눴다 / 승리 = 하나라도 혼자 또는 일부를 가져갔다 / 패배 = 받은 칩이 없다
+export function outcomeWord(result, youSeat, played = true) {
+  if (!result || !played) return "";
+  const pots = result.pots || [];
+  const mine = pots.filter((pot) => pot.winners.includes(youSeat));
+  if (!mine.length) return "패배";
+  return mine.every((pot) => pot.winners.length > 1) ? "무승부" : "승리";
+}
+
+export function resultText(result, names, youSeat, played = true) {
+  if (!result) return "";
+  const word = outcomeWord(result, youSeat, played);
+  const mine = result.payouts ? result.payouts[youSeat] || 0 : 0;
+  if (result.reason === "fold") {
+    const who = names[result.winnerSeat] || "플레이어";
+    return [word, who + " +" + result.pot.toLocaleString() + " · 나머지 모두 폴드"].filter(Boolean).join(" · ");
+  }
+  const pots = (result.pots || []).map((pot, index) => {
+    const label = result.pots.length > 1 ? (index ? "사이드" + index : "메인") + " " : "팟 ";
+    const who = pot.winners.map((seat) => names[seat] + (result.hands && result.hands[seat] ? "(" + result.hands[seat] + ")" : "")).join(", ");
+    return label + pot.amount.toLocaleString() + " → " + who + (pot.winners.length > 1 ? " 분배" : "");
+  });
+  return [word && (mine > 0 ? word + " +" + mine.toLocaleString() : word), ...pots].filter(Boolean).join(" · ");
 }
 
 // 방 코드 입력 정리: 대문자, 허용 문자만, 6자

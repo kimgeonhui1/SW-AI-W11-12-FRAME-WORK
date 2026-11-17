@@ -1,9 +1,10 @@
-// [RoomApp.js] JUNGLE POKER LAB 멀티플레이 화면 — 닉네임 → 방 생성/참가 → 준비 → 2인 대전
+// [RoomApp.js] JUNGLE POKER LAB 멀티플레이 화면 — 닉네임 → 방 생성/참가 → 준비 → 2~4인 대전
 //
 // 흐름: 내 행동 요청 → 서버가 판정 → 두 사람 모두 같은 번호의 이벤트를 받음 → 각자 화면에서 순서대로 재생
 //   · 화면은 결과를 정하지 않는다. 버튼은 "요청"만 보내고, 칩·팟·보드·승패는 서버가 준 값만 그린다
 //   · state  = 서버가 준 최신 정답 / display = 지금 그리는 값(재생 중에는 과거). 재생이 끝나면 둘은 같다
-//   · 상대 카드는 서버가 쇼다운 때만 보내 준다. 그 전에는 화면에 뒷면만 있다(값 자체가 브라우저에 없다)
+//   · 다른 사람 카드는 서버가 쇼다운 때(끝까지 남은 사람만) 보내 준다. 그 전에는 뒷면만 있다(값 자체가 브라우저에 없다)
+//   · 좌석: 본인이 아래, 나머지는 테이블 순서대로 왼쪽 → 위 → 오른쪽 (roomLogic.seatLayout)
 //
 // 3D 테이블 (외부 라이브러리 없이 CSS 3D): .table 이 하나의 3D 평면이고, 좌석·카드·칩·팟이 모두 그 안에 있다.
 //   카메라 각도는 CSS 변수 --tilt 하나로 정한다 (3D 52°, 2D 0°). 이름표(HUD)·팟 글자는 평면 위에 세워
@@ -12,7 +13,7 @@ import { h } from "../core/vdom.js";
 import { useEffect, useRef, useState } from "../core/hooks.js";
 import {
   BLOOM_PREF, STREET_LABELS, VIEW_PREF, actionText, applyEvent, clampWager, displayFromState, eventDelay, normalizeCode,
-  planUpdate, positionLabel, readPref, remainingSeconds, seatOrder, validName, writePref,
+  flightPath, planUpdate, positionLabel, potsText, readPref, remainingSeconds, resultText, seatLayout, validName, writePref,
 } from "./roomLogic.js";
 
 function newId() {
@@ -48,21 +49,28 @@ function Card({ value, hidden = false }) {
 function Seat({ seat, where, you, stack, committed, cards, faceDown, turn, seconds, lastText, phase, handKey, winner }) {
   const empty = !seat.occupied;
   const status = empty ? "빈 자리" : !seat.connected ? "연결 끊김" : phase === "lobby" || phase === "hand_over" ? (seat.ready ? "준비 완료" : "대기 중") : "접속 중";
+  // 이번 핸드에서의 상태 표시: 폴드·올인·관전(다음 핸드부터)·칩 없음
+  const badge = empty || phase === "lobby" ? null
+    : seat.busted ? ["out", "칩 없음"] : seat.folded ? ["fold", "폴드"] : seat.allIn ? ["allin", "올인"]
+      : phase === "playing" && !seat.inHand ? ["wait", "다음 핸드부터"] : null;
   // key에 카드 값을 넣지 않는다: 같은 카드 요소가 뒷면 → 앞면으로 바뀌어야 뒤집히는 애니메이션이 보인다 (새 핸드면 handKey가 바뀌어 새로 나눠 준다)
   const cardNodes = cards
     ? cards.map((value, index) => h(Card, { key: handKey + "-" + where + "-" + index, value }))
     : Array.from({ length: faceDown }, (_, index) => h(Card, { key: handKey + "-" + where + "-" + index, hidden: true }));
-  return h("section", { className: "seat seat-" + where + (turn ? " is-turn" : "") + (empty ? " is-empty" : "") + (winner ? " is-winner" : ""), "aria-current": turn ? "step" : null },
+  return h("section", { className: "seat seat-" + where + (turn ? " is-turn" : "") + (empty ? " is-empty" : "") + (winner ? " is-winner" : "") + (seat.folded ? " is-folded" : ""),
+    "aria-current": turn ? "step" : null, "data-seat": String(seat.seat) },
     h("div", { className: "seat-cards" }, ...cardNodes),
     h("div", { className: "hud" },
       h("div", { className: "hud-row" },
-        h("span", { className: "hud-name" }, empty ? "상대를 기다리는 중" : seat.name + (you ? " · 나" : "")),
-        !empty && phase !== "lobby" ? h("span", { className: "hud-pos" }, positionLabel(seat)) : null),
+        h("span", { className: "hud-name" }, empty ? "빈 자리" : seat.name + (you ? " · 나" : "")),
+        !empty && seat.isHost ? h("span", { className: "hud-host", title: "방장" }, "방장") : null,
+        !empty && phase !== "lobby" && positionLabel(seat) ? h("span", { className: "hud-pos" }, positionLabel(seat)) : null),
       h("div", { className: "hud-row" },
         h("span", { className: "hud-label" }, "CHIPS"),
         h("strong", { className: "hud-stack" }, empty ? "—" : Number(stack).toLocaleString())),
       h("div", { className: "hud-row hud-meta" },
         h("span", { className: "presence " + (empty ? "off" : seat.connected ? "on" : "lost") }, status),
+        badge ? h("span", { className: "seat-badge badge-" + badge[0] }, badge[1]) : null,
         turn ? h("span", { className: "turn-clock" }, "차례" + (seconds === null ? "" : " · " + seconds + "초")) : null),
       lastText ? h("div", { className: "hud-last" }, lastText) : null),
     h("div", { className: "seat-chips" }, h(ChipStack, { value: empty ? 0 : stack })),
@@ -92,6 +100,7 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
   const [wager, setWager] = useState(40);
   const [retry, setRetry] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [capacity, setCapacity] = useState(4);
   const [now, setNow] = useState(() => performance.now());
   const [view, setView] = useState(() => readPref(globalThis.localStorage, VIEW_PREF));
   const [bloom, setBloom] = useState(() => readPref(globalThis.localStorage, BLOOM_PREF) === "on");
@@ -198,7 +207,7 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
     client.rememberRoom(result.state.code);
     setCode(result.state.code);
   };
-  const createRoom = async () => enter(await send({ path: "/api/rooms", body: { request_id: newId() } }));
+  const createRoom = async () => enter(await send({ path: "/api/rooms", body: { request_id: newId(), max_seats: capacity } }));
   const joinRoom = async (target) => {
     const wanted = normalizeCode(target);
     if (wanted.length !== 6) return setNotice("방 코드는 6자입니다.");
@@ -222,6 +231,12 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
     }
   };
   const setReady = (value) => send({ path: "/api/rooms/" + code + "/ready", body: { ready: value, hand_no: state.handNo } });
+  const startMatch = () => send({ path: "/api/rooms/" + code + "/start", body: { hand_no: 0 } });
+  // 칩을 정산하고 자리에서 일어난다 (이번 매치에는 다시 앉을 수 없다). 핸드 사이에만 가능하다
+  const cashOut = async () => {
+    const result = await send({ path: "/api/rooms/" + code + "/leave", body: {} });
+    if (result) leaveLocal(result.cashOut !== undefined ? "칩 " + Number(result.cashOut).toLocaleString() + "개를 정산하고 나왔습니다." : "");
+  };
   const act = (action, to) => send({
     path: "/api/rooms/" + code + "/action",
     body: { action_id: newId(), expected_version: state.gameVersion, action, ...(to === undefined ? {} : { to }) },
@@ -334,15 +349,18 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
     return h("div", { className: "room-shell" }, header,
       h("section", { className: "panel" },
         h("h1", {}, "방 만들기 또는 참가"),
-        h("p", { className: "hint" }, "한 사람이 방을 만들고, 화면에 나온 방 코드를 상대에게 알려 주세요. 두 사람은 같은 서버 주소로 접속해야 합니다."),
+        h("p", { className: "hint" }, "한 사람이 방을 만들고, 화면에 나온 방 코드를 다른 사람들에게 알려 주세요. 모두 같은 서버 주소로 접속해야 합니다."),
         h("div", { className: "form-row" },
-          h("button", { className: "btn btn-main", disabled: busy, onClick: createRoom }, "새 방 만들기")),
+          h("div", { className: "seat-count", role: "group", "aria-label": "최대 인원" },
+            ...[2, 3, 4].map((count) => h("button", { key: count, type: "button", className: "btn btn-quick", "aria-pressed": capacity === count ? "true" : "false",
+              disabled: busy, onClick: () => setCapacity(count) }, count + "인"))),
+          h("button", { className: "btn btn-main", disabled: busy, onClick: createRoom }, "새 방 만들기 (최대 " + capacity + "명)")),
         h("div", { className: "form-row" },
           h("input", { className: "field field-code", type: "text", maxLength: 6, placeholder: "방 코드 6자", value: codeInput, "aria-label": "방 코드",
             onInput: (event) => setCodeInput(normalizeCode(event.target.value)), onKeyDown: (event) => { if (event.key === "Enter") joinRoom(codeInput); } }),
           h("button", { className: "btn", disabled: busy || codeInput.length !== 6, onClick: () => joinRoom(codeInput) }, "코드로 참가")),
         preview ? h("p", { className: "preview" }, preview.missing ? "이 코드의 방을 찾지 못했습니다."
-          : seated.map((seat) => seat.name).join(", ") + " · " + seated.length + "/2명 · " + (preview.phase === "lobby" ? "대기 중" : "게임 진행 중")) : null,
+          : seated.map((seat) => seat.name).join(", ") + " · " + seated.length + "/" + preview.seats.length + "명 · " + (preview.phase === "lobby" ? "대기 중" : "게임 진행 중")) : null,
         noticeBar));
   }
 
@@ -350,7 +368,8 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
     return h("div", { className: "room-shell" }, header, h("section", { className: "panel" }, h("p", {}, "방 상태를 불러오는 중…"), noticeBar));
   }
 
-  const [topSeat, bottomSeat] = seatOrder(state.you.seat);
+  const layout = seatLayout(state.you.seat, state.seats.length);
+  const whereOf = Object.fromEntries(layout.map((spot) => [spot.seat, spot.where]));
   const names = state.seats.map((seat) => seat.name);
   const synced = display.synced; // 재생이 끝나 화면이 서버 상태와 같은가
   const handKey = code + "-" + display.handNo;
@@ -361,9 +380,9 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
   const seconds = synced ? remainingSeconds(state.turnRemainingMs, sync.current.receivedAt, now) : null;
   const nextIn = synced && state.phase === "hand_over" ? remainingSeconds(state.nextHandInMs, sync.current.receivedAt, now) : null;
   const me = state.seats[state.you.seat];
-  const other = state.seats[topSeat];
+  const occupied = state.seats.filter((seat) => seat.occupied).length;
   const showResult = synced && state.result && (state.phase === "hand_over" || state.phase === "match_over");
-  const winnerSeat = showResult ? state.result.winnerSeat : undefined;
+  const winners = new Set(showResult ? state.result.winnerSeats || [] : []);
   const lastText = display.last ? actionText(display.last, names) : "";
 
   const seatNode = (index, where) => {
@@ -372,21 +391,16 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
     // 상대 카드는 쇼다운 재생이 끝난 뒤에만 앞면으로 보인다
     const cards = seat.cards && (mine || synced) ? seat.cards : null;
     return h(Seat, {
-      seat, where, you: mine, stack: display.stacks[index], committed: display.committed[index], cards,
+      key: "seat-" + where, seat, where, you: mine, stack: display.stacks[index], committed: display.committed[index], cards,
       faceDown: seat.occupied && state.phase !== "lobby" && state.street ? seat.cardCount : 0,
       turn: synced && state.phase === "playing" && state.turnSeat === index,
-      seconds, phase: state.phase, handKey, winner: winnerSeat === index,
+      seconds, phase: state.phase, handKey, winner: winners.has(index),
       lastText: display.last && display.last.seat === index ? lastText : "",
     });
   };
 
-  let resultText = "";
-  if (showResult) {
-    const result = state.result;
-    resultText = result.winnerSeat === null ? "무승부 · 팟 " + result.pot.toLocaleString() + " 분배"
-      : (result.winnerSeat === state.you.seat ? "승리" : "패배") + " · " + names[result.winnerSeat] + " +" + result.pot.toLocaleString()
-        + (result.reason === "showdown" && result.hands ? " · " + result.hands[result.winnerSeat] : " · 상대 폴드");
-  }
+  // 이번 핸드 참가 여부: 쇼다운이면 hands에, 폴드로 끝났으면 서버가 남긴 inHand 표시로 안다
+  const outcome = showResult ? resultText(state.result, names, state.you.seat, Boolean(me.inHand)) : "";
   const storageText = state.recordStatus === "unknown" ? "결과 저장을 확인하는 중입니다. 확인되면 다음 판을 시작할 수 있습니다."
     : state.recordStatus === "blocked" ? "결과 저장에 충돌이 있어 이 방은 더 진행할 수 없습니다." : "";
 
@@ -394,27 +408,36 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
     ? h("div", { className: "center center-lobby" },
         h("span", { className: "center-label" }, "방 코드"),
         h("strong", { className: "big-code" }, code),
-        h("small", {}, other.occupied ? "두 사람 모두 준비를 누르면 시작합니다" : "상대에게 이 코드를 알려 주세요"))
+        h("small", {}, occupied < 2 ? "다른 사람에게 이 코드를 알려 주세요 (최대 " + state.capacity + "명)"
+          : "준비 " + state.readyCount + "/" + occupied + " · 모두 준비하면 바로 시작, 2명 이상 준비하면 방장이 시작할 수 있습니다"))
     : h("div", { className: "center" },
-        h("div", { className: "pot" }, h("span", { className: "center-label" }, "POT"), h("strong", { className: "pot-value" }, Number(display.pot).toLocaleString())),
+        h("div", { className: "pot" }, h("span", { className: "center-label" }, "POT"), h("strong", { className: "pot-value" }, Number(display.pot).toLocaleString()),
+          potsText(display.pots) ? h("small", { className: "pot-split" }, potsText(display.pots)) : null),
         h("div", { className: "board" }, ...Array.from({ length: 5 }, (_, index) => h(Card, { key: handKey + "-board-" + index + "-" + (display.board[index] || "x"), value: display.board[index] }))),
         h(ChipStack, { value: display.pot }));
 
   const flight = display.flight
-    ? h("span", { key: display.flight.id, className: "fly fly-" + (display.flight.from === "pot" ? "pot" : display.flight.from === bottomSeat ? "bottom" : "top")
-        + "-to-" + (display.flight.to === "pot" ? "pot" : display.flight.to === bottomSeat ? "bottom" : "top"), "aria-hidden": "true" },
+    ? h("span", { key: display.flight.id, className: "fly", style: flightPath(display.flight, whereOf), "aria-hidden": "true" },
         h("i", { className: "chip" }), String(display.flight.amount))
     : null;
 
   const controls = [];
   if (state.phase === "lobby") {
-    controls.push(h("button", { key: "ready", className: "btn btn-main", disabled: locked || !other.occupied, onClick: () => setReady(!me.ready) }, me.ready ? "준비 취소" : "준비"));
+    controls.push(h("button", { key: "ready", className: "btn btn-main", disabled: locked || occupied < 2, onClick: () => setReady(!me.ready) }, me.ready ? "준비 취소" : "준비"));
+    if (state.you.isHost) controls.push(h("button", { key: "start", className: "btn", disabled: locked || !state.canStart, onClick: startMatch }, "준비한 사람끼리 시작"));
   } else if (state.phase === "hand_over" && synced) {
-    controls.push(h("button", { key: "next", className: "btn btn-main", disabled: locked || me.ready || Boolean(storageText), onClick: () => setReady(true) },
-      me.ready ? "상대를 기다리는 중" : "다음 판 준비"));
-    if (nextIn !== null && !storageText) controls.push(h("span", { key: "auto", className: "auto-next" }, other.connected ? nextIn + "초 뒤 자동 시작" : "상대 재접속을 기다리는 중"));
+    if (me.busted) controls.push(h("span", { key: "busted", className: "auto-next" }, "칩이 없어 이번 매치는 관전합니다"));
+    else controls.push(h("button", { key: "next", className: "btn btn-main", disabled: locked || me.ready || Boolean(storageText), onClick: () => setReady(true) },
+      me.ready ? "다른 사람을 기다리는 중" : "다음 판 준비"));
+    if (nextIn !== null && !storageText) controls.push(h("span", { key: "auto", className: "auto-next" }, nextIn + "초 뒤 준비한 사람끼리 자동 시작"));
   } else if (state.phase === "match_over" && synced) {
-    controls.push(h("span", { key: "over", className: "auto-next" }, "매치 종료 · 한쪽 칩이 모두 소진됐습니다"));
+    controls.push(h("span", { key: "over", className: "auto-next" }, "매치 종료 · 칩을 가진 사람이 한 명만 남았습니다"));
+  } else if (state.phase === "playing" && synced && !me.inHand) {
+    // 진행 중에 앉은 사람·이번 핸드를 쉬는 사람: 준비해 두면 다음 핸드에 카드를 받는다
+    if (me.busted) controls.push(h("span", { key: "busted", className: "auto-next" }, "칩이 없어 이번 매치는 관전합니다"));
+    else controls.push(h("button", { key: "sit", className: "btn btn-main", disabled: locked || me.ready, onClick: () => setReady(true) },
+      me.ready ? "다음 핸드 참가 예약됨" : "다음 핸드부터 참가"));
+    controls.push(h("span", { key: "wait", className: "auto-next" }, names[state.turnSeat] + "의 차례입니다"));
   } else if (myTurn) {
     if (legal.has("fold")) controls.push(h("button", { key: "fold", className: "btn btn-fold", disabled: locked, onClick: () => act("fold") }, "폴드"));
     if (legal.has("check")) controls.push(h("button", { key: "check", className: "btn", disabled: locked, onClick: () => act("check") }, "체크"));
@@ -436,7 +459,10 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
     controls.push(h("span", { key: "wait", className: "auto-next" }, synced ? names[state.turnSeat] + "의 차례입니다" : "진행 상황을 재생하는 중…"));
   }
   if (retry) controls.push(h("button", { key: "retry", className: "btn btn-retry", disabled: busy, onClick: () => send(retry) }, "같은 요청 다시 보내기"));
-  controls.push(h("button", { key: "exit", className: "btn btn-ghost", disabled: busy, onClick: exitRoom }, state.phase === "lobby" ? "방 나가기" : "로비로"));
+  if (state.phase !== "lobby" && synced && !(state.phase === "playing" && me.inHand)) {
+    controls.push(h("button", { key: "cash", className: "btn btn-ghost", disabled: locked || Boolean(storageText), onClick: cashOut }, "칩 정산하고 나가기"));
+  }
+  controls.push(h("button", { key: "exit", className: "btn btn-ghost", disabled: busy, onClick: exitRoom }, state.phase === "lobby" ? "방 나가기" : "로비로 (자리 유지)"));
 
   return h("div", { className: "room-shell" }, header,
     h("main", { className: "arena view-" + view + (bloom ? " bloom-on" : "") },
@@ -451,16 +477,16 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
           h("div", { className: "stand portal" }, h("span", {}, "POKER LAB"), h("small", {}, "N E O N   D I S T R I C T   /   0 1")),
           h("div", { className: "stand wall-panel panel-left" }, h("span", {}, "◇"), h("i", {}), h("i", {}), h("i", {})),
           h("div", { className: "stand wall-panel panel-right" }, h("span", {}, "♠"), h("i", {}), h("i", {}), h("i", {}))),
-        h("div", { className: "table" },
+        h("div", { className: "table seats-" + state.seats.length },
           h("div", { className: "felt", "aria-hidden": "true" }, h("div", { className: "felt-line" }),
             h("div", { className: "felt-logo" }, h("span", {}, "JUNGLE"), h("b", {}, "POKER LAB"))),
-          seatNode(topSeat, "top"),
+          ...layout.filter((spot) => spot.where !== "bottom").map((spot) => seatNode(spot.seat, spot.where)),
           center,
           flight,
-          seatNode(bottomSeat, "bottom")))),
+          seatNode(layout[0].seat, "bottom")))),
     h("p", { className: "status", role: "status" },
       h("span", { className: "status-dot" }),
-      showResult ? resultText : synced ? state.notice : lastText || "진행 상황을 재생하는 중…"),
+      showResult ? outcome : synced ? state.notice : lastText || "진행 상황을 재생하는 중…"),
     storageText ? h("p", { className: "notice" }, storageText) : null,
     state.recovered && state.phase !== "playing" ? h("p", { className: "notice" }, "서버가 다시 시작됐습니다. 진행 중이던 핸드는 무효이며 마지막으로 저장된 칩에서 이어갑니다.") : null,
     noticeBar,
