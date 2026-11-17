@@ -110,6 +110,28 @@
 
 ## 실행
 
+### Windows: 더블클릭 실행 도구 (저장소 루트)
+
+| 파일 | 하는 일 |
+|---|---|
+| `start-poker.bat` | DBMS → Redis → Poker API → 화면 서버를 순서대로 켜고 각각 응답을 확인한다. 서버마다 제목이 붙은 창(`POKER LAB 1/4 · Mini DBMS :18783` …)이 뜨고 그 창이 로그다. 이미 정상 실행 중인 서버는 다시 켜지 않는다. 포트를 다른 프로그램이 쓰면 PID·이름을 알려 주고 멈춘다(종료하지 않음). 끝나면 브라우저를 열고 팀원용 Wi-Fi IPv4 주소를 보여 준다. DBMS 데이터는 `%USERPROFILE%\poker-lab-lan-test`. |
+| `restart-poker-api.bat` | API만 다시 켠다. `start-poker.bat`이 시작한 API(기록된 PID·시작 시각·명령줄이 모두 맞을 때)만 종료한다. 직접 켠 API는 종료하지 않고 안내한다. |
+| `start-test-bots.bat` | **테스트 전용.** 방 코드·봇 수(1~3)·모드(기본/올인)·시드를 묻고 봇을 넣는다. 일반 시작에는 봇이 들어가지 않는다. |
+
+실행 기록(PID)은 `%LOCALAPPDATA%\jungle-poker-lab\run`, 봇 로그는 `%LOCALAPPDATA%\jungle-poker-lab\logs`에 남는다. 스크립트는 `tools\windows\*.ps1`(Windows PowerShell 5.1, UTF-8 BOM).
+
+### 테스트 봇 (`tools/test-bots/poker_test_bots.py`)
+
+- 일반 게스트와 같은 API(`/api/guest`, `join`, `state`, `ready`, `action`, `next-round`, `leave`)만 쓴다. 서버 내부 상태를 바꾸거나 다른 사람 카드를 보지 않는다(서버가 주지 않는다). 이름은 `TEST BOT 1`~`3`.
+- 자기 차례에만, `legalActions`에 있는 행동과 `minRaiseTo`~`maxRaiseTo` 안의 금액만 고른다. 행동 전 1~2초 기다리고, 한 게임 버전에 한 번만 보낸다.
+- 기본 모드: 체크·콜 위주, 가끔 폴드·합법 레이즈. 올인 모드: 올인이 가능하면 올인(파산 → 관전 → 지급 → 복귀, 다음 라운드 시작 확인용).
+- 파산하면 기다리고(서버가 복귀시킴), `round_over`에서는 4초 뒤 '다음 라운드 시작'을 누른다(먼저 누른 사람이 있으면 409로 무시).
+- 종료(Ctrl+C, `--hands`, `--minutes`): 진행 중인 핸드를 마친 뒤 정상 퇴장(칩 정산). 시드(`--seed`)와 행동·금액·오류가 로그에 남는다.
+- 직접 실행: `python tools/test-bots/poker_test_bots.py --room ABC234 --bots 3 --mode basic --seed 42`
+- 봇 시험은 한 PC 안의 시험이다. 여러 PC LAN 확인을 대신하지 않는다.
+
+### 직접 명령으로 실행
+
 네 프로세스를 **한 컴퓨터(서버 역할)** 에서 띄운다. DBMS와 Redis는 그 컴퓨터 안에서만 쓰므로 `127.0.0.1`로 둔다.
 
 ```

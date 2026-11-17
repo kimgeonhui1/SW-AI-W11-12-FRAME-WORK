@@ -1,0 +1,89 @@
+{
+ "results": [
+  {
+   "name": "basic: 6 hands completed with 1 person + 3 bots",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "basic: bots exited by themselves after the hand limit",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "basic: no bot errors (no illegal action, no 4xx except expected stale)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "basic: bots never acted out of turn",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "basic: bots acted many times",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "basic: every action event is unique (no double action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "basic: bots left and their seats are free",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "basic: each bot's cash-out was recorded",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "basic: chips on the table = buy-ins + rebuys - cash-outs",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "allin: busts happened and rebuys were paid (each bust once)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "allin: a bot busted, waited and came back with the rebuy (from its own log)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "allin: stop request handled (finish hand, then leave)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "allin: no bot errors",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "allin: never out of turn",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "allin: all bot seats free afterwards",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "allin: chips on the table = buy-ins + rebuys - cash-outs",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "allin: 6 cash-outs recorded over both runs",
+   "ok": true,
+   "detail": ""
+  }
+ ]
+}
