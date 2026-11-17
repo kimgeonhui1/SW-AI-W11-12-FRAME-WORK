@@ -20,7 +20,7 @@ export function seatLayout(youSeat, capacity) {
 // 칩이 날아가는 연출의 출발·도착점 (테이블 평면 %, room.css 좌석 위치와 같은 값). 값과 무관한 연출이다
 export const FLIGHT_POINTS = {
   pot: [72, 50],
-  bottom: { bet: [44, 57], hud: [26, 92] }, top: { bet: [44, 36], hud: [26, 10] },
+  bottom: { bet: [30, 67], hud: [26, 92] }, top: { bet: [30, 34], hud: [26, 10] },
   left: { bet: [22, 45], hud: [12, 36] }, right: { bet: [78, 45], hud: [88, 36] },
 };
 export function flightPath(flight, whereOf) {

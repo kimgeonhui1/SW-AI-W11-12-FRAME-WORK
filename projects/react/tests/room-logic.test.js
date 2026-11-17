@@ -22,6 +22,9 @@ test("칩 이동 경로는 좌석 화면 위치를 따른다", () => {
   const where = { 0: "bottom", 1: "left", 2: "top", 3: "right" };
   eq(L.flightPath({ from: 1, to: "pot" }, where), { "--fx": "22%", "--fy": "45%", "--tx": "72%", "--ty": "50%" }, "left → pot");
   eq(L.flightPath({ from: "pot", to: 3 }, where), { "--fx": "72%", "--fy": "50%", "--tx": "88%", "--ty": "36%" }, "pot → right");
+  // 아래·위 좌석의 출발점 = 베팅 배지 자리(보드 밖 왼쪽, 2a2108c 준우 수정과 같은 값)
+  eq([L.flightPath({ from: 0, to: "pot" }, where)["--fx"], L.flightPath({ from: 0, to: "pot" }, where)["--fy"]], ["30%", "67%"], "bottom badge");
+  eq([L.flightPath({ from: 2, to: "pot" }, where)["--fx"], L.flightPath({ from: 2, to: "pot" }, where)["--fy"]], ["30%", "34%"], "top badge");
 });
 test("서버 상태 그대로의 표시 상태", () => {
   const d = L.displayFromState(state());

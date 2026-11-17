@@ -116,42 +116,72 @@
    "detail": ""
   },
   {
+   "name": "Carol busted: stays seated, explains the wait, only the explicit exits leave",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: busted screen names the hand to watch",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol watches hand 5 (not dealt in)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: badge shows watching",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: one 1,000-chip rebuy after the watched hand",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol is dealt back in automatically",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol busted: stays seated, explains the wait, only the explicit exits leave",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: busted screen names the hand to watch",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol watches hand 8 (not dealt in)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: badge shows watching",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: one 1,000-chip rebuy after the watched hand",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol is dealt back in automatically",
+   "ok": true,
+   "detail": ""
+  },
+  {
    "name": "Alpha busted: stays seated, explains the wait, only the explicit exits leave",
    "ok": true,
    "detail": ""
   },
   {
-   "name": "Alpha: busted screen names the hand to watch",
-   "ok": true,
-   "detail": ""
-  },
-  {
-   "name": "Alpha watches hand 6 (not dealt in)",
-   "ok": true,
-   "detail": ""
-  },
-  {
-   "name": "Alpha: badge shows watching",
-   "ok": true,
-   "detail": ""
-  },
-  {
-   "name": "Alpha: one 1,000-chip rebuy after the watched hand",
-   "ok": true,
-   "detail": ""
-  },
-  {
-   "name": "Alpha is dealt back in automatically",
-   "ok": true,
-   "detail": ""
-  },
-  {
-   "name": "Alpha busted: stays seated, explains the wait, only the explicit exits leave",
-   "ok": true,
-   "detail": ""
-  },
-  {
-   "name": "Bravo busted: stays seated, explains the wait, only the explicit exits leave",
+   "name": "Carol busted: stays seated, explains the wait, only the explicit exits leave",
    "ok": true,
    "detail": ""
   },
@@ -242,15 +272,15 @@
   }
  ],
  "observed": {
-  "watch_path": 1,
+  "watch_path": 2,
   "round_restart": 1,
   "side_pots": 3
  },
  "ports": {
-  "dbms": 50973,
-  "redis": 59551,
-  "api": 48349,
-  "static": 37165
+  "dbms": 32851,
+  "redis": 46487,
+  "api": 33651,
+  "static": 52285
  },
- "data": "/tmp/jpl-e2e4-db-455n0p8w"
+ "data": "/tmp/jpl-e2e4-db-ydpp1gk6"
 }

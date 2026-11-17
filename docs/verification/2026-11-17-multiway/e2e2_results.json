@@ -47,8 +47,8 @@
   },
   {
    "name": "Bravo: HUD fully visible inside the table (hand 1 375 3D, width 375)",
-   "ok": false,
-   "detail": "[{'where': 'bottom', 'rect': [3, 503, 171, 628], 'arena': [16, 80, 359, 680]}, {'where': 'bottom', 'sel': 'hud-name', 'visible': True, 'truncated': False, 'inArena': False, 'inView': True, 'by': 'hud-name'}, {'where': 'bottom', 'sel': 'presence on', 'visible': True, 'truncated': False, 'inArena': False, 'inView': True, 'by': 'presence on'}]"
+   "ok": true,
+   "detail": ""
   },
   {
    "name": "during replay the waiting screen offers no action buttons",
@@ -162,8 +162,8 @@
   },
   {
    "name": "Bravo: HUD fully visible inside the table (hand end 375 3D, width 375)",
-   "ok": false,
-   "detail": "[{'where': 'bottom', 'rect': [3, 491, 171, 653], 'arena': [16, 105, 359, 705]}, {'where': 'bottom', 'sel': 'hud-name', 'visible': True, 'truncated': False, 'inArena': False, 'inView': True, 'by': 'hud-name'}, {'where': 'bottom', 'sel': 'presence on', 'visible': True, 'truncated': False, 'inArena': False, 'inView': True, 'by': 'presence on'}]"
+   "ok": true,
+   "detail": ""
   },
   {
    "name": "Alpha screen == server (hand 2 start)",
@@ -222,8 +222,8 @@
   },
   {
    "name": "Alpha: HUD fully visible inside the table (A resized to 375 mid-hand, width 375)",
-   "ok": false,
-   "detail": "[{'where': 'bottom', 'rect': [-7, 522, 181, 647], 'arena': [16, 99, 359, 699]}, {'where': 'bottom', 'sel': 'hud-name', 'visible': True, 'truncated': False, 'inArena': False, 'inView': True, 'by': 'hud-name'}, {'where': 'bottom', 'sel': 'presence on', 'visible': True, 'truncated': False, 'inArena': False, 'inView': True, 'by': 'presence on'}]"
+   "ok": true,
+   "detail": ""
   },
   {
    "name": "Alpha: rank and suit inside every face-up card and on screen (A resized to 375 mid-hand, 2 cards)",
@@ -606,151 +606,12 @@
    "detail": ""
   }
  ],
- "findings": [
-  {
-   "kind": "hud",
-   "who": "Bravo",
-   "label": "hand 1 375 3D",
-   "issues": [
-    {
-     "where": "bottom",
-     "rect": [
-      3,
-      503,
-      171,
-      628
-     ],
-     "arena": [
-      16,
-      80,
-      359,
-      680
-     ]
-    },
-    {
-     "where": "bottom",
-     "sel": "hud-name",
-     "visible": true,
-     "truncated": false,
-     "inArena": false,
-     "inView": true,
-     "by": "hud-name"
-    },
-    {
-     "where": "bottom",
-     "sel": "presence on",
-     "visible": true,
-     "truncated": false,
-     "inArena": false,
-     "inView": true,
-     "by": "presence on"
-    }
-   ],
-   "arena": [
-    16,
-    80,
-    359,
-    680
-   ]
-  },
-  {
-   "kind": "hud",
-   "who": "Bravo",
-   "label": "hand end 375 3D",
-   "issues": [
-    {
-     "where": "bottom",
-     "rect": [
-      3,
-      491,
-      171,
-      653
-     ],
-     "arena": [
-      16,
-      105,
-      359,
-      705
-     ]
-    },
-    {
-     "where": "bottom",
-     "sel": "hud-name",
-     "visible": true,
-     "truncated": false,
-     "inArena": false,
-     "inView": true,
-     "by": "hud-name"
-    },
-    {
-     "where": "bottom",
-     "sel": "presence on",
-     "visible": true,
-     "truncated": false,
-     "inArena": false,
-     "inView": true,
-     "by": "presence on"
-    }
-   ],
-   "arena": [
-    16,
-    105,
-    359,
-    705
-   ]
-  },
-  {
-   "kind": "hud",
-   "who": "Alpha",
-   "label": "A resized to 375 mid-hand",
-   "issues": [
-    {
-     "where": "bottom",
-     "rect": [
-      -7,
-      522,
-      181,
-      647
-     ],
-     "arena": [
-      16,
-      99,
-      359,
-      699
-     ]
-    },
-    {
-     "where": "bottom",
-     "sel": "hud-name",
-     "visible": true,
-     "truncated": false,
-     "inArena": false,
-     "inView": true,
-     "by": "hud-name"
-    },
-    {
-     "where": "bottom",
-     "sel": "presence on",
-     "visible": true,
-     "truncated": false,
-     "inArena": false,
-     "inView": true,
-     "by": "presence on"
-    }
-   ],
-   "arena": [
-    16,
-    99,
-    359,
-    699
-   ]
-  }
- ],
+ "findings": [],
  "ports": {
-  "dbms": 60445,
-  "redis": 41255,
-  "api": 53985,
-  "static": 59163
+  "dbms": 60347,
+  "redis": 50515,
+  "api": 48549,
+  "static": 59431
  },
- "data": "/tmp/jpl-e2e-db-oxgcqeoj"
+ "data": "/tmp/jpl-e2e-db-z_rgfzd5"
 }

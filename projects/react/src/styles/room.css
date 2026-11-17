@@ -134,9 +134,11 @@ button, input { font: inherit; }
 /* 좌석: 테이블 평면 전체를 덮는 층. 안의 조각을 평면 좌표(%)로 놓는다. 위 좌석 = 먼 쪽, 아래 좌석 = 내 쪽, 왼쪽·오른쪽 = 3·4인 방의 옆 자리
    좌석 위치는 변수 --*-x / --*-y 로만 바꾼다. 칩이 날아가는 출발·도착점(roomLogic.FLIGHT_POINTS)도 같은 값이다 */
 .seat { position: absolute; inset: 0; transform-style: preserve-3d; pointer-events: none;
-  --cards-x: 58%; --hud-x: 26%; --chips-x: 77%; --bet-x: 44%; --btn-x: 46%;
-  --cards-y: 70%; --hud-y: 100%; --chips-y: 72%; --bet-y: 57%; --btn-y: 72%; }
-.seat-top { --cards-y: 22%; --hud-y: 6%; --chips-y: 20%; --bet-y: 36%; --btn-y: 22%; }
+  --cards-x: 58%; --hud-x: 26%; --chips-x: 77%; --bet-x: 30%; --btn-x: 46%;
+  --cards-y: 70%; --hud-y: 100%; --chips-y: 72%; --bet-y: 67%; --btn-y: 72%; }
+.seat-top { --cards-y: 22%; --hud-y: 6%; --chips-y: 20%; --bet-y: 34%; --btn-y: 22%; }
+/* 베팅 금액은 보드(가로 33~67%, 세로 43~57%) 밖, 왼쪽 아래·위에 둔다. 세운 배지가 보드 카드를 가리지 않게
+   내 쪽은 보드 아래 끝에서 10% 이상 떨어뜨린다 (2D에서는 배지가 기준점 위로 눕혀져 그만큼 차지한다) */
 /* 옆 자리: 이름표는 테이블 가장자리 뒤쪽에 세우고, 카드는 그 앞(화면 아래쪽)에 눕혀 서로 가리지 않게 한다 */
 .seat-left { --hud-x: 12%; --hud-y: 36%; --cards-x: 13%; --cards-y: 56%; --chips-x: 13%; --chips-y: 76%; --bet-x: 22%; --bet-y: 45%; --btn-x: 28%; --btn-y: 62%; }
 .seat-right { --hud-x: 88%; --hud-y: 36%; --cards-x: 87%; --cards-y: 56%; --chips-x: 87%; --chips-y: 76%; --bet-x: 78%; --bet-y: 45%; --btn-x: 72%; --btn-y: 62%; }
@@ -225,7 +227,8 @@ button, input { font: inherit; }
 .fly { position: absolute; z-index: 3; display: flex; align-items: center; gap: 6px; padding: 3px 9px 3px 5px; font-size: 13px; font-weight: 700; color: var(--gold);
   background: rgba(8, 6, 20, .85); border: 1px solid rgba(246, 196, 83, .6); border-radius: 999px; pointer-events: none;
   transform-origin: 50% 100%; transform: translate(-50%, -100%) var(--stand); animation: .62s cubic-bezier(.4, .14, .3, 1) both; }
-/* 출발점(--fx, --fy)·도착점(--tx, --ty)은 좌석 화면 위치에 맞춰 roomLogic.flightPath가 넣는다 */
+/* 출발점(--fx, --fy)·도착점(--tx, --ty)은 좌석 화면 위치에 맞춰 roomLogic.flightPath가 넣는다.
+   출발점은 각 좌석의 베팅 금액 자리(.seat의 --bet-x/--bet-y)와 같다 (roomLogic.FLIGHT_POINTS) */
 .fly { animation-name: fly-path; }
 @keyframes fly-path { from { left: var(--fx); top: var(--fy); translate: 0 0 0; } 50% { translate: 0 0 60px; } to { left: var(--tx); top: var(--ty); translate: 0 0 0; } }
 
@@ -253,8 +256,18 @@ button, input { font: inherit; }
   .arena { height: 600px; perspective: 900px; }
   .table { left: 1%; right: 1%; top: 14%; bottom: 10%; }
   .seat-chips { display: none; }
+  /* 좁은 화면: 내 쪽(가까운 쪽)은 원근으로 커져 바깥으로 밀리므로 이름표를 안쪽(37%)에 둬서 왼쪽이 잘리지 않게 한다 */
   .hud { min-width: 140px; padding: 6px 8px; }
-  .seat-bottom, .seat-top { --hud-x: 25%; --cards-x: 66%; }
+  .seat-bottom, .seat-top { --hud-x: 37%; --cards-x: 74%; }
+  /* 행동 표시는 좁은 화면에서 작게: 세운 이름표가 높아지면 3D에서 뒤쪽 내 카드를 가린다 */
+  .hud-act { font-size: 13px; padding: 1px 6px; margin-top: 3px; }
+  /* 3·4인 방의 옆 자리: 이름표를 좁혀 안쪽으로, 보드는 좁은 화면에서 가로 18~82%를 차지하므로
+     옆 자리 카드·배지는 바깥 끝으로, 위 자리 배지는 왼쪽 이름표와 겹치지 않게 가운데로. 2인 배치(위 두 줄)는 그대로 */
+  .seat-left .hud, .seat-right .hud { min-width: 108px; padding: 5px 6px; }
+  .seats-3 .seat-left, .seats-4 .seat-left { --hud-x: 20%; --cards-x: 9%; --bet-x: 9%; --bet-y: 44%; }
+  .seats-3 .seat-right, .seats-4 .seat-right { --hud-x: 80%; --cards-x: 91%; --bet-x: 91%; --bet-y: 44%; }
+  .seats-3 .seat-top, .seats-4 .seat-top { --bet-x: 50%; }
+  .seat-left .seat-cards, .seat-right .seat-cards { scale: .72; }
   .hud-name { font-size: 13px; max-width: 120px; } .hud-stack { font-size: 16px; }
   .card, .card3d { width: 40px; height: 56px; } .card-face b { font-size: 15px; } .card-face span { font-size: 17px; }
   .board { gap: 4px; }

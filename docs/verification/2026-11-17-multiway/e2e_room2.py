@@ -206,6 +206,10 @@ def actor(a, b):
 
 
 def suits(p, label):
+    # the table is what is measured: bring it into view first (at 375px the page is taller than the screen,
+    # and an earlier click may have scrolled it down to the controls)
+    p.page.evaluate("() => document.querySelector('.arena').scrollIntoView({ block: 'start' })")
+    p.page.wait_for_timeout(150)
     cards = p.page.evaluate(SUIT_JS)
     # Geometry only: glyphs inside the card face and the viewport. Occlusion by other elements is checked
     # with the pixel comparison tool (tools/pixel_occlusion.py); hit-testing is unreliable here because
