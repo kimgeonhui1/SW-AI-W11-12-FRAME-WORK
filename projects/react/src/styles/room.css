@@ -127,8 +127,10 @@ button, input { font: inherit; }
 
 /* 좌석: 테이블 평면 전체를 덮는 층. 안의 조각을 평면 좌표(%)로 놓는다. 위 좌석 = 먼 쪽, 아래 좌석 = 내 쪽 */
 .seat { position: absolute; inset: 0; transform-style: preserve-3d; pointer-events: none;
-  --cards-y: 70%; --hud-y: 100%; --chips-y: 72%; --bet-y: 57%; --btn-y: 72%; }
-.seat-top { --cards-y: 22%; --hud-y: 6%; --chips-y: 20%; --bet-y: 36%; --btn-y: 22%; }
+  --cards-y: 70%; --hud-y: 100%; --chips-y: 72%; --bet-x: 30%; --bet-y: 67%; --btn-y: 72%; }
+.seat-top { --cards-y: 22%; --hud-y: 6%; --chips-y: 20%; --bet-y: 34%; --btn-y: 22%; }
+/* 베팅 금액은 보드(가로 33~67%, 세로 43~57%) 밖, 왼쪽 아래·위에 둔다. 세운 배지가 보드 카드를 가리지 않게
+   내 쪽은 보드 아래 끝에서 10% 이상 떨어뜨린다 (2D에서는 배지가 기준점 위로 눕혀져 그만큼 차지한다) */
 .seat > * { position: absolute; transform-style: preserve-3d; }
 .seat-cards { left: 58%; top: var(--cards-y); display: flex; gap: 6px; transform: translate(-50%, -50%) translateZ(1px); }
 .seat-chips { left: 77%; top: var(--chips-y); width: 96px; height: 62px; transform: translate(-50%, -50%); }
@@ -139,7 +141,7 @@ button, input { font: inherit; }
 .hud, .bet-chip { transform-origin: 50% 100%; transform: translate(-50%, -100%) translateZ(2px) var(--stand); }
 .hud { left: 26%; top: var(--hud-y); min-width: 190px; padding: 9px 12px; background: linear-gradient(160deg, rgba(90, 150, 255, .22), rgba(14, 10, 40, .88)); border: 1px solid rgba(160, 220, 255, .55);
   box-shadow: 0 0 16px rgba(37, 230, 242, .16); }
-.bet-chip { left: 44%; top: var(--bet-y); display: flex; align-items: center; gap: 6px; padding: 3px 9px 3px 5px; font-size: 13px; font-weight: 700;
+.bet-chip { left: var(--bet-x); top: var(--bet-y); display: flex; align-items: center; gap: 6px; padding: 3px 9px 3px 5px; font-size: 13px; font-weight: 700;
   color: var(--gold); background: rgba(8, 6, 20, .85); border: 1px solid rgba(246, 196, 83, .5); border-radius: 999px; white-space: nowrap; }
 .is-turn .hud { border-color: var(--cyan); box-shadow: 0 0 0 2px rgba(37, 230, 242, .35), 0 0 26px var(--cyan-soft); }
 .is-winner .hud { border-color: var(--gold); box-shadow: 0 0 26px rgba(246, 196, 83, .45); }
@@ -199,8 +201,9 @@ button, input { font: inherit; }
   transform-origin: 50% 100%; transform: translate(-50%, -100%) var(--stand); animation: .62s cubic-bezier(.4, .14, .3, 1) both; }
 .fly-bottom-to-pot { animation-name: fly-bottom-pot; } .fly-top-to-pot { animation-name: fly-top-pot; }
 .fly-pot-to-bottom { animation-name: fly-pot-bottom; } .fly-pot-to-top { animation-name: fly-pot-top; }
-@keyframes fly-bottom-pot { from { left: 44%; top: 57%; translate: 0 0 0; } 50% { translate: 0 0 60px; } to { left: 72%; top: 50%; translate: 0 0 0; } }
-@keyframes fly-top-pot { from { left: 44%; top: 36%; translate: 0 0 0; } 50% { translate: 0 0 60px; } to { left: 72%; top: 50%; translate: 0 0 0; } }
+/* 출발점은 각 좌석의 베팅 금액 자리(.seat의 --bet-x/--bet-y)와 같다 */
+@keyframes fly-bottom-pot { from { left: 30%; top: 67%; translate: 0 0 0; } 50% { translate: 0 0 60px; } to { left: 72%; top: 50%; translate: 0 0 0; } }
+@keyframes fly-top-pot { from { left: 30%; top: 34%; translate: 0 0 0; } 50% { translate: 0 0 60px; } to { left: 72%; top: 50%; translate: 0 0 0; } }
 @keyframes fly-pot-bottom { from { left: 72%; top: 50%; translate: 0 0 0; } 50% { translate: 0 0 60px; } to { left: 26%; top: 92%; translate: 0 0 0; } }
 @keyframes fly-pot-top { from { left: 72%; top: 50%; translate: 0 0 0; } 50% { translate: 0 0 60px; } to { left: 26%; top: 10%; translate: 0 0 0; } }
 
@@ -218,9 +221,10 @@ button, input { font: inherit; }
   .arena { height: 600px; perspective: 900px; }
   .table { left: 1%; right: 1%; top: 14%; bottom: 10%; }
   .seat-chips { display: none; }
-  .hud { min-width: 140px; padding: 6px 8px; left: 25%; }
+  /* 좁은 화면: 내 쪽(가까운 쪽)은 원근으로 커져 바깥으로 밀리므로 이름표를 안쪽(37%)에 둬서 왼쪽이 잘리지 않게 한다 */
+  .hud { min-width: 140px; padding: 6px 8px; left: 37%; }
   .hud-name { font-size: 13px; max-width: 120px; } .hud-stack { font-size: 16px; }
-  .seat-cards { left: 66%; }
+  .seat-cards { left: 74%; }
   .card, .card3d { width: 40px; height: 56px; } .card-face b { font-size: 15px; } .card-face span { font-size: 17px; }
   .board { gap: 4px; }
   .center > .chips { display: none; }
