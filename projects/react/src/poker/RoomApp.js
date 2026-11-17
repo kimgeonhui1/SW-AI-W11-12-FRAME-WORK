@@ -12,8 +12,9 @@
 import { h } from "../core/vdom.js";
 import { useEffect, useRef, useState } from "../core/hooks.js";
 import {
-  BLOOM_PREF, STREET_LABELS, VIEW_PREF, actionText, applyEvent, clampWager, displayFromState, eventDelay, normalizeCode,
-  flightPath, planUpdate, positionLabel, potsText, readPref, remainingSeconds, resultText, seatLayout, validName, writePref,
+  BLOOM_PREF, STREET_LABELS, VIEW_PREF, actTag, applyEvent, betLimits, chipChange, chipChangeText, clampWager, displayFromState,
+  eventDelay, normalizeCode, flightPath, planUpdate, positionLabel, potsText, readPref, rebuyText, remainingSeconds, resultText,
+  seatLayout, syncDisplay, validName, writePref,
 } from "./roomLogic.js";
 
 function newId() {
@@ -46,13 +47,16 @@ function Card({ value, hidden = false }) {
       : h("div", { className: "card side-front card-blank", "aria-hidden": "true" }));
 }
 
-function Seat({ seat, where, you, stack, committed, cards, faceDown, turn, seconds, lastText, phase, handKey, winner }) {
+function Seat({ seat, where, you, stack, committed, cards, faceDown, turn, seconds, act, net, phase, handNo, handKey, winner }) {
   const empty = !seat.occupied;
   const status = empty ? "빈 자리" : !seat.connected ? "연결 끊김" : phase === "lobby" || phase === "hand_over" ? (seat.ready ? "준비 완료" : "대기 중") : "접속 중";
-  // 이번 핸드에서의 상태 표시: 폴드·올인·관전(다음 핸드부터)·칩 없음
+  // 좌석 상태 표시 한 곳: 파산 뒤 복귀 대기 · 다음 핸드부터 참가. 폴드·올인은 행동 표시(act)가 보여 주므로
+  // 행동 기록이 없을 때(오래 끊겼다 돌아온 경우 등)만 배지로 대신 보여 준다
   const badge = empty || phase === "lobby" ? null
-    : seat.busted ? ["out", "칩 없음"] : seat.folded ? ["fold", "폴드"] : seat.allIn ? ["allin", "올인"]
-      : phase === "playing" && !seat.inHand ? ["wait", "다음 핸드부터"] : null;
+    : seat.busted ? ["out", rebuyText(seat, phase, handNo, true)]
+      : !act && seat.folded ? ["fold", "폴드"] : !act && seat.allIn ? ["allin", "올인"]
+        : phase === "playing" && !seat.inHand ? ["wait", "다음 핸드부터"] : null;
+  const tag = actTag(act);
   // key에 카드 값을 넣지 않는다: 같은 카드 요소가 뒷면 → 앞면으로 바뀌어야 뒤집히는 애니메이션이 보인다 (새 핸드면 handKey가 바뀌어 새로 나눠 준다)
   const cardNodes = cards
     ? cards.map((value, index) => h(Card, { key: handKey + "-" + where + "-" + index, value }))
@@ -72,7 +76,10 @@ function Seat({ seat, where, you, stack, committed, cards, faceDown, turn, secon
         h("span", { className: "presence " + (empty ? "off" : seat.connected ? "on" : "lost") }, status),
         badge ? h("span", { className: "seat-badge badge-" + badge[0] }, badge[1]) : null,
         turn ? h("span", { className: "turn-clock" }, "차례" + (seconds === null ? "" : " · " + seconds + "초")) : null),
-      lastText ? h("div", { className: "hud-last" }, lastText) : null),
+      // 이번 스트리트 마지막 행동(크게). 콜은 "+더 낸 금액", 베팅·레이즈·올인은 "총 = 이번 스트리트 총 베팅액"
+      tag ? h("div", { className: "hud-act act-" + act.kind + (act.auto ? " act-auto" : "") }, tag) : null,
+      net !== null && net !== undefined ? h("div", { className: "hud-net " + (net > 0 ? "up" : net < 0 ? "down" : "even") },
+        "이번 핸드 " + (net > 0 ? "+" : net < 0 ? "−" : "±") + Math.abs(net).toLocaleString()) : null),
     h("div", { className: "seat-chips" }, h(ChipStack, { value: empty ? 0 : stack })),
     !empty && phase !== "lobby" && seat.isButton ? h("i", { className: "dealer-btn", "aria-hidden": "true" }, "D") : null,
     committed > 0 ? h("div", { className: "bet-chip" }, h("i", { className: "chip" }), h("span", {}, Number(committed).toLocaleString())) : null);
@@ -115,7 +122,7 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
     if (!event) {
       s.playing = false;
       s.timer = null;
-      if (s.target) setDisplay(displayFromState(s.target));
+      if (s.target) setDisplay((current) => syncDisplay(current, s.target));
       return;
     }
     s.playing = true;
@@ -158,7 +165,8 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
     s.playing = false;
     s.timer = null;
     s.hasDisplay = true;
-    setDisplay(displayFromState(next));
+    // 첫 접속·새로고침(after=0)이면 응답에 이번 핸드 이벤트가 모두 있다. 그 밖에는 지금 표시를 이어 쓴다
+    setDisplay((current) => (previousSeq === 0 ? displayFromState(next) : syncDisplay(current, next)));
   };
 
   const leaveLocal = (message) => {
@@ -232,6 +240,7 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
   };
   const setReady = (value) => send({ path: "/api/rooms/" + code + "/ready", body: { ready: value, hand_no: state.handNo } });
   const startMatch = () => send({ path: "/api/rooms/" + code + "/start", body: { hand_no: 0 } });
+  const nextRound = () => send({ path: "/api/rooms/" + code + "/next-round", body: { hand_no: state.handNo } });
   // 칩을 정산하고 자리에서 일어난다 (이번 매치에는 다시 앉을 수 없다). 핸드 사이에만 가능하다
   const cashOut = async () => {
     const result = await send({ path: "/api/rooms/" + code + "/leave", body: {} });
@@ -381,9 +390,9 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
   const nextIn = synced && state.phase === "hand_over" ? remainingSeconds(state.nextHandInMs, sync.current.receivedAt, now) : null;
   const me = state.seats[state.you.seat];
   const occupied = state.seats.filter((seat) => seat.occupied).length;
-  const showResult = synced && state.result && (state.phase === "hand_over" || state.phase === "match_over");
+  const showResult = synced && state.result && (state.phase === "hand_over" || state.phase === "round_over");
   const winners = new Set(showResult ? state.result.winnerSeats || [] : []);
-  const lastText = display.last ? actionText(display.last, names) : "";
+  const lastLog = display.log && display.log.length ? display.log[display.log.length - 1].text : "";
 
   const seatNode = (index, where) => {
     const seat = state.seats[index];
@@ -394,13 +403,16 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
       key: "seat-" + where, seat, where, you: mine, stack: display.stacks[index], committed: display.committed[index], cards,
       faceDown: seat.occupied && state.phase !== "lobby" && state.street ? seat.cardCount : 0,
       turn: synced && state.phase === "playing" && state.turnSeat === index,
-      seconds, phase: state.phase, handKey, winner: winners.has(index),
-      lastText: display.last && display.last.seat === index ? lastText : "",
+      seconds, phase: state.phase, handNo: state.handNo, handKey, winner: winners.has(index),
+      act: seat.occupied && display.acts ? display.acts[index] : null,
+      net: showResult && state.result.startStacks && state.result.startStacks[index] !== null
+        ? state.result.endStacks[index] - state.result.startStacks[index] : null,
     });
   };
 
   // 이번 핸드 참가 여부: 쇼다운이면 hands에, 폴드로 끝났으면 서버가 남긴 inHand 표시로 안다
   const outcome = showResult ? resultText(state.result, names, state.you.seat, Boolean(me.inHand)) : "";
+  const myChange = showResult ? chipChange(state.result, state.you.seat, me.stack) : null;
   const storageText = state.recordStatus === "unknown" ? "결과 저장을 확인하는 중입니다. 확인되면 다음 판을 시작할 수 있습니다."
     : state.recordStatus === "blocked" ? "결과 저장에 충돌이 있어 이 방은 더 진행할 수 없습니다." : "";
 
@@ -416,6 +428,11 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
         h("div", { className: "board" }, ...Array.from({ length: 5 }, (_, index) => h(Card, { key: handKey + "-board-" + index + "-" + (display.board[index] || "x"), value: display.board[index] }))),
         h(ChipStack, { value: display.pot }));
 
+  // 최근 행동 기록 (이번 핸드만, 새 핸드가 시작되면 비운다). 넓은 화면은 테이블 중앙 위, 좁은 화면은 테이블 아래(좌석을 가리지 않게)
+  const logList = (className) => (state.phase !== "lobby" && display.log && display.log.length
+    ? h("ol", { className, "aria-label": "최근 행동" }, ...display.log.map((entry) => h("li", { key: className + "-" + entry.seq }, entry.text)))
+    : null);
+
   const flight = display.flight
     ? h("span", { key: display.flight.id, className: "fly", style: flightPath(display.flight, whereOf), "aria-hidden": "true" },
         h("i", { className: "chip" }), String(display.flight.amount))
@@ -426,15 +443,23 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
     controls.push(h("button", { key: "ready", className: "btn btn-main", disabled: locked || occupied < 2, onClick: () => setReady(!me.ready) }, me.ready ? "준비 취소" : "준비"));
     if (state.you.isHost) controls.push(h("button", { key: "start", className: "btn", disabled: locked || !state.canStart, onClick: startMatch }, "준비한 사람끼리 시작"));
   } else if (state.phase === "hand_over" && synced) {
-    if (me.busted) controls.push(h("span", { key: "busted", className: "auto-next" }, "칩이 없어 이번 매치는 관전합니다"));
+    // 파산한 사람은 누를 버튼이 없다: 한 핸드를 관전한 뒤 서버가 1,000칩을 지급하고 자동으로 다시 넣어 준다
+    if (me.busted) controls.push(h("span", { key: "busted", className: "auto-next wait-rebuy" }, rebuyText(me, state.phase, state.handNo, false)));
     else controls.push(h("button", { key: "next", className: "btn btn-main", disabled: locked || me.ready || Boolean(storageText), onClick: () => setReady(true) },
       me.ready ? "다른 사람을 기다리는 중" : "다음 판 준비"));
     if (nextIn !== null && !storageText) controls.push(h("span", { key: "auto", className: "auto-next" }, nextIn + "초 뒤 준비한 사람끼리 자동 시작"));
-  } else if (state.phase === "match_over" && synced) {
-    controls.push(h("span", { key: "over", className: "auto-next" }, "매치 종료 · 칩을 가진 사람이 한 명만 남았습니다"));
+  } else if (state.phase === "round_over" && synced) {
+    // 칩 가진 사람이 1명 이하라 관전할 핸드를 열 수 없다: 앉아 있는 누구나 "다음 라운드 시작"을 누를 수 있다(한 번만 반영)
+    if (state.canNextRound) {
+      controls.push(h("button", { key: "round", className: "btn btn-main", disabled: locked || Boolean(storageText), onClick: nextRound },
+        "다음 라운드 시작 (칩 없는 사람에게 " + Number(state.rebuyAmount).toLocaleString() + "칩)"));
+    }
+    controls.push(h("span", { key: "round-note", className: "auto-next" }, state.canNextRound
+      ? "칩 가진 사람이 1명이라 다음 핸드를 열 수 없습니다. 칩 보유자는 칩을 그대로 유지합니다."
+      : "다른 사람이 들어오기를 기다리는 중입니다 (방 코드 " + code + ")"));
   } else if (state.phase === "playing" && synced && !me.inHand) {
     // 진행 중에 앉은 사람·이번 핸드를 쉬는 사람: 준비해 두면 다음 핸드에 카드를 받는다
-    if (me.busted) controls.push(h("span", { key: "busted", className: "auto-next" }, "칩이 없어 이번 매치는 관전합니다"));
+    if (me.busted) controls.push(h("span", { key: "busted", className: "auto-next wait-rebuy" }, rebuyText(me, state.phase, state.handNo, false)));
     else controls.push(h("button", { key: "sit", className: "btn btn-main", disabled: locked || me.ready, onClick: () => setReady(true) },
       me.ready ? "다음 핸드 참가 예약됨" : "다음 핸드부터 참가"));
     controls.push(h("span", { key: "wait", className: "auto-next" }, names[state.turnSeat] + "의 차례입니다"));
@@ -442,19 +467,26 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
     if (legal.has("fold")) controls.push(h("button", { key: "fold", className: "btn btn-fold", disabled: locked, onClick: () => act("fold") }, "폴드"));
     if (legal.has("check")) controls.push(h("button", { key: "check", className: "btn", disabled: locked, onClick: () => act("check") }, "체크"));
     if (legal.has("call")) controls.push(h("button", { key: "call", className: "btn", disabled: locked, onClick: () => act("call") }, "콜 " + state.toCall.toLocaleString()));
+    const limits = betLimits(state, legal, mayRaise ? wager : null);
     if (mayRaise) {
       const min = state.minRaiseTo;
       const max = state.maxRaiseTo;
       const pick = (value) => setWager(clampWager(value, min, max));
       controls.push(h("span", { key: "wager", className: "wager" },
+        h("span", { className: "wager-limits" }, limits.text),
         h("input", { className: "wager-range", type: "range", min, max, step: 1, value: wager, disabled: locked, "aria-label": "베팅 총액 조절", onInput: (event) => pick(event.target.value) }),
-        h("input", { className: "field wager-number", type: "number", min, max, step: 1, value: wager, disabled: locked, "aria-label": "베팅 총액", onInput: (event) => setWager(Number(event.target.value)) }),
+        h("input", { className: "field wager-number" + (limits.error ? " is-invalid" : ""), type: "number", min, max, step: 1, value: wager, disabled: locked, "aria-label": "베팅 총액 (이번 스트리트 총액)",
+          onInput: (event) => setWager(event.target.value === "" ? NaN : Number(event.target.value)) }),
+        limits.error ? h("span", { className: "wager-error", role: "alert" }, limits.error) : null,
         h("button", { className: "btn btn-quick", disabled: locked, onClick: () => pick(min) }, "최소"),
         h("button", { className: "btn btn-quick", disabled: locked, onClick: () => pick(state.pot + state.toCall * 2) }, "팟"),
         h("button", { className: "btn btn-main", disabled: locked || !Number.isInteger(wager) || wager < min || wager > max,
-          onClick: () => act(legal.has("bet") ? "bet" : "raise", wager) }, (legal.has("bet") ? "베팅 " : "레이즈 ") + wager.toLocaleString())));
+          onClick: () => act(legal.has("bet") ? "bet" : "raise", wager) }, (legal.has("bet") ? "베팅 총 " : "레이즈 총 ") + (Number.isFinite(wager) ? wager.toLocaleString() : "—"))));
+    } else {
+      controls.push(h("span", { key: "limits", className: "wager-limits" }, limits.text));
     }
-    if (legal.has("all_in")) controls.push(h("button", { key: "allin", className: "btn btn-allin", disabled: locked, onClick: () => act("all_in") }, "올인"));
+    if (legal.has("all_in")) controls.push(h("button", { key: "allin", className: "btn btn-allin", disabled: locked, title: limits.allIn, onClick: () => act("all_in") }, "올인"));
+    if (limits.allIn) controls.push(h("span", { key: "allin-note", className: "wager-limits" }, limits.allIn));
   } else if (state.phase === "playing") {
     controls.push(h("span", { key: "wait", className: "auto-next" }, synced ? names[state.turnSeat] + "의 차례입니다" : "진행 상황을 재생하는 중…"));
   }
@@ -468,6 +500,8 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
     h("main", { className: "arena view-" + view + (bloom ? " bloom-on" : "") },
       h("div", { className: "hand-label" }, state.phase === "lobby" ? "LOBBY" : "HAND " + display.handNo + (state.street && synced ? " · " + (STREET_LABELS[state.street] || state.street) : "")),
       h(ViewToggles, { view, bloom, onView: toggleView, onBloom: toggleBloom }),
+      // 최근 행동 기록 (이번 핸드만, 새 핸드가 시작되면 비운다)
+      logList("action-log"),
       // 3D 공간: 배경(바닥·벽)과 테이블 평면. 좌석·카드·칩·팟은 모두 테이블 평면 안에 있다
       h("div", { className: "scene" },
         // 배경: 연습 모드(poker.html)와 같은 구성 — 바닥 격자, 보라 바닥 빛, 네온 기둥 2개, 육각 간판, 양옆 벽 패널 — 을 3D 공간에 세움
@@ -486,7 +520,9 @@ export function RoomApp({ client, initialName = "", initialCode = "", startError
           seatNode(layout[0].seat, "bottom")))),
     h("p", { className: "status", role: "status" },
       h("span", { className: "status-dot" }),
-      showResult ? outcome : synced ? state.notice : lastText || "진행 상황을 재생하는 중…"),
+      showResult ? outcome : synced ? state.notice : lastLog || "진행 상황을 재생하는 중…"),
+    myChange ? h("p", { className: "chip-change", role: "status" }, "내 칩 · " + chipChangeText(myChange)) : null,
+    logList("action-log action-log-below"),
     storageText ? h("p", { className: "notice" }, storageText) : null,
     state.recovered && state.phase !== "playing" ? h("p", { className: "notice" }, "서버가 다시 시작됐습니다. 진행 중이던 핸드는 무효이며 마지막으로 저장된 칩에서 이어갑니다.") : null,
     noticeBar,

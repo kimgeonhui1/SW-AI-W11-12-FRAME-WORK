@@ -615,8 +615,8 @@ class RoomTests(unittest.TestCase):
         empty = {"matches": 0, "hands": 0, "wins": 0, "losses": 0, "draws": 0}
         self.assertEqual(a["practice"], empty)
         self.assertEqual(b["practice"], empty)
-        self.assertEqual(a["online"], {"matches": 1, "hands": 3, "wins": 1, "losses": 2, "draws": 0})
-        self.assertEqual(b["online"], {"matches": 1, "hands": 3, "wins": 2, "losses": 1, "draws": 0})
+        self.assertEqual(a["online"], {"matches": 1, "hands": 3, "wins": 1, "losses": 2, "draws": 0, "rebuys": 0})
+        self.assertEqual(b["online"], {"matches": 1, "hands": 3, "wins": 2, "losses": 1, "draws": 0, "rebuys": 0})
         self.assertEqual((a["recentGames"], b["recentGames"]), ([], []))
         self.assertEqual([(g["handNo"], g["result"], g["seat"], g["opponent"]) for g in b["recentOnline"]],
                          [(3, "win", 1, "Alpha"), (2, "loss", 1, "Alpha"), (1, "win", 1, "Alpha")])
@@ -636,7 +636,7 @@ class RoomTests(unittest.TestCase):
         self.assertEqual(b["practice"], {"matches": 1, "hands": 1, "wins": 0, "losses": 1, "draws": 0})
         self.assertEqual(b["online"]["hands"], 3)
         self.assertEqual([(g["mode"], g["result"]) for g in b["recentGames"]], [("practice", "loss")])
-        self.assertEqual(self.profile(C)["online"], empty)  # someone who never sat in the room
+        self.assertEqual(self.profile(C)["online"], dict(empty, rebuys=0))  # someone who never sat in the room
 
     def test_profile_reports_storage_outage_instead_of_wrong_numbers(self):
         code = self.start_match()
@@ -652,13 +652,15 @@ class RoomTests(unittest.TestCase):
         status, result = self.call(B, "/api/profile")
         self.assertEqual((status, result["error"]), (503, "profile_store_unavailable"))
 
-    def test_match_over_when_a_player_has_no_chips(self):
+    def test_bust_heads_up_waits_for_next_round_then_one_rebuy(self):
+        """Rules v2: with one chip holder left there is no hand to watch, so the room waits in
+        round_over. Either player may press '다음 라운드 시작'; the busted player gets 1,000 once."""
         code = self.start_match()
         self.assertEqual(self.act(A, code, "all_in")[0], 200)
         status, result = self.act(B, code, "call")
         self.assertEqual(status, 200, result)
         view = result["state"]
-        self.assertEqual(view["phase"], "match_over")
+        self.assertEqual(view["phase"], "round_over")
         self.assertEqual([seat["stack"] for seat in view["seats"]], [0, 2000])
         self.assertEqual(len(view["board"]), 5)
         events = self.state(A, code, after=0)["events"]
@@ -668,10 +670,33 @@ class RoomTests(unittest.TestCase):
         self.assertEqual([len(e["board"]) for e in events[2:6]], [0, 3, 4, 5])
         self.assertEqual((events[5]["stacks"], events[5]["pot"]), ([0, 0], 2000))
         self.assertEqual((events[6]["stacks"], events[6]["pot"]), ([0, 2000], 0))
+        # the busted seat stays seated and connected; readying is refused, nothing happens on its own
         status, result = self.ready(A, code, 1)
-        self.assertEqual((status, result["error"]), (409, "match_over"))
+        self.assertEqual((status, result["error"]), (409, "busted"))
         self.clock.now += 60
-        self.assertEqual(self.state(A, code)["phase"], "match_over")
+        view = self.state(A, code)
+        self.assertEqual((view["phase"], view["canNextRound"], view["seats"][0]["bustHand"]), ("round_over", True, 1))
+        # both hands that reached the showdown are shown to both players, also while waiting in round_over
+        for token in (A, B):
+            self.assertTrue(all(s["cards"] for s in self.state(token, code)["seats"]), token)
+        self.assertTrue(view["seats"][0]["connected"])
+        status, result = self.call(B, f"/api/rooms/{code}/next-round", {"hand_no": 0})
+        self.assertEqual((status, result["error"]), (409, "not_round_over"))  # pinned to the current hand
+        status, result = self.call(B, f"/api/rooms/{code}/next-round", {"hand_no": 1})  # the winner may press it
+        self.assertEqual(status, 200, result)
+        self.assertEqual([s["stack"] for s in result["state"]["seats"]], [1000, 2000])  # the holder keeps 2,000
+        status, again = self.call(A, f"/api/rooms/{code}/next-round", {"hand_no": 1})
+        self.assertEqual((status, again["error"]), (409, "not_round_over"))
+        rebuys = [r for r, _ in self.database.tables["room_seat_events"].rows if r["kind"] == "rebuy"]
+        self.assertEqual([(r["seat"], r["amount"], r["after_hand"]) for r in rebuys], [(0, 1000, 1)])
+        for token in (A, B):
+            self.ready(token, code, 1)
+        view = self.state(A, code)
+        self.assertEqual((view["phase"], view["handNo"]), ("playing", 2))
+        self.assertEqual(sum(s["stack"] for s in view["seats"]) + view["pot"], 3000)
+        # the rebuy is not a win: A has one hand, a loss, and one rebuy on its profile
+        online = self.call(A, "/api/profile")[1]["profile"]["online"]
+        self.assertEqual((online["hands"], online["wins"], online["losses"], online["rebuys"]), (1, 0, 1, 1))
 
 
 if __name__ == "__main__":

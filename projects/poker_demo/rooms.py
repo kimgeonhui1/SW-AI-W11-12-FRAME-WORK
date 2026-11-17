@@ -18,8 +18,14 @@ Room rules (house rules marked; see MULTIPLAYER.md):
 - a participant cannot leave during their hand; between hands (or while sitting out) leaving
   cashes out the remaining chips (recorded) and the player cannot sit in the same match again.
 - a player disconnected when a hand is dealt sits that hand out; seat and chips stay.
-- a seat with 0 chips is busted (spectating). The match ends when fewer than 2 seated players
-  have chips.
+- rebuy (house rule, rules v2): a player whose chips reach 0 in hand H watches hand H+1, then
+  receives one 1,000-chip rebuy (recorded as its own seat event) before the next hand and is
+  dealt back in automatically. A rebuy is never counted as winnings.
+- when fewer than 2 seated players have chips, no hand can be dealt to watch: the room waits in
+  `round_over` and any seated player may press "다음 라운드 시작" (POST next-round). Chip holders
+  keep their chips; each busted player gets the one rebuy for their bust. The rebuy rows are
+  insert-once per bust, so repeated or concurrent presses and restarts never pay twice.
+  The match no longer ends because of busts; it lasts until everybody has left.
 """
 import hashlib
 import json
@@ -34,7 +40,7 @@ from table import MAX_SEATS, MIN_SEATS, TableHand, build_pots, next_button
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O/1/I/L look-alikes
 CODE_LENGTH = 6
 STREET_SIZES = (("flop", 3), ("turn", 4), ("river", 5))
-RULES_VERSION = "poker-lab-holdem-multi-v1"
+RULES_VERSION = "poker-lab-holdem-multi-v2"  # v2: one free rebuy after watching a hand
 ACTIONS = ("fold", "check", "call", "bet", "raise", "all_in")
 BUY_IN = 1000
 SMALL_BLIND, BIG_BLIND = 10, 20
@@ -65,7 +71,9 @@ def replay_ledger(match_key, seat_rows, hand_rows):
     """Rebuild seats and chips from stored records and check them; raises LedgerError on any mismatch.
 
     Returns {"seats": {seat: user_db}, "stacks": {user_db: chips}, "hands": [rows by hand_no],
-    "last_id", "hand_no", "button", "left": {user_db}, "buy_ins", "cash_outs"}.
+    "last_id", "hand_no", "button", "left": {user_db}, "buy_ins", "cash_outs", "rebuys",
+    "busted": {user_db: hand in which the chips reached 0 (no rebuy yet)}}.
+    Chips on the table must equal buy-ins + rebuys - cash-outs.
     """
     hands = sorted(hand_rows, key=lambda r: r["id"])
     events = sorted(seat_rows, key=lambda r: r["id"])
@@ -82,17 +90,30 @@ def replay_ledger(match_key, seat_rows, hand_rows):
             raise LedgerError("hand result hash mismatch")
     for row in events:
         fields = {k: row[k] for k in SEAT_COLUMNS if k not in ("id", "payload_hash")}
-        if row["payload_hash"] != hash_fields(fields) or row["kind"] not in ("buyin", "leave"):
+        if row["payload_hash"] != hash_fields(fields) or row["kind"] not in ("buyin", "leave", "rebuy"):
             raise LedgerError("seat event hash mismatch")
-    seats, stacks, left = {}, {}, set()
-    buy_ins = cash_outs = 0
+    seats, stacks, left, busted = {}, {}, set(), {}
+    buy_ins = cash_outs = rebuys = 0
     previous_id, button = 0, None
 
     def apply_events(after):
-        nonlocal buy_ins, cash_outs
+        nonlocal buy_ins, cash_outs, rebuys
+        paid_now = set()  # rebuys of this batch do not count as holders for a restart in the same batch
         for row in [e for e in events if e["after_hand"] == after]:
             user = row["user_db"]
-            if row["kind"] == "buyin":
+            if row["kind"] == "rebuy":
+                bust = busted.get(user)
+                holders = sum(1 for u in seats.values() if stacks[u] > 0 and u not in paid_now)
+                # once per bust, after watching one hand (bust < after) or at a round restart (nobody could deal)
+                if (seats.get(row["seat"]) != user or stacks.get(user) != 0 or bust is None or row["amount"] != BUY_IN
+                        or row["operation_key"] != rebuy_key(match_key, user, bust)
+                        or not (bust < after or (bust == after and holders < MIN_SEATS))):
+                    raise LedgerError("invalid rebuy")
+                stacks[user] = BUY_IN
+                del busted[user]
+                paid_now.add(user)
+                rebuys += BUY_IN
+            elif row["kind"] == "buyin":
                 if user in stacks or user in left or row["seat"] in seats or row["amount"] != BUY_IN:
                     raise LedgerError("invalid buy-in")
                 seats[row["seat"]] = user
@@ -103,6 +124,7 @@ def replay_ledger(match_key, seat_rows, hand_rows):
                     raise LedgerError("cash-out does not match the player's chips")
                 del seats[row["seat"]]
                 cash_outs += stacks.pop(user)
+                busted.pop(user, None)
                 left.add(user)
 
     apply_events(0)
@@ -133,15 +155,23 @@ def replay_ledger(match_key, seat_rows, hand_rows):
             raise LedgerError("button is not a participant")
         for p in participants:
             stacks[p["user"]] = p["end"]
+            if p["end"] == 0:
+                busted[p["user"]] = number
         previous_id = row["id"]
         button = row["button"]
         apply_events(number)
     if any(e["after_hand"] > len(hands) for e in events):
         raise LedgerError("seat event after an unknown hand")
-    if sum(stacks.values()) != buy_ins - cash_outs:
-        raise LedgerError("chips on the table differ from buy-ins minus cash-outs")
+    if sum(stacks.values()) != buy_ins + rebuys - cash_outs:
+        raise LedgerError("chips on the table differ from buy-ins + rebuys - cash-outs")
     return {"seats": seats, "stacks": stacks, "hands": hands, "last_id": previous_id, "hand_no": len(hands),
-            "button": button, "left": left, "buy_ins": buy_ins, "cash_outs": cash_outs}
+            "button": button, "left": left, "buy_ins": buy_ins, "cash_outs": cash_outs, "rebuys": rebuys,
+            "busted": busted}
+
+
+def rebuy_key(match_key, user_db, bust_hand):
+    """One rebuy per bust: the key names the hand in which the chips reached 0."""
+    return f"{match_key}:seat:{user_db}:rebuy:{bust_hand}"
 
 
 class Room:
@@ -159,7 +189,9 @@ class Room:
         self.connected = [False] * capacity
         self.host = None
         self.left_users = set()  # userIds that cashed out of this match
-        self.phase = "lobby"  # lobby | playing | hand_over | match_over
+        self.bust_hand = [None] * capacity  # hand in which the seat's chips reached 0, until its rebuy
+        self.pending_rebuys = {}  # seat -> row fields of a rebuy whose storage is not confirmed yet
+        self.phase = "lobby"  # lobby | playing | hand_over | round_over
         # Counters start from the wall clock (ms): a room rebuilt after a restart continues with
         # larger numbers than any client saw, so old cursors and old actions never match.
         base = int(time.time() * 1000)
@@ -238,6 +270,7 @@ class RoomService:
                       ("POST", "leave"): lambda: self.leave(user, code, trace_id),
                       ("POST", "ready"): lambda: self.set_ready(user, code, payload, trace_id),
                       ("POST", "start"): lambda: self.host_start(user, code, payload, trace_id),
+                      ("POST", "next-round"): lambda: self.next_round(user, code, payload, trace_id),
                       ("POST", "action"): lambda: self.action(user, code, payload, trace_id)}
             handler = routes.get((method, verb))
             return handler() if handler else self._err(404, "not_found", "unknown room route")
@@ -307,11 +340,14 @@ class RoomService:
         room.ready[seat] = False
         room.sitting_in[seat] = False
         room.stacks[seat] = chips
+        room.bust_hand[seat] = None
         room.last_seen[seat] = self.clock()
         room.connected[seat] = True
 
     def _free(self, room, seat):
         room.seats[seat] = None
+        room.bust_hand[seat] = None
+        room.pending_rebuys.pop(seat, None)
         room.ready[seat] = False
         room.sitting_in[seat] = False
         room.stacks[seat] = None
@@ -340,14 +376,12 @@ class RoomService:
             if seat is not None:
                 self._seen(room, seat)
                 return 200, {"state": self._view(room, seat, 0)}
-            if room.phase == "match_over":
-                return self._err(409, "match_over", "이미 끝난 매치입니다")
             if user["userId"] in room.left_users:
                 return self._err(409, "left_match", "이 매치에서 나간 뒤에는 다시 앉을 수 없습니다")
             free = [i for i, value in enumerate(room.seats) if value is None]
             if not free:
                 return self._err(409, "room_full", "방이 가득 찼습니다")
-            if room.pending_result:
+            if room.pending_result or room.pending_rebuys:
                 # a buy-in must be ordered after the hand it follows, so wait until that hand is on record
                 return self._err(409, "result_storage_pending", "직전 핸드 결과를 저장하는 중입니다. 잠시 뒤 다시 시도하세요")
             seat = free[0]
@@ -360,6 +394,7 @@ class RoomService:
                     return self._err(503, "seat_storage_unknown", "자리 기록을 저장하지 못했습니다. 다시 시도하세요")
                 self._sit(room, seat, user, BUY_IN)
                 room.notice = f"{user['displayName']} 님이 앉았습니다. 준비하면 다음 핸드부터 참여합니다."
+                self._check_round_over(room)
             self._bump(room, trace_id)
             return 200, {"state": self._view(room, seat, 0)}
 
@@ -379,7 +414,7 @@ class RoomService:
             if room.phase == "playing" and room.in_hand(seat) and not room.hand.hand_over:
                 return self._err(409, "match_in_progress", "참가 중인 핸드가 끝난 뒤에 나갈 수 있습니다. 창을 닫으면 차례마다 제한 시간 뒤 자동 처리됩니다",
                                  self._view(room, seat, 0))
-            if room.pending_result:
+            if room.pending_result or room.pending_rebuys:
                 return self._err(409, "result_storage_pending", "결과 저장을 확인하는 중입니다. 잠시 뒤 다시 시도하세요", self._view(room, seat, 0))
             chips = room.stacks[seat] or 0
             if room.match_key is not None:
@@ -388,8 +423,8 @@ class RoomService:
             room.left_users.add(user["userId"])
             self._free(room, seat)
             room.notice = f"{user['displayName']} 님이 칩 {chips:,}개를 가지고 나갔습니다."
-            if room.phase in ("hand_over", "match_over"):
-                self._check_match_over(room)
+            if room.phase in ("hand_over", "round_over"):
+                self._check_round_over(room)
             self._bump(room, trace_id)
             return 200, {"left": True, "cashOut": chips}
 
@@ -402,15 +437,14 @@ class RoomService:
             seat = self._seat_or_stop(room, user)
             self._seen(room, seat)
             self._tick(room, trace_id)
-            if room.phase == "match_over":
-                return self._err(409, "match_over", "매치가 끝났습니다. 새 방을 만드세요", self._view(room, seat, 0))
             if room.phase == "playing" and room.in_hand(seat):
                 return self._err(409, "hand_active", "핸드가 진행 중입니다", self._view(room, seat, 0))
             # hand_no pins the request to the hand it was made for
             if payload["hand_no"] != room.hand_no:
                 return self._err(409, "stale_state", "이미 다음 상태로 넘어갔습니다", self._view(room, seat, 0))
             if room.phase != "lobby" and (room.stacks[seat] or 0) <= 0:
-                return self._err(409, "busted", "칩이 없어 더 참여할 수 없습니다", self._view(room, seat, 0))
+                return self._err(409, "busted", "칩이 없어 이번에는 관전합니다. 정해진 때에 1,000칩을 받고 자동으로 돌아옵니다",
+                                 self._view(room, seat, 0))
             changed = room.ready[seat] != payload["ready"]
             room.ready[seat] = payload["ready"]
             if room.phase != "lobby":
@@ -441,6 +475,76 @@ class RoomService:
                 return self._err(error[0], error[1], error[2], self._view(room, seat, 0))
             return 200, {"state": self._view(room, seat, 0)}
 
+    def next_round(self, user, code, payload, trace_id):
+        """'다음 라운드 시작': when fewer than 2 seated players have chips, pay each busted player's one rebuy.
+
+        Any seated player may press it (the host may be the one who busted or may be away). The request
+        is pinned to hand_no; the rebuy rows are insert-once per bust, so a second press, a retried
+        request or a press from another tab changes nothing.
+        """
+        if (not isinstance(payload, dict) or set(payload) != {"hand_no"} or not isinstance(payload["hand_no"], int)
+                or isinstance(payload["hand_no"], bool)):
+            return self._err(400, "invalid_next_round_request", "next-round accepts hand_no")
+        room = self._room(code, trace_id)
+        with room.cond:
+            seat = self._seat_or_stop(room, user)
+            self._seen(room, seat)
+            self._tick(room, trace_id)
+            if room.phase != "round_over" or payload["hand_no"] != room.hand_no:
+                return self._err(409, "not_round_over", "이미 다음 라운드로 넘어갔습니다", self._view(room, seat, 0))
+            if room.pending_result:
+                return self._err(409, "result_storage_pending", "결과 저장을 확인하는 중입니다. 잠시 뒤 다시 시도하세요", self._view(room, seat, 0))
+            waiting = [i for i in room.occupied() if room.bust_hand[i] is not None]
+            if not waiting:
+                return self._err(409, "nobody_to_rebuy", "다시 시작할 파산 좌석이 없습니다. 다른 사람이 들어오기를 기다립니다", self._view(room, seat, 0))
+            for i in waiting:
+                room.pending_rebuys.setdefault(i, self._rebuy_fields(room, i))
+            self._flush_rebuys(room, trace_id)
+            if room.pending_rebuys:
+                self._bump(room, trace_id)
+                return self._err(503, "seat_storage_unknown", "지급 기록을 저장하지 못했습니다. 다시 눌러 주세요", self._view(room, seat, 0))
+            room.phase = "hand_over"
+            room.next_deadline = self.clock() + self.NEXT_HAND_SECONDS
+            room.notice = f"{room.seats[seat]['name']} 님이 다음 라운드를 시작했습니다. 칩이 없던 사람에게 1,000칩을 지급했습니다."
+            self._check_round_over(room)
+            self._bump(room, trace_id)
+            self._advance(room, trace_id)
+            return 200, {"state": self._view(room, seat, 0)}
+
+    def _rebuy_fields(self, room, seat):
+        user_db = room.seats[seat]["dbId"]
+        bust = room.bust_hand[seat]
+        fields = {"operation_key": rebuy_key(room.match_key, user_db, bust), "match_key": room.match_key, "kind": "rebuy",
+                  "user_db": user_db, "seat": seat, "amount": BUY_IN, "after_hand": self._completed_hands(room)}
+        fields["payload_hash"] = hash_fields(fields)
+        return fields
+
+    def _flush_rebuys(self, room, trace_id):
+        """Store pending rebuys (the same row on every retry); chips are paid only once a row is confirmed."""
+        for seat, fields in sorted(room.pending_rebuys.items()):
+            columns = [c for c in SEAT_COLUMNS if c != "id"]
+            sql = f"INSERT INTO room_seat_events ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))})"
+            _, trace = self.demo._insert_once(sql, [fields[c] for c in columns], "operation_key", trace_id)
+            if trace["outcome"] == "ok":
+                del room.pending_rebuys[seat]
+                room.stacks[seat] = BUY_IN
+                room.bust_hand[seat] = None
+                room.sitting_in[seat] = True  # back automatically
+                room.ready[seat] = False
+            elif trace["outcome"] == "http_error" and trace.get("status") == 409:
+                room.storage_blocked = True
+                room.record_status = "blocked"
+                return
+            else:
+                room.retry_at = self.clock() + self.STORAGE_RETRY_SECONDS
+
+    def _due_rebuys(self, room):
+        """After a stored hand: seats that busted earlier and have now watched a hand get their rebuy."""
+        for seat in room.occupied():
+            bust = room.bust_hand[seat]
+            if bust is not None and bust < room.hand_no and seat not in room.pending_rebuys:
+                room.pending_rebuys[seat] = self._rebuy_fields(room, seat)
+
     def _seat_or_stop(self, room, user):
         seat = room.seat_of(user)
         if seat is None:
@@ -464,7 +568,8 @@ class RoomService:
             if len(seated) >= MIN_SEATS and all(room.ready[i] for i in seated):
                 return self._start_match(room, trace_id)
             return None
-        if room.phase != "hand_over" or room.record_status not in ("confirmed", "not_saved") or room.pending_result:
+        if (room.phase != "hand_over" or room.record_status not in ("confirmed", "not_saved") or room.pending_result
+                or room.pending_rebuys):
             return None
         candidates = self._candidates(room)
         if len(candidates) < MIN_SEATS:
@@ -582,6 +687,9 @@ class RoomService:
         if hand.hand_over:
             for seat in hand.seats:
                 room.stacks[seat] = hand.stacks[seat]
+                if hand.stacks[seat] == 0:
+                    room.bust_hand[seat] = room.hand_no
+                    room.sitting_in[seat] = False
             result = self._result(room)
             self._event(room, "hand_end", reason=result["reason"], potWon=result["pot"], pots=result["pots"],
                         winnerSeat=result["winnerSeat"], winnerSeats=result["winnerSeats"], payouts=result["payouts"])
@@ -589,16 +697,22 @@ class RoomService:
             room.phase = "hand_over"
             room.notice = self._result_text(room)
             self._persist(room, trace_id)
-            self._check_match_over(room)
+            self._check_round_over(room)
         else:
             room.turn_deadline = self.clock() + self.TURN_SECONDS
         self._bump(room, trace_id)
 
-    def _check_match_over(self, room):
-        with_chips = [i for i in room.occupied() if (room.stacks[i] or 0) > 0]
-        if len(with_chips) < MIN_SEATS and room.phase == "hand_over":
-            room.phase = "match_over"
-            room.notice += " · 칩이 남은 사람이 1명 이하라 매치가 끝났습니다."
+    def _check_round_over(self, room):
+        """Fewer than 2 seated players with chips: no hand can be dealt, so wait for '다음 라운드 시작'.
+        Enough chip holders again (a rebuy, a new player): back to the normal hand_over flow."""
+        with_chips = [i for i in room.occupied() if (room.stacks[i] or 0) > 0 or i in room.pending_rebuys]
+        if room.phase == "hand_over" and len(with_chips) < MIN_SEATS:
+            room.phase = "round_over"
+            room.next_deadline = None
+            room.notice += " · 칩이 있는 사람이 1명 이하라 '다음 라운드 시작'을 누르면 칩이 없는 사람에게 1,000칩을 지급하고 이어갑니다."
+        elif room.phase == "round_over" and len(with_chips) >= MIN_SEATS:
+            room.phase = "hand_over"
+            room.next_deadline = self.clock() + self.NEXT_HAND_SECONDS
 
     def _result(self, room):
         hand = room.hand
@@ -613,10 +727,16 @@ class RoomService:
             for seat, label in raw["hands"].items():
                 hands[seat] = label
         winners = sorted(s for s, a in raw["payouts"].items() if a > 0)
+        # chips at the start and end of this hand per participant (None: not in the hand). end - start is
+        # the net result; payouts is what the player took from the pots (it includes their own chips back)
+        start_stacks, end_stacks = [None] * cap, [None] * cap
+        for seat in hand.seats:
+            start_stacks[seat], end_stacks[seat] = hand.start_stacks[seat], hand.stacks[seat]
         pots = [{"amount": p["amount"], "eligible": p["eligible"], "winners": p["winners"],
                  "shares": [[s, a] for s, a in sorted(p["shares"].items())]} for p in raw["pots"]]
         return {"reason": raw["reason"], "pot": sum(p["amount"] for p in raw["pots"]), "pots": pots, "payouts": payouts,
-                "winnerSeats": winners, "winnerSeat": winners[0] if len(winners) == 1 else None, "hands": hands}
+                "winnerSeats": winners, "winnerSeat": winners[0] if len(winners) == 1 else None, "hands": hands,
+                "startStacks": start_stacks, "endStacks": end_stacks}
 
     def _result_text(self, room):
         result = self._result(room)
@@ -672,6 +792,8 @@ class RoomService:
             room.pending_result = None
             room.record_status = "confirmed"
             room.next_deadline = now + self.NEXT_HAND_SECONDS
+            self._due_rebuys(room)  # players who watched this hand get their rebuy before the next one
+            self._flush_rebuys(room, trace_id)
             return True
         if trace["outcome"] == "http_error" and trace.get("status") == 409:
             room.storage_blocked = True
@@ -742,11 +864,16 @@ class RoomService:
             self._bump(room, trace_id)
         if room.phase == "playing" and room.turn_deadline is not None and now >= room.turn_deadline:
             self._timeout_turn(room, trace_id)
-        if room.phase in ("hand_over", "match_over") and room.pending_result and not room.storage_blocked and now >= room.retry_at:
+        if room.phase in ("hand_over", "round_over") and room.pending_result and not room.storage_blocked and now >= room.retry_at:
             room.notice = self._result_text(room)
             self._persist(room, trace_id)
-            if room.phase == "match_over":
-                room.notice += " · 칩이 남은 사람이 1명 이하라 매치가 끝났습니다."
+            if room.phase == "round_over":
+                room.notice += " · 칩이 있는 사람이 1명 이하라 '다음 라운드 시작'을 기다립니다."
+            self._bump(room, trace_id)
+        elif (room.phase == "hand_over" and room.pending_rebuys and not room.pending_result and not room.storage_blocked
+                and now >= room.retry_at):
+            self._flush_rebuys(room, trace_id)
+            self._check_round_over(room)
             self._bump(room, trace_id)
         self._advance(room, trace_id)
 
@@ -816,6 +943,9 @@ class RoomService:
                 "isTurn": bool(playing and hand.turn == index), "inHand": in_hand, "folded": folded,
                 "allIn": bool(playing and in_hand and not folded and hand.stacks[index] == 0),
                 "busted": bool(info and room.phase != "lobby" and (room.stacks[index] or 0) == 0 and not (playing and in_hand)),
+                # hand number this seat watches before its rebuy (None: no rebuy waiting)
+                "bustHand": room.bust_hand[index] if info else None,
+                "rebuyAfterHand": (room.bust_hand[index] + 1) if info and room.bust_hand[index] is not None else None,
                 "cardCount": 2 if in_hand else 0, "cards": None,
             }
             if in_hand and (index == seat or (showdown and not folded)):
@@ -837,13 +967,27 @@ class RoomService:
             "toCall": hand.to_call(seat) if my_turn else 0,
             "minRaiseTo": hand.raise_bounds(seat)[0] if my_turn else None,
             "maxRaiseTo": hand.raise_bounds(seat)[1] if my_turn else None,
+            # all-in as a street total, and what it amounts to: a call (stack <= to call), a short raise
+            # (less than a full raise, allowed only as all-in) or a full raise
+            "allInTo": hand.raise_bounds(seat)[1] if my_turn and "all_in" in hand.legal_actions(seat) else None,
+            "allInKind": self._all_in_kind(hand, seat) if my_turn and "all_in" in hand.legal_actions(seat) else None,
             "result": self._result(room) if hand is not None and hand.hand_over else None,
             "recordStatus": room.record_status, "notice": room.notice, "recovered": room.recovered,
             "readyCount": sum(room.ready[i] for i in room.occupied()),
             "canStart": room.phase == "lobby" and room.host == seat and sum(room.ready[i] for i in room.occupied()) >= MIN_SEATS,
+            "canNextRound": room.phase == "round_over" and not room.pending_result
+                            and any(room.bust_hand[i] is not None for i in room.occupied()),
+            "rebuyAmount": BUY_IN,
             "lastEventSeq": room.event_seq,
             "events": [dict(event) for event in room.events if event["seq"] > after],
         }
+
+    @staticmethod
+    def _all_in_kind(hand, seat):
+        if hand.stacks[seat] <= hand.to_call(seat):
+            return "call"
+        low, high = hand.raise_bounds(seat)
+        return "short" if high < low else "raise"
 
     def _public(self, room):
         """What anyone holding the code may see (join preview). No cards except the shared board."""
@@ -948,6 +1092,7 @@ class RoomService:
             room.seats[seat] = {"userId": row["user_id"], "dbId": row["id"], "name": row["display_name"]}
             room.stacks[seat] = ledger["stacks"][row["id"]]
             room.sitting_in[seat] = room.stacks[seat] > 0
+            room.bust_hand[seat] = ledger["busted"].get(row["id"])
         host_db = rows[0]["host_user"]
         room.host = next((s for s, r in users.items() if r["id"] == host_db), min(users) if users else None)
         room.match_key = match_key
@@ -957,7 +1102,10 @@ class RoomService:
         room.record_status = "confirmed" if ledger["hand_no"] else "not_saved"
         room.phase = "hand_over"
         with room.cond:
-            self._check_match_over(room)
+            # a rebuy that was due but not stored when the server stopped is paid now (same row, insert-once)
+            self._due_rebuys(room)
+            self._flush_rebuys(room, trace_id)
+            self._check_round_over(room)
             room.recovered = True
             room.next_deadline = self.clock() + self.NEXT_HAND_SECONDS
             room.notice = "서버가 다시 시작되어, 진행 중이던 핸드는 무효 처리하고 마지막으로 저장된 칩에서 이어갑니다."

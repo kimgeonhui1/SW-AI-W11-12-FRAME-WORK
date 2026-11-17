@@ -18,6 +18,8 @@ R = test_rooms.RoomTests
 HAND1 = deck_with_prefix("A♠", "Q♣", "J♣", "K♠", "A♥", "Q♦", "J♦", "K♥", "8♣", "2♣", "7♦", "9♥", "8♦", "4♠", "8♥", "3♦")
 # Hand 2 (button 1, SB 2, BB 3, UTG 0; dealt 2,3,0,1): seat0 A♠A♥ > seat2 K♠K♥ > seat3 Q♠Q♥ > seat1 4♣5♥
 # on 2♣ 7♦ 9♥ J♠ 3♦.
+# 3-handed bust (button 0, SB 1, BB 2; dealt 1,2,0): seat1 A♠A♥ > seat0 K♠K♥ > seat2 Q♣Q♦ on 2♣ 7♦ 9♥ 4♠ 3♦.
+BUST3 = deck_with_prefix("A♠", "Q♣", "K♠", "A♥", "Q♦", "K♥", "8♣", "2♣", "7♦", "9♥", "8♦", "4♠", "8♥", "3♦")
 HAND2 = deck_with_prefix("K♠", "Q♠", "A♠", "4♣", "K♥", "Q♥", "A♥", "5♥", "8♣", "2♣", "7♦", "9♥", "8♦", "J♠", "8♥", "3♦")
 
 
@@ -272,38 +274,166 @@ class MultiRoomTests(unittest.TestCase):
         self.assertEqual(self.stacks(code)[:3], [1030, 990, 980])
         self.assertEqual(sum(self.stacks(code)), 3000)
 
-    def test_bust_spectates_and_last_player_with_chips_ends_the_match(self):
+    # ── rules v2: bust -> watch one hand -> one 1,000-chip rebuy ─────────
+
+    def bust_alpha(self, two=False):
+        """3-handed hand 1 (button 0): A (KK) all-in, B (AA) calls; C folds, or calls too when `two`.
+        A busts (and C too when `two`), B wins; worked out by hand from the deck below."""
+        self.decks = [BUST3]
         code = self.table((A, B, C))
-        self.play(code, (A, "all_in"), (B, "fold"), (C, "call"))  # DECK default: board decides
-        stacks = self.stacks(code)[:3]
-        self.assertEqual(sum(stacks), 3000)
-        loser = next(i for i, s in enumerate(stacks) if s == 0)
+        self.play(code, (A, "all_in"), (B, "call"), (C, "call" if two else "fold"))
+        return code
+
+    def rebuy_rows(self):
+        return [dict(r) for r, _ in self.database.tables["room_seat_events"].rows if r["kind"] == "rebuy"]
+
+    def finish_hand(self, code, tokens):
+        for _ in range(3):
+            if self.state(A, code)["phase"] != "playing":
+                return
+            self.act(self.turn_token(code, tokens), code, "fold")
+
+    def test_bust_watches_one_hand_then_one_rebuy_and_is_dealt_back_in(self):
+        code = self.bust_alpha()
         view = self.state(A, code)
-        self.assertTrue(view["seats"][loser]["busted"])
-        token = (A, B, C)[loser]
-        status, result = self.ready(token, code, 1)
-        self.assertEqual((status, result["error"]), (409, "busted"))
+        self.assertEqual([s["stack"] for s in view["seats"]][:3], [0, 2020, 980])
+        me = view["seats"][0]
+        self.assertEqual((view["phase"], me["busted"], me["bustHand"], me["rebuyAfterHand"], me["connected"]),
+                         ("hand_over", True, 1, 2, True))
+        self.assertEqual(self.ready(A, code, 1)[1]["error"], "busted")  # cannot skip the wait
+        for t in (B, C):
+            self.ready(t, code, 1)
+        view = self.state(A, code)
+        self.assertEqual((view["handNo"], [s["inHand"] for s in view["seats"]][:3]), (2, [False, True, True]))  # A watches hand 2
+        # refresh / reconnect / repeated requests during the watched hand change nothing
+        for _ in range(3):
+            self.assertEqual(self.join(A, code)[0], 200)
+            self.state(A, code)
+        self.assertEqual(self.ready(A, code, 2)[1]["error"], "busted")
+        self.assertEqual((self.state(A, code)["seats"][0]["stack"], self.rebuy_rows()), (0, []))
+        self.finish_hand(code, (B, C))
+        view = self.state(A, code)
+        self.assertEqual((view["phase"], view["recordStatus"]), ("hand_over", "confirmed"))
+        me = view["seats"][0]
+        self.assertEqual((me["stack"], me["busted"], me["sittingIn"], me["bustHand"]), (1000, False, True, None))
+        self.assertEqual([(r["seat"], r["amount"], r["after_hand"]) for r in self.rebuy_rows()], [(0, 1000, 2)])
+        for _ in range(3):  # back automatically, without pressing anything (everyone keeps polling)
+            self.clock.now += self.rooms.NEXT_HAND_SECONDS / 3 + 0.1
+            for t in (A, B, C):
+                self.state(t, code)
+        view = self.state(A, code)
+        self.assertEqual((view["handNo"], [s["inHand"] for s in view["seats"]][:3]), (3, [True, True, True]))
+        ledger = self.replayed(code)
+        self.assertEqual((ledger["buy_ins"], ledger["rebuys"], ledger["cash_outs"]), (3000, 1000, 0))
+        self.assertEqual(sum(s["stack"] for s in view["seats"]) + view["pot"], 4000)
+        online = self.call(A, "/api/profile")[1]["profile"]["online"]
+        self.assertEqual((online["hands"], online["losses"], online["wins"], online["rebuys"]), (1, 1, 0, 1))
+
+    def check_rebuy_storage_fault(self, durable, restart):
+        code = self.bust_alpha()
+        for t in (B, C):
+            self.ready(t, code, 1)
+        original = self.demo._call
+
+        def flaky(service, method, url, body=None, trace_id=None):
+            if service == "Mini DBMS" and body and body.get("sql", "").startswith("INSERT INTO room_seat_events") and "rebuy" in body.get("params", []):
+                if durable:
+                    original(service, method, url, body, trace_id)  # stored, but the reply is lost
+                return None, {"traceId": trace_id, "service": service, "method": method, "path": "/sql/insert-once", "outcome": "unavailable"}
+            return original(service, method, url, body, trace_id)
+
+        self.demo._call = flaky
+        self.finish_hand(code, (B, C))
+        view = self.state(A, code)
+        self.assertEqual((view["phase"], view["seats"][0]["stack"]), ("hand_over", 0))  # not paid until confirmed
+        for t in (B, C):
+            self.ready(t, code, 2)
+        self.clock.now += self.rooms.NEXT_HAND_SECONDS + 1
+        self.assertEqual(self.state(B, code)["handNo"], 2)  # the next hand waits for the rebuy record
+        self.assertEqual(self.join(D, code)[1]["error"], "result_storage_pending")
+        self.assertEqual(len(self.rebuy_rows()), 1 if durable else 0)
+        if restart:
+            self.restart_api()
+        else:
+            self.demo._call = original
+            self.clock.now += self.rooms.STORAGE_RETRY_SECONDS + 1
+        view = self.state(A, code)
+        me = view["seats"][0]
+        self.assertEqual(me["stack"] + me["committed"], 1000)  # paid once (the next hand may already have taken a blind)
+        self.assertEqual([(r["seat"], r["after_hand"]) for r in self.rebuy_rows()], [(0, 2)])  # exactly one row
+        ledger = self.replayed(code)
+        self.assertEqual(sum(s["stack"] for s in view["seats"]) + view["pot"], 3000 + ledger["rebuys"])
+        self.assertEqual(ledger["rebuys"], 1000)
+
+    def test_rebuy_storage_down_then_retry_pays_once(self):
+        self.check_rebuy_storage_fault(durable=False, restart=False)
+
+    def test_rebuy_lost_reply_then_retry_pays_once(self):
+        self.check_rebuy_storage_fault(durable=True, restart=False)
+
+    def test_rebuy_unstored_then_restart_pays_once(self):
+        self.check_rebuy_storage_fault(durable=False, restart=True)
+
+    def test_rebuy_lost_reply_then_restart_pays_once(self):
+        self.check_rebuy_storage_fault(durable=True, restart=True)
+
+    def test_restart_while_watching_keeps_the_wait(self):
+        code = self.bust_alpha()
+        self.restart_api()
+        view = self.state(A, code)
+        self.assertEqual((view["phase"], view["seats"][0]["stack"], view["seats"][0]["rebuyAfterHand"]), ("hand_over", 0, 2))
+        self.assertEqual(self.rebuy_rows(), [])  # a restart does not shorten the wait
+
+    def test_two_bust_at_once_next_round_pays_each_once(self):
+        code = self.bust_alpha(two=True)
+        view = self.state(C, code)
+        self.assertEqual([s["stack"] for s in view["seats"]][:3], [0, 3000, 0])
+        self.assertEqual((view["phase"], view["canNextRound"]), ("round_over", True))
+        for token in (A, B, C):  # every hand that reached the showdown is shown, also in round_over
+            self.assertEqual([bool(s["cards"]) for s in self.state(token, code)["seats"]][:3], [True, True, True], token)
+        self.assertEqual(self.ready(B, code, 1)[0], 200)  # the winner is ready; still nobody to play with
+        self.assertEqual(self.state(B, code)["phase"], "round_over")
+        self.restart_api()  # survives a restart before anyone presses
+        view = self.state(C, code)
+        self.assertEqual((view["phase"], view["canNextRound"]), ("round_over", True))
+        body = {"hand_no": 1}
+        with ThreadPoolExecutor(6) as pool:  # everyone presses at once, some twice
+            results = list(pool.map(lambda t: self.call(t, f"/api/rooms/{code}/next-round", body), (A, B, C, A, B, C)))
+        self.assertEqual(sorted(st for st, _ in results), [200, 409, 409, 409, 409, 409])
+        view = self.state(A, code)
+        self.assertEqual(([s["stack"] for s in view["seats"]][:3], view["phase"]), ([1000, 3000, 1000], "hand_over"))
+        self.assertEqual(sorted((r["seat"], r["after_hand"]) for r in self.rebuy_rows()), [(0, 1), (2, 1)])
+        ledger = self.replayed(code)
+        self.assertEqual((ledger["buy_ins"], ledger["rebuys"]), (3000, 2000))
         for t in (A, B, C):
-            if t != token:
-                self.ready(t, code, 1)
+            self.ready(t, code, 1)
+        self.assertEqual([s["inHand"] for s in self.state(A, code)["seats"]][:3], [True, True, True])
+        self.restart_api()
+        self.assertEqual(self.replayed(code)["rebuys"], 2000)  # nothing paid again on recovery
+        profiles = {t: self.call(t, "/api/profile")[1]["profile"]["online"] for t in (A, B, C)}
+        self.assertEqual([profiles[t]["rebuys"] for t in (A, B, C)], [1, 0, 1])
+        self.assertEqual([profiles[t]["wins"] for t in (A, B, C)], [0, 1, 0])
+
+    def test_next_round_rules(self):
+        code = self.bust_alpha()
+        # chip holders B and C remain: no round_over, the button is not offered
         view = self.state(A, code)
-        self.assertEqual(view["handNo"], 2)
-        self.assertFalse(view["seats"][loser]["inHand"])
-        # finish heads-up until one player has everything
-        for _ in range(40):
-            view = self.state(A, code)
-            if view["phase"] == "match_over":
-                break
-            if view["phase"] == "hand_over":
-                for t in (A, B, C):
-                    self.ready(t, code, view["handNo"])
-                continue
-            t = self.turn_token(code, (A, B, C))
-            mine = self.state(t, code)
-            self.act(t, code, "all_in" if "all_in" in mine["legalActions"] else "call" if "call" in mine["legalActions"] else "check")
+        self.assertEqual((view["phase"], view["canNextRound"]), ("hand_over", False))
+        status, result = self.call(A, f"/api/rooms/{code}/next-round", {"hand_no": 1})
+        self.assertEqual((status, result["error"]), (409, "not_round_over"))
+        for bad in ({}, {"hand_no": "1"}, {"hand_no": True}, {"hand_no": 1, "x": 1}):
+            self.assertEqual(self.call(A, f"/api/rooms/{code}/next-round", bad)[0], 400, bad)
+        self.assertEqual(self.call(D, f"/api/rooms/{code}/next-round", {"hand_no": 1})[1]["error"], "not_seated")
+        # C cashes out: only B has chips -> round_over; A is paid at the restart
+        status, result = self.call(C, f"/api/rooms/{code}/leave", {})
+        self.assertEqual((status, result["cashOut"]), (200, 980))
         view = self.state(A, code)
-        self.assertEqual(view["phase"], "match_over")
-        self.assertEqual(sorted(s["stack"] for s in view["seats"][:3]), [0, 0, 3000])
+        self.assertEqual((view["phase"], view["canNextRound"]), ("round_over", True))
+        self.assertEqual(self.call(A, f"/api/rooms/{code}/next-round", {"hand_no": 1})[0], 200)
+        view = self.state(B, code)
+        self.assertEqual(([s["stack"] for s in view["seats"]][:3], view["phase"]), ([1000, 2020, 0], "hand_over"))
+        ledger = self.replayed(code)
+        self.assertEqual(sum(ledger["stacks"].values()), ledger["buy_ins"] + ledger["rebuys"] - ledger["cash_outs"])
 
     # ── joining, leaving, restart ─────────────────────────────────────────
 

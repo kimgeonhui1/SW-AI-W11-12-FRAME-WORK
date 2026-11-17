@@ -165,9 +165,9 @@ def mismatch(p, sc, st):
     if st["phase"] != "lobby" and sc["mine"] != (st["seats"][you]["cards"] or []): problems.append(("my cards", sc["mine"], st["seats"][you]["cards"]))
     opp = st["seats"][other]["cards"]
     if opp and sc["oppUp"] != opp: problems.append(("opp cards", sc["oppUp"], opp))
-    if not opp and st["phase"] in ("playing", "hand_over", "match_over") and st["street"] and (sc["oppUp"] or sc["oppDown"] != 2):
+    if not opp and st["phase"] in ("playing", "hand_over", "round_over") and st["street"] and (sc["oppUp"] or sc["oppDown"] != 2):
         problems.append(("opp hidden", sc["oppUp"], sc["oppDown"]))
-    if st["result"] and st["phase"] in ("hand_over", "match_over"):
+    if st["result"] and st["phase"] in ("hand_over", "round_over"):
         w = st["result"]["winnerSeat"]
         word = "무승부" if w is None else ("승리" if w == you else "패배")
         if word not in sc["status"]: problems.append(("result", sc["status"], word))
@@ -318,7 +318,7 @@ try:
         check("hand 2: previous hand fully cleared (board, flights, winner, last action)", sa["board"] == [] and sa["fly"] == 0 and sa["winner"] == 0 and not sa["hudLast"], sa)
         p, o = actor(A, B)
         p.page.locator(".wager-number").fill("120")
-        p.click("레이즈 120")
+        p.click("레이즈 총 120")
         both(A, B, "hand 2 raise 120")
         check("opponent is offered call 100 after raise to 120", any(x.startswith("콜 100") for x in o.screen()["buttons"]), o.screen()["buttons"])
         # resize the desktop player to 375 and back during the hand

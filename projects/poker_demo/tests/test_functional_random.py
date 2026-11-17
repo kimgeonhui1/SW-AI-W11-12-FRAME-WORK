@@ -4,8 +4,9 @@
 a stale request, a turn timeout, a storage fault switch, an API restart or a DBMS restart.
 
 Checked after every step (independently of the implementation's own arithmetic):
-  chips never negative and stack0 + stack1 + pot == 2000 (stack = chips in front, pot = chips put
-  in this hand; seats[].committed sums to pot), both views agree on public fields, no card appears
+  chips never negative and stack0 + stack1 + pot == 2000 + stored rebuys (stack = chips in front,
+  pot = chips put in this hand; seats[].committed sums to pot; rules v2 pays a busted player one
+  1,000-chip rebuy after '다음 라운드 시작'), both views agree on public fields, no card appears
   twice, a player's responses never contain the opponent's hole cards before a showdown, rejected
   requests leave the whole view unchanged, and accepted actions map 1:1 to action events.
 At every hand end: the payout is recomputed from the contributions just before the end (pot =
@@ -132,14 +133,18 @@ class RandomRoomTransitions(unittest.TestCase):
     def frozen(view):
         return json.dumps(view, sort_keys=True, ensure_ascii=False)
 
-    def check_invariants(self, a, raw_a, b, raw_b):
+    def rebuys(self, code):
+        key = match_key_for(code)
+        return [dict(r) for r, _ in self.database.tables["room_seat_events"].rows if r["match_key"] == key and r["kind"] == "rebuy"]
+
+    def check_invariants(self, a, raw_a, b, raw_b, total=2000):
         for key in ("version", "gameVersion", "phase", "handNo", "street", "board", "pot", "turnSeat", "result", "recordStatus", "lastEventSeq", "events"):
             self.assertEqual(a[key], b[key], key)
         stacks = [s["stack"] for s in a["seats"]]
         self.assertEqual(stacks, [s["stack"] for s in b["seats"]])
         self.assertTrue(all(v >= 0 for v in stacks), stacks)
         self.assertEqual(sum(s["committed"] for s in a["seats"]), a["pot"])
-        self.assertEqual(sum(stacks) + a["pot"], 2000, (stacks, a["pot"]))
+        self.assertEqual(sum(stacks) + a["pot"], total, (stacks, a["pot"]))
         mine_a, mine_b = a["seats"][0]["cards"] or [], b["seats"][1]["cards"] or []
         cards = mine_a + mine_b + a["board"]
         self.assertEqual(len(cards), len(set(cards)), cards)
@@ -160,7 +165,8 @@ class RandomRoomTransitions(unittest.TestCase):
         for event in a["events"]:
             self.assertTrue(all(v >= 0 for v in event["stacks"] + event["committed"]), event)
             if event["type"] != "hand_end":
-                self.assertEqual(sum(event["stacks"]) + event["pot"], 2000, event)
+                # an event from before a rebuy shows the smaller total of that moment
+                self.assertIn(sum(event["stacks"]) + event["pot"], range(2000, total + 1, 1000), event)
 
     def check_settlement(self, view):
         """Recompute the finished hand from its events and the revealed cards."""
@@ -223,17 +229,23 @@ class RandomRoomTransitions(unittest.TestCase):
         for step in range(STEPS):
             code = codes[-1]
             a, raw_a, b, raw_b = self.views(code)
-            self.check_invariants(a, raw_a, b, raw_b)
+            paid = self.rebuys(code)
+            self.check_invariants(a, raw_a, b, raw_b, 2000 + sum(r["amount"] for r in paid))
             key = (a["instance"], a["handNo"])
-            if a["phase"] in ("hand_over", "match_over") and a["result"] and key not in settled:
+            if a["phase"] in ("hand_over", "round_over") and a["result"] and key not in settled:
                 if self.check_settlement(a):
                     stats["settlements_checked"] += 1
                     hand_events = [e for e in a["events"] if e["handNo"] == a["handNo"] and e["type"] == "action" and not e["auto"]]
                     self.assertEqual(len(hand_events), accepted[key], "accepted actions != action events")
                 settled.add(key)
-            if a["recordStatus"] == "confirmed" and a["phase"] in ("hand_over", "match_over"):
-                previous = confirmed.setdefault((code, a["handNo"]), [s["stack"] for s in a["seats"]])
-                self.assertEqual(previous, [s["stack"] for s in a["seats"]], "a confirmed result changed")
+            if a["recordStatus"] == "confirmed" and a["phase"] in ("hand_over", "round_over"):
+                # the hand's own result: table chips minus rebuys paid right after this hand
+                ends = [s["stack"] for s in a["seats"]]
+                for r in paid:
+                    if r["after_hand"] == a["handNo"]:
+                        ends[r["seat"]] -= r["amount"]
+                previous = confirmed.setdefault((code, a["handNo"]), ends)
+                self.assertEqual(previous, ends, "a confirmed result changed")
             roll = rng.random()
             if roll < 0.03:
                 log.append(("api_restart",))
@@ -257,10 +269,22 @@ class RandomRoomTransitions(unittest.TestCase):
                 log.append(("fault", self.fault))
                 stats["fault_switch"] += 1
                 continue
-            if a["phase"] == "match_over":
-                log.append(("new_match",))
-                stats["matches_finished"] += 1
-                codes.append(self.start_match())
+            if a["phase"] == "round_over":
+                if a["recordStatus"] == "unknown":
+                    self.assertFalse(a["canNextRound"])
+                    log.append(("wait_storage",))
+                    self.clock.now += self.rooms.STORAGE_RETRY_SECONDS + 1
+                    stats["waited_for_storage"] += 1
+                    continue
+                log.append(("next_round", a["handNo"]))
+                busted = [s["seat"] for s in a["seats"] if s["stack"] == 0]
+                status, result = self.call(rng.choice((A, B)), f"/api/rooms/{code}/next-round", {"hand_no": a["handNo"]})
+                self.assertEqual(status, 200, result)
+                after = result["state"]
+                self.assertEqual([after["seats"][i]["stack"] for i in busted], [1000] * len(busted))
+                status, again = self.call(rng.choice((A, B)), f"/api/rooms/{code}/next-round", {"hand_no": a["handNo"]})
+                self.assertEqual((status, again["error"]), (409, "not_round_over"))  # pressing twice pays once
+                stats["round_restarts"] += 1
                 continue
             if a["phase"] == "hand_over":
                 if a["recordStatus"] == "unknown":
@@ -354,6 +378,8 @@ class RandomRoomTransitions(unittest.TestCase):
             self.assertEqual((online["hands"], online["wins"], online["losses"], online["draws"]),
                              (expected[token]["hands"], expected[token]["wins"], expected[token]["losses"], expected[token]["draws"]), token)
             self.assertEqual(online["matches"], len(codes))
+            mine = sum(1 for code in codes for r in self.rebuys(code) if r["seat"] == seat)
+            self.assertEqual(online["rebuys"], mine)  # counted apart, never as wins
             self.assertEqual(profile["practice"]["hands"], 0)
             if profile["recentOnline"]:
                 newest = profile["recentOnline"][0]

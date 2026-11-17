@@ -94,6 +94,88 @@ test("여러 팟의 결과와 돌려받은 칩", () => {
   const end = L.applyEvent(back, ev(10, { type: "hand_end", winnerSeat: null, potWon: 3300, pots: [{ amount: 2800, eligible: [0], winners: [0] }] }));
   eq([end.flight, end.pots], [null, []], "split payout has no single flight");
 });
+// 3인 한 핸드의 이벤트: 핸드 1 (버튼 0, SB 1, BB 2) → 핸드 2 시작
+const names3 = ["Alpha", "Bravo", "Carol"];
+const hev = (seq, type, extra = {}) => ({ seq, type, handNo: 1, board: [], pot: 30, stacks: [1000, 990, 980], committed: [0, 10, 20], pots: [], ...extra });
+const hand1 = [
+  hev(1, "hand_start", { sb: 1, bb: 2, button: 0 }),
+  hev(2, "action", { seat: 0, action: "raise", paid: 60, to: 60, auto: false }),
+  hev(3, "action", { seat: 1, action: "call", paid: 50, auto: false }),
+  hev(4, "action", { seat: 2, action: "fold", paid: 0, auto: true }),
+  hev(5, "street", { street: "flop", board: ["2♣", "7♦", "9♥"] }),
+  hev(6, "action", { seat: 1, action: "all_in", paid: 930, to: 930, allIn: true, auto: false }),
+  hev(7, "action", { seat: 0, action: "call", paid: 930, allIn: false, auto: false }),
+];
+test("좌석 행동 표시: 콜은 더 낸 금액, 레이즈는 스트리트 총액, 다음 차례에도 유지", () => {
+  let d = L.displayFromState({ handNo: 0, board: [], pot: 0, seats: names3.map((n, i) => ({ seat: i, name: n, stack: 1000, committed: 0 })), events: [], lastEventSeq: 0 });
+  d = L.applyEvent(d, hand1[0]);
+  eq(d.acts.map(L.actTag), ["", "SB 10", "BB 20"], "blinds shown at hand start");
+  d = L.applyEvent(d, hand1[1]);
+  d = L.applyEvent(d, hand1[2]);
+  eq(d.acts.map(L.actTag), ["레이즈 총 60", "콜 +50", "BB 20"], "raise total vs call added; earlier tags stay");
+  d = L.applyEvent(d, hand1[3]);
+  eq(L.actTag(d.acts[2]), "폴드 (시간 초과)", "auto fold");
+  d = L.applyEvent(d, hand1[4]);
+  eq(d.acts.map(L.actTag), ["", "", "폴드 (시간 초과)"], "new street: only fold / all-in remain");
+  d = L.applyEvent(d, hand1[5]);
+  d = L.applyEvent(d, hand1[6]);
+  eq(d.acts.map(L.actTag), ["콜 +930", "올인 총 930", "폴드 (시간 초과)"], "all-in total");
+  eq(d.log.map((e) => e.text).slice(-3), ["— 플롭 —", "Bravo · 올인 총 930", "Alpha · 콜 +930"], "log");
+  eq(d.log.length <= L.MAX_LOG, true, "log is short");
+  const next = L.applyEvent(d, hev(8, "hand_start", { handNo: 2, sb: 2, bb: 0, committed: [20, 0, 10] }));
+  eq([next.acts.map(L.actTag), next.log.length], [["BB 20", "", "SB 10"], 1], "next hand clears the previous hand's actions");
+  eq(L.actTag({ kind: "all_in_call", paid: 120 }), "올인 콜 +120", "all-in for less than the call");
+  const shortAllIn = L.reduceActs([null, null], [], hev(9, "action", { seat: 0, action: "all_in", paid: 15, allIn: true, auto: false, stacks: [0, 0] }), names3);
+  eq(L.actTag(shortAllIn.acts[0]), "올인 콜 +15", "all_in without a total is a call-size all-in");
+});
+test("새로고침 뒤 표시는 실시간 재생과 같고, 이전 핸드 행동은 섞이지 않는다", () => {
+  const live = hand1.reduce((d, e) => L.applyEvent(d, e), L.displayFromState({ handNo: 0, board: [], pot: 0, seats: names3.map((n, i) => ({ seat: i, name: n, stack: 1000, committed: 0 })), events: [], lastEventSeq: 0 }));
+  const old = hand1.map((e) => ({ ...e, handNo: 0, seq: e.seq - 100 }));
+  const snap = L.displayFromState({ handNo: 1, board: ["2♣", "7♦", "9♥"], pot: 0, seats: names3.map((n, i) => ({ seat: i, name: n, stack: 0, committed: 0 })), events: [...old, ...hand1], lastEventSeq: 7 });
+  eq([snap.acts, snap.log], [live.acts, live.log], "same tags and log");
+});
+test("대기 응답에 새 이벤트만 와도 이번 핸드 행동 표시가 유지된다", () => {
+  const seats = names3.map((n, i) => ({ seat: i, name: n, stack: 900, committed: 0 }));
+  let d = hand1.slice(0, 3).reduce((x, e) => L.applyEvent(x, e), L.displayFromState({ handNo: 0, board: [], pot: 0, seats, events: [], lastEventSeq: 0 }));
+  const kept = L.syncDisplay(d, { handNo: 1, board: [], pot: 90, seats, events: [], lastEventSeq: 3 });
+  eq(kept.acts.map(L.actTag), ["레이즈 총 60", "콜 +50", "BB 20"], "no new events: tags kept (this was the bug)");
+  const more = L.syncDisplay(kept, { handNo: 1, board: [], pot: 90, seats, events: hand1.slice(2, 4), lastEventSeq: 4 });
+  eq([more.acts.map(L.actTag), more.log.length], [["레이즈 총 60", "콜 +50", "폴드 (시간 초과)"], 4], "only unseen events applied, once");
+  const next = L.syncDisplay(more, { handNo: 2, board: [], pot: 30, seats, events: [hev(9, "hand_start", { handNo: 2, sb: 2, bb: 0, committed: [20, 0, 10] })], lastEventSeq: 9 });
+  eq(next.acts.map(L.actTag), ["BB 20", "", "SB 10"], "a new hand starts clean");
+});
+test("결과의 칩 변화와 지급(리바이)은 수익과 구분", () => {
+  const result = { startStacks: [1000, 980, null], endStacks: [1216, 764, null], payouts: [236, 0, 0] };
+  const mine = L.chipChange(result, 0, 1216);
+  eq([mine.start, mine.net, mine.received, mine.rebuy], [1000, 216, 236, 0], "win");
+  eq(L.chipChangeText(mine), "시작 1,000 → +216 → 현재 1,216 · 팟 수령 236 / 순이익 +216", "text");
+  eq(L.chipChangeText(L.chipChange(result, 1, 764)), "시작 980 → −216 → 현재 764 · 팟 수령 0 / 순이익 −216", "loss");
+  const bust = L.chipChange({ startStacks: [1000], endStacks: [0], payouts: [0] }, 0, 1000);
+  eq(L.chipChangeText(bust), "시작 1,000 → −1,000 → 현재 1,000 · 팟 수령 0 / 순이익 −1,000 · 지급 +1,000(수익 아님)", "rebuy");
+  eq(L.chipChange(result, 2, 500), null, "not in the hand");
+});
+test("베팅 한도 안내와 입력 검사", () => {
+  const base = { toCall: 40, minRaiseTo: 120, maxRaiseTo: 600, allInTo: 600, allInKind: "raise" };
+  const r = L.betLimits(base, new Set(["fold", "call", "raise", "all_in"]), 100);
+  eq([r.text, r.allIn, r.error], ["콜 40 · 최소 레이즈 총 120 · 최대 총 600", "올인 총 600", "120 이상 입력하세요"], "raise");
+  eq(L.betLimits(base, new Set(["raise"]), 700).error, "600 이하로 입력하세요 (가진 칩 한도)", "above");
+  eq(L.betLimits(base, new Set(["raise"]), 12.5).error, "정수 칩만 입력할 수 있습니다", "fraction");
+  eq(L.betLimits(base, new Set(["raise"]), NaN).error, "정수 칩만 입력할 수 있습니다", "empty");
+  eq(L.betLimits(base, new Set(["raise"]), 300).error, "", "in range");
+  const short = L.betLimits({ toCall: 40, minRaiseTo: 120, maxRaiseTo: 90, allInTo: 90, allInKind: "short" }, new Set(["fold", "call", "all_in"]), null);
+  eq([short.text, short.allIn], ["콜 40", "올인 총 90 (최소 레이즈 120보다 적지만 올인은 허용)"], "short all-in");
+  const under = L.betLimits({ toCall: 200, minRaiseTo: 400, maxRaiseTo: 150, allInTo: 150, allInKind: "call" }, new Set(["fold", "all_in"]), null);
+  eq(under.allIn, "올인 총 150 (콜 금액 이하 — 올인 콜로 허용)", "all-in call");
+  eq(L.betLimits({ toCall: 0, minRaiseTo: 20, maxRaiseTo: 500 }, new Set(["check", "bet"]), 20).text, "체크 가능 · 최소 베팅 총 20 · 최대 총 500", "bet");
+});
+test("파산 뒤 복귀 대기 문구", () => {
+  const busted = { rebuyAfterHand: 4 };
+  eq(L.rebuyText(busted, "hand_over", 3, true), "4번 핸드 관전 후 복귀", "right after the bust");
+  eq(L.rebuyText(busted, "playing", 4, true), "관전 중 · 이 핸드 뒤 복귀", "watching");
+  eq(L.rebuyText(busted, "hand_over", 4, true), "지급 확인 중", "waiting for the record");
+  eq(L.rebuyText(busted, "round_over", 3, true), "다음 라운드 때 복귀", "round over");
+  eq(L.rebuyText({ rebuyAfterHand: null }, "hand_over", 3, true), "칩 없음", "no rebuy pending");
+});
 test("API 주소는 페이지를 연 호스트를 따른다", () => {
   eq(L.resolveApiBase({ search: "", protocol: "http:", hostname: "192.168.0.7" }, ""), "http://192.168.0.7:18784", "LAN host");
   eq(L.resolveApiBase({ search: "", protocol: "http:", hostname: "127.0.0.1" }, ""), "http://127.0.0.1:18784", "local");

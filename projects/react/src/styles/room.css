@@ -117,6 +117,12 @@ button, input { font: inherit; }
 .felt-logo span { font-size: 12px; color: var(--cyan); }
 .felt-logo b { font-size: 15px; color: #ff9df2; text-shadow: 0 0 10px var(--magenta); }
 .hand-label { position: absolute; left: 14px; top: 10px; z-index: 3; font-size: 12px; letter-spacing: .16em; color: var(--dim); }
+/* 최근 행동 기록: 3D 공간 밖(화면 평면)에 두어 각도와 상관없이 읽힌다. 테이블 중앙 위쪽 */
+.action-log { position: absolute; left: 50%; top: 10px; z-index: 3; transform: translateX(-50%); margin: 0; padding: 6px 12px; list-style: none;
+  display: grid; gap: 2px; min-width: 240px; max-width: 46%; background: rgba(8, 6, 20, .62); border: 1px solid var(--cyan-soft);
+  font-size: 12px; color: var(--dim); pointer-events: none; }
+.action-log li:last-child { color: var(--ink); font-weight: 700; font-size: 14px; }
+.action-log-below { display: none; }
 
 /* 2D/3D·빛 번짐 토글 */
 .view-toggles { position: absolute; top: 8px; right: 10px; z-index: 4; display: flex; gap: 6px; }
@@ -164,7 +170,16 @@ button, input { font: inherit; }
 .hud-meta { font-size: 12px; margin-top: 2px; }
 .presence.on { color: var(--ok); } .presence.lost { color: var(--danger); } .presence.off { color: var(--dim); }
 .turn-clock { color: var(--cyan); font-weight: 700; }
-.hud-last { margin-top: 5px; padding-top: 5px; border-top: 1px solid rgba(160, 220, 255, .25); font-size: 12px; color: #d9e7ff; }
+/* 좌석의 이번 스트리트 행동: 크게, 행동마다 색. 다음 사람 차례가 돼도 남는다 (초기화 규칙은 roomLogic.reduceActs) */
+.hud-act { margin-top: 6px; padding: 3px 8px; font-size: 17px; font-weight: 800; letter-spacing: .02em; text-align: center; font-variant-numeric: tabular-nums;
+  border: 1px solid currentColor; background: rgba(8, 6, 20, .55); color: #d9e7ff; }
+.act-check { color: #9fe8ff; } .act-call { color: #8ff0b0; } .act-bet, .act-raise { color: var(--gold); }
+.act-all_in, .act-all_in_call { color: #ff9ad0; } .act-fold { color: #ffc2cd; opacity: .85; } .act-sb, .act-bb { color: var(--dim); font-size: 14px; }
+.act-auto { border-style: dashed; }
+/* 3D에서 서 있는 이름표의 아래쪽 줄은 테이블 테두리 평면과 같은 깊이에 걸려 글자가 가려질 수 있다 → 1px 앞으로 */
+.hud-act, .hud-net { transform: translateZ(1px); }
+.hud-net { margin-top: 4px; font-size: 13px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+.hud-net.up { color: #8ff0b0; } .hud-net.down { color: #ffc2cd; } .hud-net.even { color: var(--dim); }
 
 /* 금색 칩: 평면에 눕힌 원판을 --i 번째만큼 위로 쌓는다 (진짜 높이가 생긴다. 2D에서는 위에서 본 원판) */
 .chips { position: relative; width: 96px; height: 62px; transform-style: preserve-3d; }
@@ -221,12 +236,20 @@ button, input { font: inherit; }
 .wager { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 8px; border: 1px solid rgba(37, 230, 242, .22); }
 .wager-range { width: 150px; accent-color: var(--cyan); }
 .wager-number { flex: 0 0 96px; height: 36px; }
+.wager-number.is-invalid { border-color: var(--danger); }
+.wager-limits { font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.wager-error { font-size: 13px; color: var(--danger); }
+.chip-change { margin: 8px 0 0; padding: 8px 12px; font-size: 15px; font-variant-numeric: tabular-nums; background: rgba(14, 26, 54, .8); border: 1px solid rgba(246, 196, 83, .45); }
+.wait-rebuy { color: var(--gold); }
 .auto-next { color: var(--dim); font-size: 14px; }
 .seat-count { display: flex; gap: 6px; }
 .seat-count .btn[aria-pressed="true"] { border-color: var(--cyan); color: var(--cyan); box-shadow: 0 0 10px var(--cyan-soft); }
 .fine { margin-top: 12px; font-size: 12.5px; }
 
 @media (max-width: 720px) {
+  /* 좁은 화면: 테이블 위 기록은 좌석 이름표를 가리므로 테이블 아래 목록으로 옮긴다 */
+  .arena .action-log { display: none; }
+  .action-log-below { display: grid; position: static; transform: none; max-width: none; margin: 8px 0 0; }
   .arena { height: 600px; perspective: 900px; }
   .table { left: 1%; right: 1%; top: 14%; bottom: 10%; }
   .seat-chips { display: none; }

@@ -606,6 +606,8 @@ class Demo:
         if trace["outcome"] != "ok":
             return unavailable("Mini DBMS could not load room seats")
         joined = sorted({row["match_key"] for row in payload.get("result", {}).get("rows", []) if row["kind"] == "buyin"})
+        # free rebuys are counted on their own: they are never winnings (per-hand net uses only hand start/end chips)
+        totals["online"]["rebuys"] = sum(1 for row in payload.get("result", {}).get("rows", []) if row["kind"] == "rebuy")
         for match_key in joined:
             ledger, error = self.rooms.load_ledger(match_key, trace_id)
             if ledger is None:

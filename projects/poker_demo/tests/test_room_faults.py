@@ -1,14 +1,17 @@
 """Randomized two-human play with storage faults and restarts.
 
 Each run plays many hands with random legal actions while it injects, at random moments:
-  - Mini DBMS down when a hand result is written (row not stored, no reply)
+  - Mini DBMS down when a hand result or a rebuy is written (row not stored, no reply)
   - lost DBMS reply (row stored, reply lost)
   - Poker API restart (all memory lost; rooms are rebuilt from the DBMS)
   - Mini DBMS restart (table files reopened)
   - turn timeouts, duplicate resends and stale requests
 
-After every step it checks that no chip was created or lost and that both players
-see the same table; at the end it checks the DBMS ledger: one row per completed hand,
+A bust leads to round_over; a player presses '다음 라운드 시작' (sometimes both, sometimes twice),
+which pays the busted player's one 1,000-chip rebuy.
+
+After every step it checks that no chip was created or lost (2,000 + stored rebuys) and that both
+players see the same table; at the end it checks the DBMS ledger: one row per completed hand,
 an unbroken chain, and the same final stacks the players were shown when the hand was
 confirmed (so no hand was paid twice).
 """
@@ -53,7 +56,8 @@ class RoomFaultSoakTests(unittest.TestCase):
         original = self.demo._call
 
         def call(service, method, url, body=None, trace_id=None):
-            if self.fault and service == "Mini DBMS" and body and body.get("sql", "").startswith("INSERT INTO room_hand_results"):
+            rebuy = body and body.get("sql", "").startswith("INSERT INTO room_seat_events") and "rebuy" in body.get("params", [])
+            if self.fault and service == "Mini DBMS" and body and (body.get("sql", "").startswith("INSERT INTO room_hand_results") or rebuy):
                 if self.fault == "lost_reply":
                     original(service, method, url, body, trace_id)
                 return None, {"traceId": trace_id, "service": service, "method": method, "path": "/sql/insert-once", "outcome": "unavailable"}
@@ -85,26 +89,39 @@ class RoomFaultSoakTests(unittest.TestCase):
         key = match_key_for(code)
         return sorted((row for row in self.ledger() if row["match_key"] == key), key=lambda row: row["id"])
 
+    def rebuys_after(self, code, hand_no):
+        """Chips paid as rebuys right after hand `hand_no`, per seat."""
+        key = match_key_for(code)
+        paid = [0, 0]
+        for row, _ in self.database.tables["room_seat_events"].rows:
+            if row["match_key"] == key and row["kind"] == "rebuy" and row["after_hand"] == hand_no:
+                paid[row["seat"]] += row["amount"]
+        return paid
+
     def check(self, code, a, b, observed, after_restart=False):
         for key in ("gameVersion", "phase", "handNo", "board", "pot", "recordStatus"):
             self.assertEqual(a[key], b[key], key)
         stacks = [seat["stack"] for seat in a["seats"]]
         self.assertEqual(stacks, [seat["stack"] for seat in b["seats"]])
-        self.assertEqual(sum(stacks) + a["pot"], 2000, (code, a["phase"], stacks, a["pot"]))
-        self.assertTrue(all(value >= 0 for value in stacks))
         rows = self.rows_for(code)
         history = self.replayed(code)  # raises on a broken chain, duplicate key or chips that do not add up
+        self.assertEqual(sum(stacks) + a["pot"], 2000 + history["rebuys"], (code, a["phase"], stacks, a["pot"]))
+        self.assertTrue(all(value >= 0 for value in stacks))
         last = rows[-1] if rows else None
-        ledger_stacks = [last["end_a"], last["end_b"]] if last else [1000, 1000]
+        ledger_stacks = [history["stacks"][history["seats"][seat]] for seat in (0, 1)]
         self.assertNotEqual(a["recordStatus"], "blocked")
         if after_restart:
             self.assertTrue(a["recovered"])
-            self.assertIn(a["phase"], ("hand_over", "match_over"))
+            self.assertIn(a["phase"], ("hand_over", "round_over"))
             self.assertEqual((stacks, a["pot"], a["handNo"]), (ledger_stacks, 0, history["hand_no"]))
-        if a["phase"] in ("hand_over", "match_over") and a["recordStatus"] == "confirmed":
+        if a["phase"] in ("hand_over", "round_over") and a["recordStatus"] == "confirmed":
             self.assertEqual((last["hand_no"], ledger_stacks), (a["handNo"], stacks))
-            seen = observed.setdefault((code, a["handNo"]), stacks)
-            self.assertEqual(seen, stacks, "a confirmed hand changed its result")
+            # what the hand itself paid, without any rebuy given after it
+            paid = self.rebuys_after(code, a["handNo"])
+            ends = [stacks[i] - paid[i] for i in (0, 1)]
+            seen = observed.setdefault((code, a["handNo"]), ends)
+            self.assertEqual(seen, ends, "a confirmed hand changed its result")
+            self.assertEqual(ends, [last["end_a"], last["end_b"]])
         if a["recordStatus"] == "unknown":
             self.assertIn(history["hand_no"], (a["handNo"] - 1, a["handNo"]))
 
@@ -148,9 +165,22 @@ class RoomFaultSoakTests(unittest.TestCase):
                 stats["fault_" + self.fault] += 1
             elif self.fault and rng.random() < 0.3:
                 self.fault = None
-            if a["phase"] == "match_over":
-                stats["matches_finished"] += 1
-                codes.append(self.start_match())
+            if a["phase"] == "round_over" and a["recordStatus"] == "unknown":
+                self.assertFalse(a["canNextRound"])  # no rebuy before the hand that caused it is on record
+                stats["waited_for_storage"] += 1
+                self.clock.now += self.rooms.STORAGE_RETRY_SECONDS + 1
+                continue
+            if a["phase"] == "round_over":
+                stats["round_restarts"] += 1
+                presser = rng.choice((A, B))
+                status, result = self.call(presser, f"/api/rooms/{code}/next-round", {"hand_no": a["handNo"]})
+                self.assertIn(status, (200, 503), result)  # 503 when the rebuy row could not be confirmed
+                if status == 200 and rng.random() < 0.5:  # the other player (or a second tab) presses too
+                    status, again = self.call(B if presser == A else A, f"/api/rooms/{code}/next-round", {"hand_no": a["handNo"]})
+                    self.assertEqual((status, again["error"]), (409, "not_round_over"))
+                    stats["round_restart_duplicates"] += 1
+                if rng.random() < 0.03:
+                    codes.append(self.start_match())  # sometimes the players open a new room
                 continue
             if a["phase"] == "hand_over":
                 if a["recordStatus"] == "unknown":
@@ -187,13 +217,14 @@ class RoomFaultSoakTests(unittest.TestCase):
                 self.assertEqual(status, 409, late)
                 stats["stale"] += 1
         self.fault = None
+        self.assertGreater(stats["round_restarts"], 0, stats)  # the new rule was exercised
         # final ledger: every match is an unbroken chain and agrees with what the players were shown
         for code in codes:
             rows = self.rows_for(code)
             history = self.replayed(code)
             self.assertEqual([row["hand_no"] for row in rows], list(range(1, history["hand_no"] + 1)))
             for row in rows:
-                self.assertEqual((row["start_a"] + row["start_b"], row["end_a"] + row["end_b"]), (2000, 2000))
+                self.assertEqual(row["start_a"] + row["start_b"], row["end_a"] + row["end_b"])
                 if (code, row["hand_no"]) in observed:
                     self.assertEqual(observed[(code, row["hand_no"])], [row["end_a"], row["end_b"]])
         self.assertEqual(len({row["operation_key"] for row in self.ledger()}), len(self.ledger()))
