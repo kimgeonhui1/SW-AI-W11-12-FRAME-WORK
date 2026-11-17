@@ -42,8 +42,8 @@ try {
     $botArgs = @('-u', $script, '--room', $Room, '--bots', "$Bots", '--mode', $Mode, '--seed', $Seed,
                  '--api', "http://127.0.0.1:$ApiPort", '--log', $log)
     if ($Hands -gt 0) { $botArgs += @('--hands', "$Hands") }
-    $title = "POKER LAB TEST BOTS · $Room · $Bots명 · $Mode · seed $Seed"
-    Write-Info "방 $Room · 봇 $Bots명 · 모드 $Mode · 시드 $Seed"
+    $title = "POKER LAB TEST BOTS · $Room · ${Bots}명 · $Mode · seed $Seed"
+    Write-Info "방 $Room · 봇 ${Bots}명 · 모드 $Mode · 시드 $Seed"
     Write-Info "로그 파일: $log"
     if ($NoWindow) {
         & $python @botArgs

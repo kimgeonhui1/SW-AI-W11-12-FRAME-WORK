@@ -118,6 +118,8 @@
 | `restart-poker-api.bat` | API만 다시 켠다. `start-poker.bat`이 시작한 API(기록된 PID·시작 시각·명령줄이 모두 맞을 때)만 종료한다. 직접 켠 API는 종료하지 않고 안내한다. |
 | `start-test-bots.bat` | **테스트 전용.** 방 코드·봇 수(1~3)·모드(기본/올인)·시드를 묻고 봇을 넣는다. 일반 시작에는 봇이 들어가지 않는다. |
 
+2026-11-17 사용자 PC(Windows, Windows PowerShell 5.1, Python 3.14)에서 저장소 사본을 한글·공백 경로(`…\_시험 사본 tmp\jungle poker lab`)에 두고, 시험용 포트·한글·공백 데이터 폴더로 확인: ① 4개 순서대로 시작·준비·제목 창·브라우저·Wi-Fi 주소 표시 ② 다시 실행하면 4개 모두 재사용(중복 실행 없음) ③ API만 재시작(기록된 PID만 종료, 이전 로그 창 닫힘) ④ 테스트 봇 창(3명, 올인 모드: 파산 → 다음 라운드 시작 1회 반영 → 지급, 한 핸드 관전 뒤 지급, 5핸드 뒤 정상 퇴장, 오류 0) ⑤ 포트를 다른 프로세스가 쓰면 PID·이름 안내 후 중단(종료 없음). 이 확인 중 `"$Bots명"`이 한글 변수 이름으로 읽히는 문제를 찾아 고쳤다.
+
 실행 기록(PID)은 `%LOCALAPPDATA%\jungle-poker-lab\run`, 봇 로그는 `%LOCALAPPDATA%\jungle-poker-lab\logs`에 남는다. 스크립트는 `tools\windows\*.ps1`(Windows PowerShell 5.1, UTF-8 BOM).
 
 ### 테스트 봇 (`tools/test-bots/poker_test_bots.py`)

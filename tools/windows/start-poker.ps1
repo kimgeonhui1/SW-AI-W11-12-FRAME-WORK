@@ -22,10 +22,6 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $script:Projects 'poker_demo\server.py'))) {
         throw "저장소 구조가 예상과 다릅니다 (projects\poker_demo\server.py 없음): $script:RepoRoot"
     }
-    if (-not (Test-Path -LiteralPath $config.DataDir)) {
-        New-Item -ItemType Directory -Force -Path $config.DataDir | Out-Null
-        Write-Info 'DBMS 데이터 폴더가 없어 새로 만들었습니다.'
-    }
     $python = $null
 
     foreach ($service in $config.Services) {
@@ -45,6 +41,11 @@ try {
         if (-not $python) {
             $python = Resolve-Python
             Write-Info "Python: $python"
+        }
+        if ($service.Key -eq 'dbms' -and -not (Test-Path -LiteralPath $config.DataDir)) {
+            # 포트 확인을 마친 뒤, DBMS를 실제로 켤 때만 만든다
+            New-Item -ItemType Directory -Force -Path $config.DataDir | Out-Null
+            Write-Info 'DBMS 데이터 폴더가 없어 새로 만들었습니다.'
         }
         $window = Start-ServiceWindow -Service $service -Python $python
         Write-Info "창을 열었습니다: '$($service.Title)' — 준비를 기다리는 중..."
