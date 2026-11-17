@@ -9,7 +9,8 @@
 #
 # 키에 "/" 같은 특수문자가 있으면 URL 인코딩해서 보낸다 (예: "char:a/b" → /keys/char%3Aa%2Fb)
 # 빈 문자열 키는 HTTP API에서 지원하지 않는다 (/keys/ 는 404). 저장소(MiniRedis) 자체는 빈 키도 받는다
-# 에러 응답은 모두 {"error": "이유"} 모양이다 (400 잘못된 요청 / 404 없음 / 405 지원 안 하는 메서드 / 408 본문 수신 시간 초과 / 413 너무 큼 / 500 서버 오류)
+# 에러 응답은 모두 {"error": "이유"} 모양이다
+#   (400 잘못된 요청 / 404 없음 / 405 지원 안 하는 메서드 / 408 본문 수신 시간 초과 / 411 Content-Length 없는 chunked 본문 / 413 너무 큼 / 500 서버 오류)
 #
 # 실행: projects/redis 에서  python -m mini_redis.server --port 6380
 #       (기본으로 data/dump.json에 60초마다 스냅샷을 저장하고, 켤 때 복구한다. --snapshot "" 로 끌 수 있다)
@@ -29,6 +30,10 @@ MAX_BODY = 1024 * 1024  # 요청 본문 최대 1MB. 너무 큰 요청으로 서�
 DISCARD_LIMIT = 16 * 1024 * 1024  # 413 응답 전에 읽어서 버려 줄 최대 크기 (아래 _discard_body 참고)
 REQUEST_TIMEOUT = 10  # 요청을 다 받을 때까지 기다리는 최대 시간(초). 본문을 덜 보내고 멈춘 클라이언트가 스레드를 영원히 붙잡지 못하게 한다
 SWEEP_INTERVAL = 1.0  # 만료 키 정리(주기 삭제) 간격(초)
+# 값의 중첩 깊이 상한 ([[[...]]] 또는 {"a": {"a": ...}}). 실제 RedisJSON의 기본 상한도 128이다.
+# 상한이 없으면 깊이 1000 이상인 값도 저장되는데, 스냅샷 저장(json.dump)이 RecursionError로 매번 실패해
+# 다른 키까지 디스크에 남지 않았다 (전체 점검에서 재현)
+MAX_DEPTH = 128
 
 
 class SafeThreadingHTTPServer(ThreadingHTTPServer):
@@ -38,6 +43,9 @@ class SafeThreadingHTTPServer(ThreadingHTTPServer):
     리눅스·맥에서는 SO_REUSEADDR가 "방금 끈 서버의 포트를 바로 다시 쓰기"만 허용하므로 그대로 둔다."""
 
     allow_reuse_address = os.name != "nt"
+    # 아직 accept하지 못한 연결을 줄 세워 둘 수 있는 수 (listen backlog). 기본값 5면 클라이언트 수십 명이 동시에 연결할 때
+    # 대기열이 넘쳐 운영체제가 연결을 거부한다 (동시 50명 벤치마크에서 WinError 10061로 재현). 실제 Redis 기본값(tcp-backlog)은 511
+    request_queue_size = 128
 
 
 class ApiError(Exception):
@@ -137,6 +145,10 @@ def make_handler(store):
                 raise ApiError(400, str(e))
 
         def _read_json(self):
+            # chunked 전송은 Content-Length가 없어 본문을 0바이트로 읽고 "value가 필요합니다"라는 엉뚱한 400을 주던 것 → 원인대로 411
+            if self.headers.get("Transfer-Encoding"):
+                self.close_connection = True  # 읽지 않은 본문이 연결에 남으므로 닫는다
+                raise ApiError(411, "Content-Length로 본문 길이를 알려 주세요 (chunked 전송은 지원하지 않습니다)")
             try:
                 length = int(self.headers.get("Content-Length") or 0)
             except ValueError:
@@ -165,6 +177,8 @@ def make_handler(store):
                 raise ApiError(400, "JSON이 너무 깊게 중첩되어 있습니다")
             if not isinstance(body, dict):
                 raise ApiError(400, "본문은 JSON 객체({...})여야 합니다")
+            if _nesting_exceeds(body, MAX_DEPTH + 1):  # +1: 본문 객체 {...} 자체가 한 단계
+                raise ApiError(400, f"JSON 중첩은 {MAX_DEPTH}단계까지입니다")
             # "\ud800" 같은 짝 없는 반쪽 문자는 JSON 문법으로는 통과하지만 UTF-8로 바꿀 수 없어서, 저장하면 나중에 응답을 못 보낸다 → 처음부터 거부
             try:
                 json.dumps(body, ensure_ascii=False).encode("utf-8")
@@ -177,22 +191,14 @@ def make_handler(store):
         # 버리는 양은 DISCARD_LIMIT까지만: 그보다 크면 끝까지 읽어 주지 않고 연결을 닫는다 (거대한 요청에 시간을 쓰지 않게)
         def _discard_body(self, length):
             self.close_connection = True
-            remaining = min(length, DISCARD_LIMIT)
-            try:
-                while remaining > 0:
-                    chunk = self.rfile.read(min(65536, remaining))
-                    if not chunk:
-                        break
-                    remaining -= len(chunk)
-            except (TimeoutError, OSError):
-                pass
+            discard_body(self.rfile, length)
 
         def _send(self, status, body):
             try:
-                data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-            except UnicodeEncodeError:
-                # 파이썬 코드로 직접 저장된 반쪽 문자 등이 있어도 응답은 반드시 나가게: 모든 비ASCII를 \uXXXX로 적는 방식으로 다시 만든다
-                data = json.dumps(body).encode("ascii")
+                data = _encode(body)
+            except (TypeError, ValueError, RecursionError):
+                # 파이썬 코드로 JSON으로 못 바꾸는 값({1, 2} 등)을 직접 저장했으면, 응답 없이 연결이 끊기고 traceback이 찍히던 것 → JSON 500
+                status, data = 500, _encode({"error": "저장된 값을 JSON으로 바꿀 수 없습니다 (파이썬 코드로 직접 넣은 값)"})
             try:
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -221,6 +227,40 @@ def make_handler(store):
 
 def _reject_constant(name):
     raise ValueError(f"{name}은(는) 표준 JSON 값이 아닙니다")
+
+
+# 요청 본문을 DISCARD_LIMIT까지 64KB씩 읽어서 버린다 (데모 API의 413 응답도 같은 방식을 쓴다)
+def discard_body(rfile, length):
+    remaining = min(length, DISCARD_LIMIT)
+    try:
+        while remaining > 0:
+            chunk = rfile.read(min(65536, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+    except (TimeoutError, OSError):
+        pass
+
+
+# 응답 JSON 바이트. 파이썬 코드로 직접 저장된 반쪽 문자 등이 있어도 응답은 반드시 나가게:
+# UTF-8로 못 바꾸면 모든 비ASCII를 \uXXXX로 적는 방식으로 다시 만든다
+def _encode(body):
+    try:
+        return json.dumps(body, ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError:
+        return json.dumps(body).encode("ascii")
+
+
+# value의 중첩 깊이가 limit을 넘는지. 재귀 대신 스택으로 훑어서 아주 깊은 값에서도 RecursionError가 나지 않는다
+def _nesting_exceeds(value, limit):
+    stack = [(value, 1)]
+    while stack:
+        item, depth = stack.pop()
+        if isinstance(item, (list, dict)):
+            if depth > limit:
+                return True
+            stack.extend((child, depth + 1) for child in (item.values() if isinstance(item, dict) else item))
+    return False
 
 
 # 저장소를 감싼 HTTP 서버 객체 생성 (port=0이면 빈 포트를 자동으로 고른다 → 테스트용)
@@ -253,8 +293,12 @@ def main():
     parser.add_argument("--snapshot", default="data/dump.json", help="스냅샷 파일 경로 (빈 문자열이면 저장 안 함)")
     parser.add_argument("--snapshot-interval", type=float, default=60, help="스냅샷 저장 주기(초)")
     args = parser.parse_args()
-    if args.snapshot and not 0 < args.snapshot_interval < float("inf"):  # NaN도 이 비교에서 걸러진다
-        parser.error("--snapshot-interval은 0보다 큰 유한한 숫자여야 합니다")
+    # 범위 밖 포트는 bind가 OSError가 아닌 OverflowError를 내서 traceback으로 나오던 것 → 사용법 에러로
+    if not 0 <= args.port <= 65535:
+        parser.error("--port는 0~65535 사이여야 합니다")
+    # 상한 threading.TIMEOUT_MAX(Windows 약 49.7일): 넘으면 주기 저장 스레드가 OverflowError로 바로 죽는다. NaN도 이 비교에서 걸러진다
+    if args.snapshot and not 0 < args.snapshot_interval <= threading.TIMEOUT_MAX:
+        parser.error(f"--snapshot-interval은 0보다 크고 {threading.TIMEOUT_MAX:g}초 이하여야 합니다")
 
     store = MiniRedis()
     if args.snapshot:

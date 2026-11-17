@@ -1,15 +1,22 @@
 # [test_server.py] HTTP API 기능 테스트 — 실제 서버를 띄우고 외부 클라이언트처럼 요청한다
 
+import contextlib
+import functools
+import io
 import json
+import os
 import socket
+import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from mini_redis import server as server_module
+from mini_redis.persistence import load_snapshot, save_snapshot
 from mini_redis.server import create_server
 from mini_redis.store import MiniRedis
 
@@ -225,6 +232,57 @@ class ServerTest(unittest.TestCase):
     def test_body_too_large(self):
         raw = json.dumps({"value": "x" * (server_module.MAX_BODY + 1)}).encode()
         self.assertEqual(self.request("PUT", "/keys/big", raw=raw)[0], 413)
+
+    # ── 전체 점검에서 재현한 문제 (수정 전 코드에서 실패 확인) ──
+
+    def test_nesting_depth_limit_keeps_snapshot_working(self):
+        # 깊이 1000 이상의 [[[...]]]도 200으로 저장되던 것 → 스냅샷 저장(json.dump)이 RecursionError로 매번 실패해
+        # 다른 키까지 디스크에 남지 않았다. 실제 RedisJSON처럼 중첩 깊이에 상한을 둔다
+        limit = server_module.MAX_DEPTH
+        ok = json.loads("[" * limit + "]" * limit)
+        self.assertEqual(self.request("PUT", "/keys/deep_ok", {"value": ok})[0], 200)
+        for depth in [limit + 1, 3000]:
+            raw = ('{"value": ' + "[" * depth + "]" * depth + "}").encode()
+            self.assertEqual(self.request("PUT", "/keys/deep_bad", raw=raw)[0], 400, depth)
+        nested_dict = functools.reduce(lambda inner, _: {"a": inner}, range(limit + 1), 1)  # 객체 중첩도 같은 규칙
+        self.assertEqual(self.request("PUT", "/keys/deep_bad", {"value": nested_dict})[0], 400)
+        self.assertEqual(self.request("PUT", "/keys/deep_bad", {"value": 1, "ttl": 5, "x": nested_dict})[0], 400)
+        self.assertFalse(self.store.exists("deep_bad"))
+        # 상한 깊이의 값이 있어도 스냅샷 저장 · 복구가 된다
+        snapshot_store = MiniRedis()
+        snapshot_store.set("deep_ok", self.store.get("deep_ok"))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "dump.json")
+            save_snapshot(snapshot_store, path)
+            restored = MiniRedis()
+            load_snapshot(restored, path)
+        self.assertEqual(restored.get("deep_ok"), ok)
+
+    def test_chunked_body_gets_411(self):
+        # Transfer-Encoding: chunked는 Content-Length가 없어 본문을 안 읽고 "value가 필요합니다" 400을 주던 것 → 원인대로 411
+        head, body = self.raw_request(b"PUT /keys/chunked HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
+                                      b'f\r\n{"value": 12345}\r\n0\r\n\r\n')
+        self.assertIn(b" 411 ", head)
+        self.assertIn("Content-Length", json.loads(body)["error"])
+        self.assertFalse(self.store.exists("chunked"))
+
+    def test_unserializable_value_gets_json_500(self):
+        # 파이썬 코드로 JSON으로 못 바꾸는 값을 직접 넣으면 GET이 응답 없이 끊기고 서버에 traceback이 찍히던 것 → JSON 500
+        self.store.set("pyset", {1, 2})
+        self.addCleanup(self.store.delete, "pyset")
+        status, body = self.request("GET", "/keys/pyset")
+        self.assertEqual(status, 500)
+        self.assertIn("error", body)
+
+    def test_main_rejects_bad_port(self):
+        # --port 70000 → bind의 OverflowError(OSError가 아님)가 traceback으로 나오던 것 → 사용법 에러
+        for port in ["70000", "-1", "65536"]:
+            err = io.StringIO()
+            with mock.patch("sys.argv", ["server", "--port", port, "--snapshot="]), contextlib.redirect_stderr(err):
+                with self.assertRaises(SystemExit) as cm:
+                    server_module.main()
+            self.assertEqual(cm.exception.code, 2, port)
+            self.assertIn("--port", err.getvalue())
 
 
 if __name__ == "__main__":

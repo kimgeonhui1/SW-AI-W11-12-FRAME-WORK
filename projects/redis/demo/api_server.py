@@ -30,12 +30,16 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlsplit
 from urllib.request import Request, urlopen
 
-from mini_redis.server import SafeThreadingHTTPServer
+from mini_redis.server import MAX_BODY, SafeThreadingHTTPServer, discard_body
 
 SLOW_DELAY = 0.2  # 원본 조회에 걸리는 시간(초). 실제 DB 쿼리나 외부 API 호출을 흉내 낸다
 CACHE_TTL = 60  # 캐시 보관 시간(초). 원본이 바뀌었는데 무효화를 놓쳐도 최대 60초 뒤에는 새 값이 보인다
 REDIS_TIMEOUT = 1.0  # Mini Redis 요청 제한 시간. 캐시가 느려져도 API 전체가 같이 느려지지 않게
 ITEM_COUNT = 100
+# 원본(DB)에 동시에 연결할 수 있는 수. 실제 DB도 연결 풀 크기만큼만 동시에 쿼리를 처리하고 나머지는 줄을 선다.
+# 이 제한이 없으면 sleep이 무한히 병렬로 돌아, 동시 요청 벤치마크에서 "원본이 병목"이라는 현실이 드러나지 않는다
+SOURCE_CONNECTIONS = 5
+_source_pool = threading.BoundedSemaphore(SOURCE_CONNECTIONS)
 
 # 원본 데이터(= DB 역할). 데모의 "느린 저장소"라서 파이썬 dict를 쓴다 (dict 금지는 Mini Redis 저장소 구현에 대한 제약)
 _items = {i: {"id": i, "name": f"아이템 {i}", "price": i * 100, "version": 1} for i in range(1, ITEM_COUNT + 1)}
@@ -49,7 +53,8 @@ def fetch_item(item_id):
         item = dict(item) if item else None  # 복사본 (호출한 쪽이 고쳐도 원본이 바뀌지 않게)
     # 실제 DB처럼 "읽은 시점의 데이터가 나중에 도착"하게: 읽고 나서 기다린다
     # (그 사이 원본이 바뀌면 이 결과는 이미 옛 값이다 → 캐시에 옛 값을 넣는 경쟁 상태가 생길 수 있다)
-    time.sleep(SLOW_DELAY)
+    with _source_pool:  # 빈 연결이 없으면 앞 조회가 끝날 때까지 기다린다
+        time.sleep(SLOW_DELAY)
     return item
 
 
@@ -169,7 +174,10 @@ def make_handler():
             # isascii: "²"(위첨자 2)처럼 isdigit은 True인데 int()로 못 바꾸는 유니코드 숫자를 막는다
             if len(parts) != 2 or parts[0] != "items" or not (parts[1].isascii() and parts[1].isdigit()):
                 return self._send(404, {"error": "없는 경로입니다 (/items/{숫자 id})"})
-            item_id = int(parts[1])
+            try:
+                item_id = int(parts[1])
+            except ValueError:  # 4300자리를 넘는 숫자는 int() 자릿수 제한에 걸린다 (500이던 것) → 그런 아이템은 없다
+                return self._send(404, {"error": "없는 아이템입니다"})
 
             if method == "GET":
                 if parse_qs(url.query).get("cache") == ["off"]:
@@ -181,9 +189,17 @@ def make_handler():
                 return self._send(200, {"item": item, "cache": cache})
 
             # PUT: 원본을 고치고 버전을 올린다(무효화). 다음 GET은 새 버전 키를 찾다가 MISS가 되어 새 값을 가져간다
+            # Mini Redis 서버와 같은 규칙: chunked는 411, 1MB 초과는 413 (전에는 둘 다 "price" 400으로 원인을 알 수 없었다)
+            if self.headers.get("Transfer-Encoding"):
+                self.close_connection = True  # 읽지 않은 본문이 연결에 남으므로 닫는다
+                return self._send(411, {"error": "Content-Length로 본문 길이를 알려 주세요 (chunked 전송은 지원하지 않습니다)"})
             try:
                 length = int(self.headers.get("Content-Length") or 0)
-                if not 0 <= length <= 1024 * 1024:
+                if length > MAX_BODY:
+                    self.close_connection = True
+                    discard_body(self.rfile, length)  # 읽어서 버린 뒤 응답해야 Windows에서 클라이언트가 413을 받는다
+                    return self._send(413, {"error": "요청 본문이 너무 큽니다 (최대 1MB)"})
+                if length < 0:
                     raise ValueError
                 try:
                     raw = self.rfile.read(length)
@@ -219,11 +235,20 @@ def make_handler():
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
-                self.wfile.write(data)
+                if self.command != "HEAD":  # HEAD 응답은 헤더만 보낸다 (HTTP 규약)
+                    self.wfile.write(data)
             except ConnectionError:
                 # 클라이언트가 응답을 다 받기 전에 연결을 끊었다. 보낼 곳이 없으니 조용히 정리한다
                 # (예전에는 이 에러를 500으로 다시 응답하려다 끊긴 연결에 또 써서 두 번째 에러가 났다)
                 self.close_connection = True
+
+        # do_*가 없는 메서드(DELETE · POST · HEAD 등)나 깨진 요청 줄은 기본 동작이 HTML 에러 페이지라서,
+        # Mini Redis 서버(server.py)와 같은 방식으로 JSON으로 바꾼다 (Gemini 리뷰: JSON을 기대하는 클라이언트가 파싱 에러)
+        def send_error(self, code, message=None, explain=None):
+            self.close_connection = True
+            if code == 501:
+                message = f"지원하지 않는 메서드입니다: {self.command}"
+            self._send(code, {"error": message or "잘못된 요청입니다"})
 
         def log_message(self, format, *args):
             pass
@@ -249,7 +274,13 @@ def main():
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--redis", default="http://127.0.0.1:6380", help="Mini Redis 주소")
     args = parser.parse_args()
-    server = create_demo_server(args.redis, args.host, args.port)
+    # Mini Redis 서버 main과 같은 처리: 범위 밖 포트(OverflowError)와 이미 쓰이는 포트(OSError)가 traceback으로 나오던 것
+    if not 0 <= args.port <= 65535:
+        parser.error("--port는 0~65535 사이여야 합니다")
+    try:
+        server = create_demo_server(args.redis, args.host, args.port)
+    except OSError as e:
+        raise SystemExit(f"{args.host}:{args.port}에서 서버를 열 수 없습니다: {e}")
     print(f"Demo API listening on http://{args.host}:{args.port} (Mini Redis: {args.redis})")
     try:
         server.serve_forever()

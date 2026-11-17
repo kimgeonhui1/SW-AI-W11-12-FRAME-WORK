@@ -1,11 +1,14 @@
 # [test_demo.py] 기능 테스트 — 간단한 API의 응답을 Mini Redis에 캐시해서 활용하는지 확인 (과제 품질 항목)
 # Mini Redis 서버와 데모 API 서버를 둘 다 실제로 띄우고, 외부 클라이언트처럼 요청한다
 
+import contextlib
+import io
 import json
 import socket
 import threading
 import time
 import unittest
+from unittest import mock
 from urllib.error import HTTPError
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.request import Request, urlopen
@@ -143,6 +146,65 @@ class DemoApiTest(unittest.TestCase):
             c.sendall(b"GET /items/\xb2 HTTP/1.0\r\n\r\n")
             c.settimeout(5)
             self.assertIn(b" 404 ", c.recv(100))
+
+    def raw_response(self, request):
+        """원시 요청을 보내고 연결이 닫힐 때까지 응답 전체를 받는다"""
+        with socket.create_connection(("127.0.0.1", self.demo_server.server_address[1])) as c:
+            c.sendall(request)
+            c.settimeout(5)
+            raw = b""
+            while chunk := c.recv(4096):
+                raw += chunk
+        return raw
+
+    def test_unknown_methods_get_json_errors(self):
+        # do_GET · do_PUT만 있어서 DELETE · POST는 기본 HTML 501 페이지가 나가던 것 (Gemini 리뷰)
+        for method in ["DELETE", "POST", "PATCH"]:
+            head, body = self.raw_response(f"{method} /items/1 HTTP/1.0\r\n\r\n".encode()).split(b"\r\n\r\n", 1)
+            self.assertIn(b" 501 ", head, method)
+            self.assertIn(b"application/json", head, method)
+            self.assertIn(method, json.loads(body)["error"])
+        # HEAD는 헤더만 보낸다 (본문이 있으면 클라이언트가 다음 응답으로 착각한다)
+        raw = self.raw_response(b"HEAD /items/1 HTTP/1.0\r\n\r\n")
+        self.assertIn(b" 501 ", raw)
+        self.assertTrue(raw.endswith(b"\r\n\r\n"))
+
+    # ── 전체 점검에서 재현한 문제 (수정 전 코드에서 실패 확인) ──
+
+    def test_huge_id_is_404(self):
+        # 4300자리를 넘는 숫자는 int() 자릿수 제한에 걸려 500이 나던 것 → 그런 아이템은 없으므로 404
+        head = self.raw_response(b"GET /items/" + b"9" * 5000 + b" HTTP/1.0\r\n\r\n").split(b"\r\n")[0]
+        self.assertIn(b" 404 ", head)
+
+    def test_body_too_large_gets_413(self):
+        # 1MB를 넘는 본문에 "body는 {price}..." 400을 주던 것 → Mini Redis 서버처럼 413
+        body = b'{"price": 1, "x": "' + b"a" * (1024 * 1024 + 10) + b'"}'
+        raw = self.raw_response(b"PUT /items/5 HTTP/1.0\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body)
+        head, body = raw.split(b"\r\n\r\n", 1)
+        self.assertIn(b" 413 ", head)
+        self.assertIn("error", json.loads(body))
+
+    def test_chunked_put_gets_411(self):
+        # Content-Length 없이 chunked로 보내면 본문을 안 읽어 "price" 400이 나던 것 → 원인대로 411
+        before = api_server._items[5]["price"]
+        raw = self.raw_response(b"PUT /items/5 HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
+                                b'c\r\n{"price": 7}\r\n0\r\n\r\n')
+        self.assertIn(b" 411 ", raw.split(b"\r\n")[0])
+        self.assertEqual(api_server._items[5]["price"], before)
+
+    def test_main_rejects_bad_or_busy_port(self):
+        # --port 70000은 OverflowError traceback, 이미 쓰이는 포트는 OSError traceback이 나던 것 (main에 에러 처리가 없었다)
+        self.addCleanup(setattr, api_server, "redis", api_server.redis)
+        err = io.StringIO()
+        with mock.patch("sys.argv", ["api", "--port", "70000"]), contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as cm:
+                api_server.main()
+        self.assertEqual(cm.exception.code, 2)
+        busy_port = self.demo_server.server_address[1]
+        with mock.patch("sys.argv", ["api", "--port", str(busy_port)]):
+            with self.assertRaises(SystemExit) as cm:
+                api_server.main()
+        self.assertIn("열 수 없습니다", str(cm.exception.code))
 
     def test_send_to_disconnected_client_is_quiet(self):
         # 끊긴 클라이언트에 응답하다 에러 → 그 에러를 500으로 또 응답하려다 두 번째 에러가 나던 것 (리눅스에서 발견)

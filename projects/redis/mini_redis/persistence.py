@@ -49,8 +49,12 @@ def save_snapshot(store, path):
         _replace_with_retry(tmp_path, path)  # 같은 폴더 안의 이름 바꾸기는 한 번에 일어난다 → 반쯤 바뀐 상태가 없다
     except BaseException:
         # 쓰다가 실패하면(JSON으로 못 바꾸는 값 등) 임시 파일만 지우고, 기존 스냅샷은 그대로 둔다
-        if os.path.exists(tmp_path):
+        try:
             os.remove(tmp_path)
+        except OSError:
+            # 임시 파일이 없거나(열기 전에 실패) 지울 수 없어도(백신이 잡고 있음) 원래 에러를 덮지 않는다
+            # (전에는 원래 TypeError 대신 PermissionError가 나가 원인을 알 수 없었다)
+            pass
         raise
     return len(entries)
 
@@ -109,8 +113,10 @@ def load_snapshot(store, path):
 # interval초마다 스냅샷을 저장하는 스레드 시작 → 멈출 때 쓸 함수 stop() (멈출 때 마지막으로 한 번 더 저장한다)
 def start_periodic_snapshot(store, path, interval):
     # 0 이하이면 wait()가 바로 돌아와 쉬지 않고 저장을 반복한다 (0.2초에 수십만 번 → CPU·디스크 낭비)
-    if isinstance(interval, bool) or not isinstance(interval, (int, float)) or not math.isfinite(interval) or interval <= 0:
-        raise ValueError("스냅샷 주기(interval)는 0보다 큰 숫자(초)여야 합니다")
+    # 상한 threading.TIMEOUT_MAX(Windows 약 49.7일): 넘으면 Event.wait가 OverflowError를 내 주기 저장 스레드가 바로 죽는다
+    # (전체 점검에서 재현: 그 뒤로는 정상 종료 때만 저장됐다). 비교만 하므로 아주 큰 정수도 OverflowError 없이 걸러진다
+    if isinstance(interval, bool) or not isinstance(interval, (int, float)) or not 0 < interval <= threading.TIMEOUT_MAX:
+        raise ValueError(f"스냅샷 주기(interval)는 0보다 크고 {threading.TIMEOUT_MAX:g}초 이하인 숫자여야 합니다")
     stop_event = threading.Event()
 
     def loop():

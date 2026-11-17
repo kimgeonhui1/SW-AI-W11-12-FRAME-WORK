@@ -166,9 +166,13 @@ class PersistenceTest(unittest.TestCase):
 
     def test_invalid_interval(self):
         # 0 이하면 쉬지 않고 저장을 반복하던 것 (0.2초에 수십만 번)
-        for bad in [0, -1, float("nan"), float("inf"), True]:
+        # threading.TIMEOUT_MAX(Windows 약 49.7일)를 넘으면 Event.wait가 OverflowError를 내고 주기 저장 스레드가 바로 죽던 것
+        # (전체 점검에서 재현: 이후로는 정상 종료 때만 저장됨)
+        for bad in [0, -1, float("nan"), float("inf"), True, threading.TIMEOUT_MAX * 2, 1e10]:
             with self.assertRaises(ValueError, msg=repr(bad)):
                 start_periodic_snapshot(MiniRedis(), self.path, bad)
+        stop = start_periodic_snapshot(MiniRedis(), self.path, threading.TIMEOUT_MAX)  # 상한 그 자체는 받는다
+        stop()
 
     def test_failed_save_keeps_previous_snapshot(self):
         # JSON으로 못 바꾸는 값이 있어 저장이 실패해도 → 이전 스냅샷은 온전하고 임시 파일도 남지 않는다
@@ -181,6 +185,15 @@ class PersistenceTest(unittest.TestCase):
         with open(self.path, encoding="utf-8") as f:
             self.assertEqual([e["key"] for e in json.load(f)["entries"]], ["ok"])
         self.assertFalse(os.path.exists(self.path + ".tmp"))
+
+    def test_cleanup_failure_keeps_original_error(self):
+        # 저장 실패 뒤 임시 파일 삭제까지 실패하면(백신이 잡고 있음) 원래 에러(TypeError)가 PermissionError로 덮여
+        # 원인을 알 수 없던 것 (전체 점검에서 재현)
+        r = MiniRedis()
+        r.set("bad", {1, 2})
+        with mock.patch.object(persistence.os, "remove", side_effect=PermissionError("다른 프로그램이 사용 중")):
+            with self.assertRaises(TypeError):
+                save_snapshot(r, self.path)
 
     def test_empty_store_round_trip(self):
         # 키가 하나도 없어도 저장 · 복구가 된다 (빈 entries 목록을 "형식 오류"로 오해하지 않는다)
