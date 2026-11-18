@@ -24,9 +24,8 @@ INT_MIN, INT_MAX = -(2**63), 2**63 - 1
 # (Phase 2에서 INSERT 수십만 줄을 처리할 때 차이가 난다)
 _TOKEN_RE = re.compile(
     r"""
-      (?P<SPACE>[^\S\n]+)                 # 줄바꿈을 뺀 공백 (탭, 전각 공백 등 포함)
-    | (?P<NEWLINE>\n)
-    | (?P<COMMENT>--[^\n]*)
+      (?P<SKIP>(?:\s+|--[^\n]*)+)         # 공백 · 줄바꿈 · 주석을 한 덩어리로 건너뛴다 (탭, 전각 공백 포함)
+    #   전에는 공백 · 줄바꿈 · 주석을 따로 맞춰서, 토큰 하나마다 공백 매칭이 하나씩 더 있었다 (INSERT 줄마다 매칭 약 1.5배)
     | (?P<STRING>'[^']*(?:''[^']*)*'(?!'))  # '' 는 따옴표 하나. 줄바꿈도 문자열 안에 들어갈 수 있다
     #   따옴표가 아닌 글자는 [^']*로 한꺼번에 먹는다. 글자마다 "[^'] 또는 ''"를 고르던 예전 식은 10MB 문자열에 약 10초 걸렸다
     #   (자체 점검). [^']+를 *로 감싸는 식은 닫히지 않은 문자열에서 되돌아가기가 폭발하므로 이 모양(펼친 반복)을 쓴다
@@ -37,8 +36,9 @@ _TOKEN_RE = re.compile(
     #   (25abc · 0x10 · 1e5를 25 + abc처럼 둘로 잘라, 엉뚱한 위치에서 엉뚱한 에러가 나던 것: Gemini 리뷰로 재현)
     | (?P<NAME>[A-Za-z_][A-Za-z0-9_]*)
     | (?P<SYMBOL>[(),;*=])
+    | (?P<BAD>.)                          # 위 어느 것도 아닌 글자 → 알 수 없는 문자
     """,
-    re.VERBOSE,
+    re.VERBOSE | re.DOTALL,
 )
 
 
@@ -60,38 +60,44 @@ class Token(NamedTuple):
 
 def tokenize(sql):
     tokens = []
-    pos, line, line_start = 0, 1, 0
-    while pos < len(sql):
-        m = _TOKEN_RE.match(sql, pos)
+    add = tokens.append
+    new = tuple.__new__  # Token(...) 대신: NamedTuple 생성자는 파이썬 함수를 한 번 더 거쳐서, 토큰이 많으면 눈에 띄게 느렸다
+    line, line_start = 1, 0
+    for m in _TOKEN_RE.finditer(sql):  # match(sql, pos)를 직접 반복하는 대신 정규식 엔진이 다음 위치를 이어서 찾는다
+        kind = m.lastgroup
+        pos = m.start()
+        if kind == "SKIP":  # 공백 · 줄바꿈 · 주석은 토큰으로 남기지 않고 줄 번호만 센다
+            text = m.group()
+            newlines = text.count("\n")
+            if newlines:
+                line += newlines
+                line_start = pos + text.rfind("\n") + 1
+            continue
         col = pos - line_start + 1
-        if m is None:
-            raise SqlSyntaxError(f"알 수 없는 문자입니다: {sql[pos]!r}", line, col)
-        kind, text = m.lastgroup, m.group()
-
-        if kind == "UNCLOSED":
-            raise SqlSyntaxError("작은따옴표가 닫히지 않았습니다", line, col)
-        if kind == "STRING":
-            tokens.append(Token("STRING", text[1:-1].replace("''", "'"), line, col))
-        elif kind == "NUMBER":
-            tokens.append(Token("INT", _to_int(text, line, col), line, col))
-        elif kind == "NAME":
+        if kind == "NAME":  # 많이 나오는 순서대로 검사한다
+            text = m.group()
             word = text.upper()
             if word in KEYWORDS:
-                tokens.append(Token("KEYWORD", word, line, col))
+                add(new(Token, ("KEYWORD", word, line, col)))
             else:
-                tokens.append(Token("NAME", text, line, col))
+                add(new(Token, ("NAME", text, line, col)))
         elif kind == "SYMBOL":
-            tokens.append(Token("SYMBOL", text, line, col))
-        # SPACE, NEWLINE, COMMENT는 토큰으로 남기지 않는다
+            add(new(Token, ("SYMBOL", m.group(), line, col)))
+        elif kind == "NUMBER":
+            add(new(Token, ("INT", _to_int(m.group(), line, col), line, col)))
+        elif kind == "STRING":
+            text = m.group()
+            add(new(Token, ("STRING", text[1:-1].replace("''", "'"), line, col)))
+            newlines = text.count("\n")  # 여러 줄짜리 문자열 안의 줄바꿈도 센다
+            if newlines:
+                line += newlines
+                line_start = pos + text.rfind("\n") + 1
+        elif kind == "UNCLOSED":
+            raise SqlSyntaxError("작은따옴표가 닫히지 않았습니다", line, col)
+        else:
+            raise SqlSyntaxError(f"알 수 없는 문자입니다: {m.group()!r}", line, col)
 
-        # 줄 번호: 줄바꿈 토큰뿐 아니라 여러 줄짜리 문자열 안의 줄바꿈도 센다
-        newlines = text.count("\n")
-        if newlines:
-            line += newlines
-            line_start = pos + text.rfind("\n") + 1
-        pos = m.end()
-
-    tokens.append(Token("EOF", None, line, pos - line_start + 1))
+    add(Token("EOF", None, line, len(sql) - line_start + 1))
     return tokens
 
 

@@ -108,6 +108,34 @@ class StorageTest(unittest.TestCase):
         self.assertEqual(db.append("users", ["c", 3]), 3)  # 다음 id = 가장 큰 id + 1
         self.assertEqual(db.get("users", 3), [3, "c", 3])
 
+    def test_rows_added_after_reader_opened_are_found(self):
+        # id 검색용 파일을 한 번 연 뒤에 덧붙인 행도 찾아야 한다 (읽기 파일을 열어 두고 다시 쓰므로)
+        self.db.append("users", ["a", 1])
+        self.assertEqual(self.db.get("users", 1), [1, "a", 1])  # 여기서 읽기용 파일이 열린다
+        self.db.append("users", ["b", 2])
+        self.assertEqual(self.db.get("users", 2), [2, "b", 2])
+
+    def test_autoflush_off_still_reads_own_rows_and_saves_on_close(self):
+        # 대량 적재 모드: INSERT마다 flush하지 않지만, 검색은 버퍼에 남은 행까지 보고, 닫으면 파일에 남는다
+        self.db.close()
+        db = Database(self.db.directory, autoflush=False)
+        for i in range(1, 6):
+            db.append("users", [f"u{i}", i])
+        self.assertEqual(len(list(db.scan("users"))), 5)  # 전체 탐색이 먼저 (검색이 먼저 flush하면 가려진다)
+        db.append("users", ["u6", 6])
+        self.assertEqual(db.get("users", 6), [6, "u6", 6])
+        db.append("users", ["u7", 7])
+        self.assertEqual(len(list(db.scan("users"))), 7)
+        db.close()
+        self.assertEqual(len(list(self.reopen().scan("users"))), 7)
+
+    def test_unordered_file_still_builds_index(self):
+        # 보통은 정렬된 채로 한 번에 쌓지만(bulk load), id 순서가 섞인 파일은 하나씩 넣어 만든다
+        self.write_raw(b'[3, "c", 3]\n[1, "a", 1]\n[2, "b", 2]\n')
+        db = self.reopen()
+        self.assertEqual([db.get("users", i) for i in (1, 2, 3)], [[1, "a", 1], [2, "b", 2], [3, "c", 3]])
+        self.assertEqual(db.append("users", ["d", 4]), 4)
+
     def test_next_id_follows_largest_id(self):
         # 손으로 고친 파일처럼 id 순서가 섞이거나 비어 있어도, 다음 id는 가장 큰 id + 1이다
         self.write_raw(b'[5, "e", 5]\n[2, "b", 2]\n')
@@ -159,6 +187,14 @@ class StorageTest(unittest.TestCase):
             self.assertIn("2번째 줄", str(ctx.exception), bad)
             with self.assertRaises(StorageError, msg=bad):  # 인덱스를 만들 때(첫 INSERT · id 검색)도 같은 손상을 알린다
                 db.get("users", 1)
+
+    def test_id_overflow_is_refused_before_writing(self):
+        # 가장 큰 id가 64비트 최대값이면 다음 INSERT는 거부하고, 파일은 그대로 둔다 (전에는 범위 밖 id를 써서 테이블이 손상됨)
+        self.write_raw(b'[9223372036854775807, "max", 1]\n')
+        db = self.reopen()
+        with self.assertRaises(StorageError):
+            db.append("users", ["over", 1])
+        self.assertEqual(list(db.scan("users")), [[2**63 - 1, "max", 1]])
 
     def test_duplicate_id_in_file(self):
         self.write_raw(b'[1, "a", 1]\n[1, "b", 2]\n')

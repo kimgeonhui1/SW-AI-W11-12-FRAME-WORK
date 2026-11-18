@@ -55,10 +55,13 @@ class _TableState:
         self.size = 0  # 파일 크기 = 다음 행이 들어갈 offset
         self.needs_newline = False  # 마지막 줄이 줄바꿈 없이 끝났는가 (손으로 고친 파일 등)
         self.writer = None  # 덧붙이기용으로 열어 둔 파일 (INSERT마다 열고 닫지 않으려고)
+        self.reader = None  # id 검색용으로 열어 둔 파일 (검색마다 열고 닫으면 열기 비용이 검색 시간의 절반을 넘었다)
 
 
 class Database:
-    def __init__(self, directory):
+    # autoflush: INSERT마다 파일 버퍼를 운영체제로 넘길지. 기본 True (프로그램이 갑자기 꺼져도 끝난 INSERT는 남는다)
+    # 대량 적재(성능 측정의 100만 행 INSERT)는 False로 → 행마다 약 9µs 들던 flush를 건너뛰고, 검색 · 닫기 직전에 한 번에 넘긴다
+    def __init__(self, directory, autoflush=True):
         # 폴더가 아니면(파일 경로를 줌) "…\schema.json이 없다"는 헷갈리는 메시지 대신 바로 알려 준다 (자체 점검)
         if not os.path.isdir(directory):
             raise SchemaError(f"DB 폴더가 아닙니다: {directory}")
@@ -66,6 +69,7 @@ class Database:
         # 테이블 이름 → [(컬럼, 타입), ...]  (id는 빼고 스키마에 적힌 열만)
         self.tables = load_schema(os.path.join(directory, "schema.json"))
         self._states = {}
+        self.autoflush = autoflush
 
     def __enter__(self):
         return self
@@ -76,9 +80,11 @@ class Database:
     # 열어 둔 파일을 닫는다 (Windows는 열린 파일을 지울 수 없고, 닫아야 버퍼가 확실히 비워진다)
     def close(self):
         for state in self._states.values():
-            if state.writer is not None:
-                state.writer.close()
-                state.writer = None
+            for name in ("writer", "reader"):
+                f = getattr(state, name)
+                if f is not None:
+                    f.close()
+                    setattr(state, name, None)
 
     def path(self, table):
         return os.path.join(self.directory, f"{table}.jsonl")
@@ -91,6 +97,10 @@ class Database:
     def append(self, table, values):
         state = self._state(table)
         row_id = state.next_id
+        # 쓰기 "전에" 막는다: 파일의 가장 큰 id가 64비트 최대값이면 다음 id는 범위 밖이라, 써 버리면 그 줄이 손상으로 읽혀
+        # 테이블 전체를 못 쓰게 됐다 (자체 점검으로 재현)
+        if row_id > INT_MAX:
+            raise StorageError(f"{table}: 더 이상 부여할 id가 없습니다 (64비트 정수 범위 초과)")
         data = (json.dumps([row_id] + values, ensure_ascii=False) + "\n").encode("utf-8")  # ensure_ascii=False: 한글을 그대로
         if state.needs_newline:
             # 마지막 줄이 줄바꿈 없이 끝났으면 새 행이 그 줄에 붙어 둘 다 망가진다 → 줄을 먼저 끊는다.
@@ -100,8 +110,9 @@ class Database:
             state.writer = open(self.path(table), "ab")
         offset = state.size + (1 if state.needs_newline else 0)
         state.writer.write(data)
-        # 매번 운영체제로 넘긴다: 프로그램이 갑자기 꺼져도 끝난 INSERT는 남고, 다른 열린 파일(검색)에서도 바로 보인다
-        state.writer.flush()
+        if self.autoflush:
+            # 매번 운영체제로 넘긴다: 프로그램이 갑자기 꺼져도 끝난 INSERT는 남고, 다른 열린 파일(검색)에서도 바로 보인다
+            state.writer.flush()
         state.size += len(data)
         state.needs_newline = False
         state.index.insert(row_id, offset)
@@ -110,7 +121,8 @@ class Database:
 
     # 모든 행을 파일 순서대로 하나씩 돌려준다 (선형 탐색의 재료). 파일이 없으면 아직 INSERT가 없던 빈 테이블
     def scan(self, table):
-        columns = self.columns(table)
+        types = [kind for _, kind in self.columns(table)]
+        self._flush(table)  # autoflush=False로 아직 버퍼에 남은 행도 읽히게
         try:
             f = open(self.path(table), "rb")
         except FileNotFoundError:
@@ -118,20 +130,28 @@ class Database:
         with f:
             for number, raw in enumerate(f, 1):
                 if raw.strip():  # 빈 줄(편집기가 끝에 넣은 줄 등)은 행이 아니다
-                    yield self._decode(table, raw, number, columns)
+                    yield self._decode(table, raw, number, types)
 
     # id로 행 하나 찾기 (인덱스 사용) → 행 또는 None. 트리에서 offset을 얻어 그 위치로 바로 가서 한 줄만 읽는다
     def get(self, table, row_id):
-        offset = self._state(table).index.get(row_id)
+        state = self._state(table)
+        offset = state.index.get(row_id)
         if offset is None:
             return None
-        with open(self.path(table), "rb") as f:
-            f.seek(offset)
-            raw = f.readline()
-        row = self._decode(table, raw, f"offset {offset}", self.columns(table))
+        self._flush(table)
+        if state.reader is None:
+            state.reader = open(self.path(table), "rb")
+        state.reader.seek(offset)  # 버퍼를 비우고 그 위치로 옮긴다 → 덧붙인 행도 다시 읽힌다
+        raw = state.reader.readline()
+        row = self._decode(table, raw, f"{offset}바이트 위치", [kind for _, kind in self.columns(table)])
         if row[0] != row_id:  # 인덱스를 만든 뒤 다른 프로그램이 파일을 바꿨다
             raise StorageError(f"{self.path(table)}: 인덱스와 파일이 맞지 않습니다 (id {row_id})")
         return row
+
+    def _flush(self, table):
+        state = self._states.get(table)
+        if state is not None and state.writer is not None:
+            state.writer.flush()
 
     # 인덱스 정보 (성능 측정 출력용)
     def index_height(self, table):
@@ -143,48 +163,67 @@ class Database:
         if state is not None:
             return state
         state = _TableState()
-        columns = self.columns(table)
-        last_id = 0
+        types = [kind for _, kind in self.columns(table)]
+        ids, offsets, numbers = [], [], []
         try:
             f = open(self.path(table), "rb")
         except FileNotFoundError:
             f = None
         if f is not None:
             with f:
-                offset, number, raw = 0, 0, b""
+                offset, raw = 0, b""
                 for number, raw in enumerate(f, 1):  # 바이너리 모드: 줄은 \n으로만 나뉘고, len(raw)는 정확한 바이트 수다
                     if raw.strip():
-                        row_id = self._decode(table, raw, number, columns)[0]
-                        try:
-                            state.index.insert(row_id, offset)
-                        except KeyError:
-                            raise StorageError(f"{self.path(table)} {number}번째 줄: id {row_id}이(가) 이미 있습니다") from None
-                        last_id = max(last_id, row_id)
+                        ids.append(self._decode(table, raw, number, types)[0])  # 행 전체를 검사해 손상을 켤 때 바로 알린다
+                        offsets.append(offset)
+                        numbers.append(number)
                     offset += len(raw)
                 state.size = offset
                 state.needs_newline = offset > 0 and not raw.endswith(b"\n")
-        state.next_id = last_id + 1
+        try:
+            # 보통 파일은 id가 1, 2, 3 ... 순서라 정렬된 채로 한 번에 쌓는다 (100만 행: 하나씩 넣기보다 훨씬 빠름)
+            state.index = BPlusTree.bulk_load(ids, offsets, order=INDEX_ORDER)
+        except ValueError:
+            # 손으로 고친 파일처럼 순서가 섞였으면 하나씩 넣는다. 같은 id가 두 번 있으면 몇 번째 줄인지 알린다
+            for row_id, offset, number in zip(ids, offsets, numbers):
+                try:
+                    state.index.insert(row_id, offset)
+                except KeyError:
+                    raise StorageError(f"{self.path(table)} {number}번째 줄: id {row_id}이(가) 이미 있습니다") from None
+        state.next_id = max(ids, default=0) + 1
         self._states[table] = state
         return state
 
-    def _decode(self, table, raw, where, columns):
+    # 파일의 한 줄 → 행. 손상됐으면 StorageError. where: 에러에 적을 위치 (줄 번호 또는 "N바이트 위치")
+    def _decode(self, table, raw, where, types):
+        where = f"{where}번째 줄" if isinstance(where, int) else f"{where}의 줄"
         try:
-            row = json.loads(raw)
-        except ValueError:  # JSON이 아님, UTF-8이 아님
-            raise StorageError(f"{self.path(table)} {where}번째 줄이 손상되었습니다") from None
+            # json.loads(bytes)는 줄마다 인코딩을 추측(UTF-8/16/32)해서 느렸다 → UTF-8로 직접 풀고 해석기를 바로 부른다
+            row = _decode_json(raw.decode("utf-8"))
+        except ValueError:  # JSON이 아님, UTF-8이 아님 (UnicodeDecodeError도 ValueError)
+            raise StorageError(f"{self.path(table)} {where}이 손상되었습니다") from None
         # id는 1 이상이어야 한다 (자동 부여는 1부터)
-        if not _row_matches(row, columns) or row[0] < 1:
-            raise StorageError(f"{self.path(table)} {where}번째 줄이 스키마와 다릅니다: {raw[:80]!r}")
+        if not _row_matches(row, types) or row[0] < 1:
+            raise StorageError(f"{self.path(table)} {where}이 스키마와 다릅니다: {raw[:80]!r}")
         return row
 
 
-def _row_matches(row, columns):
-    if not isinstance(row, list) or len(row) != len(columns):
+_decode_json = json.JSONDecoder().decode
+
+
+# types: 열마다 "INT" / "TEXT". 행마다 불리므로 제너레이터(all(...)) 대신 단순 반복문으로 쓴다 (전체 탐색 시간의 약 1/4이었다)
+def _row_matches(row, types):
+    if type(row) is not list or len(row) != len(types):
         return False
-    # type(v) is int: JSON의 true는 파이썬에서 True(== 1)라서 isinstance(v, int)로는 걸러지지 않는다
-    # INT는 64비트 범위까지 (SQL로는 그 밖의 값을 넣을 수 없으므로, 파일에 있으면 손으로 고친 손상이다: Gemini 리뷰)
-    return all(type(v) is int and INT_MIN <= v <= INT_MAX if t == "INT" else type(v) is str
-               for v, (_, t) in zip(row, columns))
+    for v, t in zip(row, types):
+        if t == "INT":
+            # type(v) is int: JSON의 true는 파이썬에서 True(== 1)라서 isinstance(v, int)로는 걸러지지 않는다
+            # INT는 64비트 범위까지 (SQL로는 그 밖의 값을 넣을 수 없으므로, 파일에 있으면 손으로 고친 손상이다: Gemini 리뷰)
+            if type(v) is not int or not INT_MIN <= v <= INT_MAX:
+                return False
+        elif type(v) is not str:
+            return False
+    return True
 
 
 def load_schema(path):

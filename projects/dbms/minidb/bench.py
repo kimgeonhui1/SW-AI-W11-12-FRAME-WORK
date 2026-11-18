@@ -60,7 +60,8 @@ def run(rows=1_000_000, queries=10, directory=None, out=print, seed=0):
 def _measure(rows, queries, directory, out, rng):
     out(f"[미니 DBMS 인덱스 벤치마크] {rows:,}행, 검색 {queries}번씩")
     start = time.perf_counter()
-    with Database(directory) as db:
+    # 대량 적재: INSERT마다 flush하지 않고 끝날 때 한 번에 (행마다 약 9µs 아낌). 실제 DB의 대량 적재(LOAD DATA, COPY)도 같은 생각이다
+    with Database(directory, autoflush=False) as db:
         ex = Executor(db)
         for first in range(1, rows + 1, BATCH):
             last = min(first + BATCH - 1, rows)
@@ -74,9 +75,8 @@ def _measure(rows, queries, directory, out, rng):
 
     with Database(directory) as db:  # 다시 켠 것과 같다 → 첫 사용 때 파일을 읽어 인덱스를 다시 만든다
         start = time.perf_counter()
-        db.get("users", 1)
+        height = db.index_height("users")  # 첫 사용 = 인덱스 재구성만 일어난다 (검색 시간이 섞이지 않게, Gemini 리뷰)
         rebuild_s = time.perf_counter() - start
-        height = db.index_height("users")
 
         targets = rng.sample(range(1, rows + 1), queries)
         modes = [

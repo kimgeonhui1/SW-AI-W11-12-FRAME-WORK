@@ -17,6 +17,12 @@
 #   잎:       반으로 나누고 오른쪽 잎의 첫 키를 부모에 "복사"해 올린다 (그 키의 값은 잎에 그대로 있어야 하므로)
 #   내부 노드: 반으로 나누고 가운데 키를 부모로 "옮긴다" (내부 키는 안내판이라 두 곳에 있을 필요가 없다)
 #
+# ■ 맨 오른쪽에 덧붙일 때는 반반이 아니라 "왼쪽을 꽉 채우고" 나눈다
+#   id는 1, 2, 3 ... 으로 늘기만 해서, 반반으로 나누면 왼쪽 노드에는 다시는 키가 오지 않아 모든 노드가 절반만 찬 채로 남았다
+#   (100만 행에서 잎 약 31,000개). 트리의 맨 오른쪽 노드 끝에 키가 붙어 넘친 경우에만, 왼쪽은 꽉 찬 채로 두고
+#   새 키만 오른쪽으로 보낸다 → 노드가 거의 꽉 차서 노드 수가 약 절반이 된다. 실제 DB도 순서대로 늘어나는 키에 같은 최적화를 한다
+#   그 밖의 경우(중간에 끼어든 키)는 원래대로 반반 → 양쪽 모두 다음 키가 들어올 빈자리가 있다
+#
 # ■ 삭제는 아직 없다 (과제의 SQL은 INSERT / SELECT뿐. DELETE는 추가 구현 때)
 
 from bisect import bisect_left, bisect_right
@@ -52,6 +58,44 @@ class BPlusTree:
     def __len__(self):
         return self._size
 
+    # 이미 오름차순(중복 없음)인 키로 트리를 한 번에 만든다 (bulk load) — 프로그램을 다시 켤 때 인덱스 재구성용
+    # 하나씩 insert하면 키마다 루트부터 내려가고 분할을 반복하지만, 이렇게 아래(잎)부터 위로 쌓으면 각 노드를 한 번씩만 만든다 (O(n)).
+    # 실제 DB도 인덱스를 처음 만들 때(CREATE INDEX) 정렬 후 이렇게 쌓는다
+    #   1) 잎: 키를 max_keys개씩 잘라 꽉 찬 잎을 만들고 옆으로 연결한다
+    #   2) 위층: 아래 노드를 order개씩 묶어 내부 노드를 만든다. 안내 키 = 둘째 자식부터 각 자식 아래의 가장 작은 키
+    #   3) 노드가 하나 남을 때까지 반복 → 그것이 루트
+    @classmethod
+    def bulk_load(cls, keys, values, order=64):
+        tree = cls(order)
+        if len(keys) != len(values):
+            raise ValueError("키와 값의 개수가 다릅니다")
+        if any(a >= b for a, b in zip(keys, keys[1:])):
+            raise ValueError("키가 오름차순이 아니거나 겹칩니다")
+        if not keys:
+            return tree
+        step = tree.max_keys
+        level = [_Leaf(keys[i:i + step], values[i:i + step]) for i in range(0, len(keys), step)]
+        for left, right in zip(level, level[1:]):
+            left.next = right
+        lows = [leaf.keys[0] for leaf in level]  # 각 노드 아래에서 가장 작은 키
+        height = 1
+        while len(level) > 1:
+            sizes = [order] * (len(level) // order)
+            if len(level) % order:
+                sizes.append(len(level) % order)
+            if sizes[-1] == 1:  # 자식 1개짜리 내부 노드(안내 키 0개)는 만들지 않는다 → 앞 노드에서 하나 가져온다
+                sizes[-2] -= 1
+                sizes[-1] = 2
+            parents, parent_lows, start = [], [], 0
+            for size in sizes:
+                parents.append(_Internal(lows[start + 1:start + size], level[start:start + size]))
+                parent_lows.append(lows[start])
+                start += size
+            level, lows = parents, parent_lows
+            height += 1
+        tree.root, tree.height, tree._size = level[0], height, len(keys)
+        return tree
+
     # key의 값. 없으면 default. 루트에서 잎까지 height번만 내려간다 (O(log n))
     def get(self, key, default=None):
         node = self.root
@@ -64,7 +108,7 @@ class BPlusTree:
 
     # 새 키 넣기. 이미 있는 키면 KeyError (id는 겹치면 안 된다). 실패하면 트리는 그대로다
     def insert(self, key, value):
-        split = self._insert(self.root, key, value)
+        split = self._insert(self.root, key, value, True)
         if split is not None:  # 루트가 나뉘었다 → 새 루트를 만들어 트리가 한 단계 자란다
             separator, right = split
             self.root = _Internal([separator], [self.root, right])
@@ -72,7 +116,8 @@ class BPlusTree:
         self._size += 1
 
     # node 아래에 넣는다. node가 넘쳐 나뉘었으면 (부모에 올릴 키, 새로 생긴 오른쪽 노드), 아니면 None
-    def _insert(self, node, key, value):
+    # rightmost: node가 트리의 맨 오른쪽 가장자리에 있는가 (루트부터 늘 마지막 자식으로만 내려온 노드)
+    def _insert(self, node, key, value, rightmost):
         if isinstance(node, _Leaf):
             i = bisect_left(node.keys, key)
             if i < len(node.keys) and node.keys[i] == key:
@@ -81,7 +126,10 @@ class BPlusTree:
             node.values.insert(i, value)
             if len(node.keys) <= self.max_keys:
                 return None
-            mid = len(node.keys) // 2
+            if rightmost and i == len(node.keys) - 1:  # 트리 전체에서 가장 큰 키가 맨 끝에 붙었다
+                mid = self.max_keys  # 왼쪽은 꽉 찬 채로(max_keys개), 오른쪽은 새 키 하나
+            else:
+                mid = len(node.keys) // 2
             right = _Leaf(node.keys[mid:], node.values[mid:], node.next)
             del node.keys[mid:]
             del node.values[mid:]
@@ -89,7 +137,7 @@ class BPlusTree:
             return right.keys[0], right  # 복사해서 올린다 (값은 잎에 남는다)
 
         i = bisect_right(node.keys, key)
-        split = self._insert(node.children[i], key, value)
+        split = self._insert(node.children[i], key, value, rightmost and i == len(node.children) - 1)
         if split is None:
             return None
         separator, right_child = split
@@ -97,7 +145,10 @@ class BPlusTree:
         node.children.insert(i + 1, right_child)
         if len(node.keys) <= self.max_keys:
             return None
-        mid = len(node.keys) // 2
+        if rightmost and i == len(node.keys) - 1:  # 맨 오른쪽 자식이 나뉘어 새 키가 맨 끝에 붙었다
+            mid = self.max_keys - 1  # 왼쪽은 자식 order - 1개로 채우고, 오른쪽은 키 1개 · 자식 2개 (키 없는 내부 노드를 만들지 않게)
+        else:
+            mid = len(node.keys) // 2
         up = node.keys[mid]
         right = _Internal(node.keys[mid + 1:], node.children[mid + 1:])
         del node.keys[mid:]  # 가운데 키는 부모로 옮긴다 (왼쪽 · 오른쪽 어디에도 남기지 않는다)
