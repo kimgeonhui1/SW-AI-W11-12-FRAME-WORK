@@ -1,0 +1,4 @@
+{
+  "users": {"name": "TEXT", "age": "INT"},
+  "products": {"title": "TEXT", "price": "INT"}
+}
