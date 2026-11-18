@@ -20,7 +20,7 @@ import json
 import os
 import re
 
-from .tokenizer import KEYWORDS
+from .tokenizer import INT_MAX, INT_MIN, KEYWORDS
 
 TYPES = {"INT", "TEXT"}
 _NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")  # SQL에서 쓸 수 있는 이름 = 토크나이저의 NAME 규칙
@@ -38,6 +38,9 @@ class StorageError(ValueError):
 
 class Database:
     def __init__(self, directory):
+        # 폴더가 아니면(파일 경로를 줌) "…\schema.json이 없다"는 헷갈리는 메시지 대신 바로 알려 준다 (자체 점검)
+        if not os.path.isdir(directory):
+            raise SchemaError(f"DB 폴더가 아닙니다: {directory}")
         self.directory = directory
         # 테이블 이름 → [(컬럼, 타입), ...]
         self.tables = load_schema(os.path.join(directory, "schema.json"))
@@ -81,7 +84,9 @@ def _row_matches(row, columns):
     if not isinstance(row, list) or len(row) != len(columns):
         return False
     # type(v) is int: JSON의 true는 파이썬에서 True(== 1)라서 isinstance(v, int)로는 걸러지지 않는다
-    return all(type(v) is int if t == "INT" else type(v) is str for v, (_, t) in zip(row, columns))
+    # INT는 64비트 범위까지 (SQL로는 그 밖의 값을 넣을 수 없으므로, 파일에 있으면 손으로 고친 손상이다: Gemini 리뷰)
+    return all(type(v) is int and INT_MIN <= v <= INT_MAX if t == "INT" else type(v) is str
+               for v, (_, t) in zip(row, columns))
 
 
 def load_schema(path):
@@ -116,8 +121,9 @@ def load_schema(path):
 
 # 이름 규칙을 지켜야 SQL에서 부를 수 있고, 파일 이름으로 써도 안전하다 (../ 같은 경로 문자가 들어갈 수 없다)
 def _check_name(name, what):
-    if not _NAME_RE.match(name) or name.upper() in KEYWORDS:
-        raise SchemaError(f"{what} 이름이 올바르지 않습니다: {name!r} (영문·숫자·_, 키워드 불가)")
+    # 64자: MySQL의 이름 길이 상한과 같다. 길이 제한이 없으면 Windows 경로 길이를 넘어 INSERT가 OSError로 실패했다 (자체 점검)
+    if not _NAME_RE.match(name) or name.upper() in KEYWORDS or len(name) > 64:
+        raise SchemaError(f"{what} 이름이 올바르지 않습니다: {name[:70]!r} (영문·숫자·_ 64자 이하, 키워드 불가)")
 
 
 # json은 같은 키가 두 번 나오면 조용히 뒤의 것만 남긴다 → 컬럼이 사라지는 실수를 막으려고 에러로 바꾼다

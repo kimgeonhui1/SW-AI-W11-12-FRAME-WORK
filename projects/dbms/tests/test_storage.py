@@ -31,6 +31,14 @@ class SchemaTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as empty, self.assertRaises(SchemaError):
             Database(empty)
 
+    def test_db_path_must_be_a_folder(self):
+        # 파일이나 없는 경로를 DB 폴더로 주면 "DB 폴더가 아닙니다" (전에는 "...\\q.sql\\schema.json이 없습니다", 자체 점검)
+        directory = make_db(self, {"t": {"x": "INT"}})
+        for path in [os.path.join(directory, "schema.json"), os.path.join(directory, "없는폴더")]:
+            with self.assertRaises(SchemaError) as ctx:
+                Database(path)
+            self.assertIn("DB 폴더가 아닙니다", str(ctx.exception))
+
     def test_bad_schemas(self):
         bad = [
             "{깨진 json",
@@ -51,6 +59,8 @@ class SchemaTest(unittest.TestCase):
             '{"Users": {"x": "INT"}, "users": {"x": "INT"}}',  # Windows에서 같은 파일
             '{"con": {"x": "INT"}}',  # Windows 장치 이름
             '{"COM1": {"x": "INT"}}',
+            '{"%s": {"x": "INT"}}' % ("t" * 65),  # 64자 초과: Windows 경로 길이를 넘어 INSERT가 OSError로 실패하던 것 (자체 점검)
+            '{"t": {"%s": "INT"}}' % ("c" * 65),
         ]
         for raw in bad:
             with self.assertRaises(SchemaError, msg=raw):
@@ -106,6 +116,8 @@ class StorageTest(unittest.TestCase):
             b'["a", 1.5]',
             b'[1, 1]',  # TEXT 칸에 정수
             b'["\xff", 1]',  # UTF-8이 아님
+            b'["a", 9223372036854775808]',  # INT 64비트 범위 밖 (SQL로는 넣을 수 없는 값, Gemini 리뷰)
+            b'["a", -9223372036854775809]',
         ]
         for bad in bad_lines:
             self.write_raw(b'["ok", 1]\n' + bad + b"\n")
