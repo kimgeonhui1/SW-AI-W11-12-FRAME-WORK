@@ -92,7 +92,8 @@ def load_snapshot(store, path):
         for key, _, ttl in entries:
             if not isinstance(key, str):
                 raise SnapshotError(f"키가 문자열이 아닙니다: {key!r}")
-            if ttl is not None and (isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not math.isfinite(ttl)):
+            # ttl <= 0: 저장(dump)은 살아 있는 키만 남은 시간(> 0)으로 적으므로 손상된 파일이다. 전에는 조용히 건너뛰었다 (Gemini 리뷰로 재현)
+            if ttl is not None and (isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not math.isfinite(ttl) or ttl <= 0):
                 raise SnapshotError(f"ttl이 올바르지 않습니다: {key!r} → {ttl!r}")
     except SnapshotError:
         raise

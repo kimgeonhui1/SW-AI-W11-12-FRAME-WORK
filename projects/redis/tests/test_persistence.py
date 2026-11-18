@@ -97,6 +97,9 @@ class PersistenceTest(unittest.TestCase):
             [{"key": "a", "value": 1, "ttl": "5"}],  # 문자열 ttl
             [{"key": "a", "value": 1, "ttl": True}],
             [{"key": "a", "value": 1}],  # ttl 필드 없음
+            # ttl 0 이하: 저장은 남은 시간(> 0)만 적으므로 손상된 파일. 조용히 건너뛰고 앞 항목만 복구하던 것 (Gemini 리뷰로 재현)
+            [{"key": "ok", "value": 1, "ttl": None}, {"key": "a", "value": 1, "ttl": -10}],
+            [{"key": "a", "value": 1, "ttl": 0}],
         ]
         for entries in bad_entry_lists:
             with open(self.path, "w", encoding="utf-8") as f:

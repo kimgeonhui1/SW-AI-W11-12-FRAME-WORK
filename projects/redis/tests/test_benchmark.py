@@ -192,6 +192,7 @@ class BenchmarkTest(unittest.TestCase):
             lambda: benchmark.load(0.1, [2.5]),
             lambda: benchmark.load(0.1, [1], 0),
             lambda: benchmark.load(-1, [1], 1),
+            lambda: benchmark.load(0.1, [10, 129]),  # 연결 대기열(128)을 넘는 동시 클라이언트 (연결 단계에 제한 시간이 없어서)
         ]
         for i, case in enumerate(cases):
             with self.subTest(case=i), self.assertRaises(ValueError):
@@ -607,6 +608,26 @@ class SourcePoolTest(unittest.TestCase):
         for t in threads:
             t.join()
         self.assertGreaterEqual(time.perf_counter() - start, 0.1 * 0.95)
+
+
+class MeasureConnectionTest(unittest.TestCase):
+    def test_connects_without_timeout_then_reads_with_timeout(self):
+        # 연결은 제한 시간 없이 맺어 Windows의 15.6ms 연결 지연을 피하고(측정 잡음의 주원인),
+        # 연결된 뒤에는 읽기 제한 시간이 걸려 있어야 응답 없는 서버에서 영원히 기다리지 않는다
+        srv = socket.socket()
+        self.addCleanup(srv.close)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        conn = benchmark._MeasureConnection("127.0.0.1", srv.getsockname()[1], timeout=0.3)
+        self.addCleanup(conn.close)
+        with mock.patch.object(conn, "_create_connection", wraps=socket.create_connection) as spy:
+            conn.connect()
+        self.assertIsNone(spy.call_args.args[1])  # connect에는 제한 시간이 없었다
+        self.assertEqual((conn.sock.gettimeout(), conn.timeout), (0.3, 0.3))
+        start = time.perf_counter()
+        with self.assertRaises((TimeoutError, socket.timeout)):
+            conn.sock.recv(1)  # 서버가 아무것도 안 보낸다 → 제한 시간에 끝난다
+        self.assertLess(time.perf_counter() - start, 3)
 
 
 if __name__ == "__main__":

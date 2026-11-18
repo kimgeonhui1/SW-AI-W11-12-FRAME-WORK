@@ -10,7 +10,7 @@
 # 키에 "/" 같은 특수문자가 있으면 URL 인코딩해서 보낸다 (예: "char:a/b" → /keys/char%3Aa%2Fb)
 # 빈 문자열 키는 HTTP API에서 지원하지 않는다 (/keys/ 는 404). 저장소(MiniRedis) 자체는 빈 키도 받는다
 # 에러 응답은 모두 {"error": "이유"} 모양이다
-#   (400 잘못된 요청 / 404 없음 / 405 지원 안 하는 메서드 / 408 본문 수신 시간 초과 / 411 Content-Length 없는 chunked 본문 / 413 너무 큼 / 500 서버 오류)
+#   (400 잘못된 요청 / 404 없음 / 405 지원 안 하는 메서드 / 408 본문 수신 시간 초과 / 411 Content-Length 없는 chunked 본문 / 413 너무 큼 / 417 모르는 Expect / 500 서버 오류 / 503 동시 연결 수 초과)
 #
 # 실행: projects/redis 에서  python -m mini_redis.server --port 6380
 #       (기본으로 data/dump.json에 60초마다 스냅샷을 저장하고, 켤 때 복구한다. --snapshot "" 로 끌 수 있다)
@@ -34,6 +34,10 @@ SWEEP_INTERVAL = 1.0  # 만료 키 정리(주기 삭제) 간격(초)
 # 상한이 없으면 깊이 1000 이상인 값도 저장되는데, 스냅샷 저장(json.dump)이 RecursionError로 매번 실패해
 # 다른 키까지 디스크에 남지 않았다 (전체 점검에서 재현)
 MAX_DEPTH = 128
+MAX_CLIENTS = 256  # Mini Redis 서버의 동시 연결 상한 (아래 SafeThreadingHTTPServer.max_clients). 실제 Redis 기본값은 10000
+_BUSY_BODY = json.dumps({"error": "연결이 너무 많습니다 (최대 연결 수 초과)"}, ensure_ascii=False).encode("utf-8")
+_TOO_MANY_CLIENTS = (b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json; charset=utf-8\r\n"
+                     b"Content-Length: %d\r\nConnection: close\r\n\r\n" % len(_BUSY_BODY)) + _BUSY_BODY
 
 
 class SafeThreadingHTTPServer(ThreadingHTTPServer):
@@ -46,6 +50,55 @@ class SafeThreadingHTTPServer(ThreadingHTTPServer):
     # 아직 accept하지 못한 연결을 줄 세워 둘 수 있는 수 (listen backlog). 기본값 5면 클라이언트 수십 명이 동시에 연결할 때
     # 대기열이 넘쳐 운영체제가 연결을 거부한다 (동시 50명 벤치마크에서 WinError 10061로 재현). 실제 Redis 기본값(tcp-backlog)은 511
     request_queue_size = 128
+    # 동시에 열어 둘 수 있는 연결 수 상한 (None = 제한 없음). 연결마다 스레드 하나라서, 연결을 열어 두기만 하는 클라이언트가
+    # 많으면 스레드가 끝없이 늘어난다. 넘치면 503으로 바로 거절한다 (실제 Redis의 maxclients와 같은 역할)
+    max_clients = None
+
+    def __init__(self, *args, **kwargs):
+        self._clients = set()  # 지금 처리 중인 연결 (요청 소켓)
+        self._clients_lock = threading.Lock()
+        super().__init__(*args, **kwargs)
+
+    # accept한 연결마다 불린다 (accept 스레드). 상한을 넘으면 스레드를 만들지 않고 503 응답 후 닫는다
+    def process_request(self, request, client_address):
+        if self.max_clients is not None:
+            with self._clients_lock:
+                full = len(self._clients) >= self.max_clients
+                if not full:
+                    self._clients.add(request)
+            if full:
+                try:
+                    request.sendall(_TOO_MANY_CLIENTS)  # 새 연결의 송신 버퍼에 들어가므로 accept 스레드가 멈추지 않는다
+                except OSError:
+                    pass
+                self.shutdown_request(request)
+                return
+        try:
+            super().process_request(request, client_address)
+        except BaseException as e:
+            # 스레드 시작 실패. Exception이면 socketserver가 shutdown_request를 불러 주지만, BaseException(KeyboardInterrupt 등)은
+            # 그대로 올라가 자리와 소켓이 남았다 (Gemini 리뷰로 재현) → 여기서 돌려준다 (두 번 불려도 안전하다)
+            if not isinstance(e, Exception):
+                self.shutdown_request(request)
+            raise
+
+    # 연결 처리가 끝나면(요청 스레드) 불린다 → 자리를 돌려준다
+    def shutdown_request(self, request):
+        with self._clients_lock:
+            self._clients.discard(request)
+        super().shutdown_request(request)
+
+    # 서버를 닫을 때 열려 있는 연결도 끊는다. 듣는 소켓만 닫으면, 다음 요청을 기다리던 연결의 스레드가
+    # REQUEST_TIMEOUT(10초)까지 남아 있었다 (Gemini 리뷰로 재현). 끊으면 그 스레드는 "요청 없음"을 받고 바로 끝난다
+    def server_close(self):
+        super().server_close()
+        with self._clients_lock:
+            clients = list(self._clients)
+        for request in clients:
+            try:
+                request.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
 
 
 class ApiError(Exception):
@@ -60,7 +113,44 @@ def make_handler(store):
     # 요청 하나마다 Handler 객체가 새로 만들어진다 (ThreadingHTTPServer라서 요청마다 스레드도 하나씩)
     # → 저장소 store는 여러 스레드가 함께 쓰지만, store 안의 락이 명령을 하나씩만 실행되게 한다
     class Handler(BaseHTTPRequestHandler):
-        timeout = REQUEST_TIMEOUT  # 소켓 읽기 제한 시간 (BaseHTTPRequestHandler가 연결 소켓에 적용한다)
+        # 소켓 읽기 제한 시간 (BaseHTTPRequestHandler가 연결 소켓에 적용한다).
+        # 연결을 재사용하므로 "다음 요청을 기다리는 시간"에도 걸린다 → 쉬는 연결은 이 시간 뒤 서버가 닫아 스레드를 돌려받는다
+        timeout = REQUEST_TIMEOUT
+        # HTTP/1.1 = 연결 재사용(keep-alive). 기본값 HTTP/1.0이면 응답마다 연결을 끊어서, 요청마다
+        # TCP 연결 + 스레드 생성 + 정리를 다시 했다 (이 PC에서 요청당 약 3.5ms 중 2.4ms가 그 비용, 재사용하면 약 1.0ms).
+        # 실제 Redis도 클라이언트와 연결을 계속 유지한다. 클라이언트가 Connection: close를 보내면(urlopen) 예전처럼 끊는다
+        protocol_version = "HTTP/1.1"
+
+        def setup(self):
+            super().setup()
+            # 응답을 헤더와 본문 두 번에 나눠 쓴다. Nagle 알고리즘은 앞 조각의 ACK가 올 때까지 뒤 조각을 붙잡고,
+            # 클라이언트는 응답이 다 와야 ACK를 보내서(지연 ACK) 연결을 재사용하면 요청마다 수십 ms씩 멈출 수 있다 → 작은 조각도 바로 보낸다
+            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+        # 다음 요청을 기다리던 연결을 클라이언트가 강제로 끊으면(RST: 응답을 다 안 읽고 닫거나 프로세스가 죽음) 표준 라이브러리는
+        # ConnectionResetError를 그대로 올려 서버 콘솔에 traceback이 찍혔다 (연결 재사용을 넣으며 생긴 일, 자체 점검에서 재현).
+        # "더 이상 요청이 없다"와 같으므로 조용히 연결을 닫는다
+        def handle_one_request(self):
+            try:
+                super().handle_one_request()
+            except ConnectionError:
+                self.close_connection = True
+
+        # 표준 라이브러리는 Expect: 100-continue가 오면 경로 · 메서드 · 길이를 보기도 전에 100 Continue부터 보냈다.
+        # 그래서 405 · 413처럼 거절할 요청에도 클라이언트가 본문(최대 1MB 이상)을 다 보낸 뒤에야 거절을 받았다 (Gemini 리뷰로 재현)
+        # → 여기서는 보내지 않고, _read_json이 검사를 통과한 뒤에 보낸다
+        def handle_expect_100(self):
+            return True
+
+        # Connection 헤더의 쉼표로 나뉜 토큰("keep-alive, close")이나 여러 줄에서 close를 찾는다. 표준 라이브러리는 값 전체가
+        # 정확히 "close"일 때만 닫아서, 닫아 달라는 클라이언트의 연결을 유지했다 (GPT 리뷰로 재현)
+        def parse_request(self):
+            if not super().parse_request():
+                return False
+            tokens = {t.strip().lower() for value in (self.headers.get_all("Connection") or []) for t in value.split(",")}
+            if "close" in tokens:
+                self.close_connection = True
+            return True
 
         def do_GET(self):
             self._dispatch("GET")
@@ -82,13 +172,52 @@ def make_handler(store):
             self._dispatch("POST")
 
         def _dispatch(self, method):
+            self._body_read = False  # _read_json이 본문을 끝까지 읽으면 True
+            self._length = 0  # 검사를 통과한 Content-Length 값
             try:
+                self._check_framing()
                 status, body = self._route(method)
             except ApiError as e:
                 status, body = e.status, {"error": str(e)}
             except Exception:  # 예상 못한 오류도 서버가 죽지 않고 500으로 응답한다
                 status, body = 500, {"error": "서버 내부 오류"}
+            # 본문이 있는 요청인데 읽지 않고 답하면(404 · 405 · 잘못된 Content-Length · 411 등) 남은 본문이 같은 연결의
+            # "다음 요청"으로 읽혀 엉뚱한 응답이 나간다 → 이 응답을 끝으로 연결을 닫는다 (연결을 재사용하면서 생긴 규칙)
+            # (Content-Length 형식이 잘못됐으면 _check_framing이 이미 연결을 닫기로 정했다)
+            if not self._body_read and ("Transfer-Encoding" in self.headers or self._length > 0):
+                self.close_connection = True
             self._send(status, body)
+
+        # 본문 경계와 관련된 헤더를 경로 · 메서드와 상관없이 먼저 검사한다. 하나라도 이상하면 본문이 어디서 끝나는지 믿을 수 없으므로
+        # 거절하면서 연결도 닫는다 (안 닫으면 남은 바이트에 숨긴 요청이 다음 요청으로 실행된다)
+        def _check_framing(self):
+            # "Content-Length : 43"처럼 형식이 틀린 헤더 줄을 표준 라이브러리는 에러 없이 버리고 defects에만 기록한다.
+            # 그래서 본문이 없다고 보고 연결을 유지해 숨긴 요청이 실행됐다 (자체 점검으로 재현). RFC 9112도 이런 요청은 400으로 거절하라고 한다
+            if self.headers.defects:
+                self.close_connection = True
+                raise ApiError(400, "헤더 형식이 올바르지 않습니다")
+            lengths = self.headers.get_all("Content-Length") or []
+            # Content-Length 두 개: headers.get은 첫 번째만 본다. 첫 값이 0이면 거절 응답 뒤에도 연결을 유지해 숨긴 DELETE가 실행됐다
+            # (GPT 리뷰로 재현. 그 전에는 서로 다른 두 길이로 같은 문제) → 값과 상관없이 거부 + 닫기
+            if len(lengths) > 1:
+                self.close_connection = True
+                raise ApiError(400, "Content-Length 헤더가 여러 개입니다")
+            # HTTP 규칙상 0~9 숫자만. int()는 "+12" · "1_2" · 전각 숫자를 받아 주고, 빈 값을 0으로 보면 스머글링이 됐다 (리뷰로 재현).
+            # 본문을 읽지 않는 경로(GET 등)에도 같은 규칙을 적용한다 (GPT 리뷰)
+            if lengths:
+                raw = lengths[0].strip()
+                if not (raw.isascii() and raw.isdigit()) or len(raw) > 4000:  # 4000: 파이썬 int 자릿수 제한(4300)보다 작게
+                    self.close_connection = True
+                    raise ApiError(400, "Content-Length가 올바르지 않습니다")
+                self._length = int(raw)
+            # Transfer-Encoding은 값이 비어 있어도 "있다"로 본다. 빈 값을 없는 것으로 봐서 숨긴 요청이 실행됐다 (Gemini 리뷰로 재현)
+            if "Transfer-Encoding" in self.headers:
+                self.close_connection = True
+            # Expect는 100-continue만 안다. 모르는 값이면 417 (RFC 9110). 전에는 본문을 기다리다 408이 됐다 (GPT 리뷰로 재현)
+            expects = [v.strip().lower() for value in (self.headers.get_all("Expect") or []) for v in value.split(",")]
+            if any(v != "100-continue" for v in expects):
+                self.close_connection = True
+                raise ApiError(417, "지원하지 않는 Expect 헤더입니다 (100-continue만 지원)")
 
         def _route(self, method):
             # 경로를 "/"로 먼저 나눈 뒤 조각마다 디코딩한다 → 키 안의 %2F("/")가 경로 구분자로 오해되지 않는다
@@ -146,18 +275,22 @@ def make_handler(store):
 
         def _read_json(self):
             # chunked 전송은 Content-Length가 없어 본문을 0바이트로 읽고 "value가 필요합니다"라는 엉뚱한 400을 주던 것 → 원인대로 411
-            if self.headers.get("Transfer-Encoding"):
+            if "Transfer-Encoding" in self.headers:  # 값이 빈 헤더도 (위 _check_framing)
                 self.close_connection = True  # 읽지 않은 본문이 연결에 남으므로 닫는다
                 raise ApiError(411, "Content-Length로 본문 길이를 알려 주세요 (chunked 전송은 지원하지 않습니다)")
-            try:
-                length = int(self.headers.get("Content-Length") or 0)
-            except ValueError:
-                raise ApiError(400, "Content-Length가 올바르지 않습니다")
-            if length < 0:
-                raise ApiError(400, "Content-Length가 올바르지 않습니다")
+            length = self._length  # 형식은 _check_framing이 검사했다 (헤더가 없으면 0)
+            expects_continue = "Expect" in self.headers  # _check_framing을 지났으면 값은 100-continue뿐이다
             if length > MAX_BODY:
-                self._discard_body(length)
+                if expects_continue:
+                    self.close_connection = True  # 클라이언트는 100을 기다리며 본문을 아직 안 보냈다 → 버릴 본문 없이 바로 거절
+                else:
+                    self._discard_body(length)
                 raise ApiError(413, "요청 본문이 너무 큽니다 (최대 1MB)")
+            # 본문이 0바이트면 보낼 것이 없으니 100도 보내지 않는다 (Gemini 리뷰)
+            if expects_continue and length > 0 and self.request_version >= "HTTP/1.1":
+                # 검사를 모두 통과했을 때만 "본문을 보내도 된다"(100 Continue)고 알린다 (아래 handle_expect_100 참고)
+                self.send_response_only(100)
+                self.end_headers()
             try:
                 raw = self.rfile.read(length)
             except (TimeoutError, socket.timeout):  # 파이썬 3.9(맥 기본 python3)까지는 socket.timeout이 TimeoutError가 아니라서 둘 다 잡는다
@@ -167,6 +300,7 @@ def make_handler(store):
             if len(raw) != length:
                 self.close_connection = True
                 raise ApiError(400, "본문이 Content-Length보다 짧습니다")
+            self._body_read = True  # 여기부터는 에러가 나도 본문을 다 읽었으므로 연결을 계속 쓸 수 있다
             try:
                 # parse_constant: 파이썬 json은 NaN / Infinity를 기본으로 받아들이는데, 표준 JSON이 아니라서
                 # 저장 후 응답에 그대로 나가면 다른 언어의 클라이언트가 응답을 읽지 못한다 → 처음부터 거부
@@ -202,7 +336,9 @@ def make_handler(store):
             try:
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Content-Length", str(len(data)))  # 연결이 안 끊기므로 클라이언트는 이 길이로 응답 끝을 안다
+                if self.close_connection:
+                    self.send_header("Connection", "close")  # 알려야 클라이언트가 닫힐 연결에 다음 요청을 보내지 않는다
                 self.end_headers()
                 if self.command != "HEAD":  # HEAD 응답은 헤더만 보낸다 (HTTP 규약: 본문을 보내면 클라이언트가 다음 응답으로 착각한다)
                     self.wfile.write(data)
@@ -267,6 +403,7 @@ def _nesting_exceeds(value, limit):
 # 주기 삭제 스레드도 함께 시작하고, server_close() 때 같이 멈춘다
 def create_server(store, host="127.0.0.1", port=6380):
     server = SafeThreadingHTTPServer((host, port), make_handler(store))
+    server.max_clients = MAX_CLIENTS  # 만들 때 읽는다 (테스트가 모듈 값을 바꿔 작은 상한으로 확인한다)
     stop = threading.Event()
 
     def sweeper():

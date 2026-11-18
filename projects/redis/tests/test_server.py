@@ -2,10 +2,12 @@
 
 import contextlib
 import functools
+import http.client
 import io
 import json
 import os
 import socket
+import struct
 import tempfile
 import threading
 import time
@@ -283,6 +285,264 @@ class ServerTest(unittest.TestCase):
                     server_module.main()
             self.assertEqual(cm.exception.code, 2, port)
             self.assertIn("--port", err.getvalue())
+
+    # ── 연결 재사용 (HTTP/1.1 keep-alive) ──
+
+    def test_keep_alive_reuses_one_connection(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=5)
+        self.addCleanup(conn.close)
+        conn.request("PUT", "/keys/ka", body=b'{"value": 1}')
+        first = conn.getresponse()
+        first.read()
+        sock = conn.sock
+        for _ in range(3):
+            conn.request("GET", "/keys/ka")
+            res = conn.getresponse()
+            self.assertEqual((res.status, json.loads(res.read())["value"]), (200, 1))
+        self.assertIs(conn.sock, sock)  # 새로 연결하지 않고 같은 소켓으로 계속 주고받았다
+        self.assertFalse(first.will_close)
+
+    def test_keep_alive_does_not_stall(self):
+        # TCP_NODELAY가 없으면 Nagle + 지연 ACK 때문에 연결을 재사용하는 요청마다 수십~200ms씩 멈출 수 있다 (주로 Linux).
+        # Windows localhost에서는 옵션을 꺼도 멈춤이 재현되지 않아서, 이 테스트는 "멈추지 않는다"만 확인한다
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=5)
+        self.addCleanup(conn.close)
+        start = time.perf_counter()
+        for _ in range(30):
+            conn.request("GET", "/health")
+            conn.getresponse().read()
+        self.assertLess(time.perf_counter() - start, 1.5)
+
+    def test_unread_body_closes_connection(self):
+        # 본문을 읽지 않고 답한 요청(405 · 404 등)의 본문이 같은 연결의 "다음 요청"으로 읽히면 안 된다.
+        # 본문 자리에 요청처럼 생긴 바이트를 넣어도 응답은 하나여야 하고, 서버는 연결을 닫는다
+        smuggled = b"DELETE /keys/victim HTTP/1.1\r\nHost: x\r\n\r\n"
+        self.store.set("victim", 1)
+        self.addCleanup(self.store.delete, "victim")
+        cases = [
+            b"POST /keys/victim HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\n\r\n" % len(smuggled),  # 405
+            b"GET /nope HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\n\r\n" % len(smuggled),  # 404
+            b"GET /keys/victim HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\n\r\n" % len(smuggled),  # GET에 붙은 본문
+        ]
+        for head in cases:
+            out_head, out_body = self.raw_request(head + smuggled)
+            self.assertEqual((out_head + out_body).count(b"HTTP/1.1 "), 1, head)
+            self.assertIn(b"Connection: close", out_head, head)
+        self.assertTrue(self.store.exists("victim"))  # 숨겨 보낸 DELETE가 실행되지 않았다
+
+    def test_duplicate_content_length_is_rejected(self):
+        # Content-Length가 두 개면 첫 번째만 보고 본문을 읽어, 남은 바이트에 숨긴 DELETE가 다음 요청으로 실행됐다 (GPT · Gemini 리뷰로 재현)
+        body = b'{"value": "x"}'
+        smuggled = b"DELETE /keys/victim HTTP/1.1\r\nHost: x\r\n\r\n"
+        self.store.set("victim", 1)
+        self.addCleanup(self.store.delete, "victim")
+        for second in (len(body) + len(smuggled), len(body)):  # 다른 값 · 같은 값 모두 거부
+            head, out = self.raw_request(b"PUT /keys/dup HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\nContent-Length: %d\r\n\r\n"
+                                         % (len(body), second) + body + smuggled)
+            self.assertIn(b" 400 ", head)
+            self.assertIn(b"Connection: close", head)
+            self.assertEqual((head + out).count(b"HTTP/1.1 "), 1)
+        self.assertTrue(self.store.exists("victim"))
+        self.assertFalse(self.store.exists("dup"))
+
+    def test_idle_connection_is_closed_after_timeout(self):
+        # 쉬는 연결이 스레드를 영원히 붙잡지 않는다: REQUEST_TIMEOUT(테스트에서 0.5초) 뒤 서버가 닫는다
+        with socket.create_connection(("127.0.0.1", self.server.server_address[1])) as c:
+            c.sendall(b"GET /health HTTP/1.1\r\nHost: x\r\n\r\n")
+            c.settimeout(5)
+            data = b""
+            while not data.endswith(b"}"):  # 헤더와 본문이 따로 도착할 수 있다 (TCP_NODELAY) → 본문 끝까지 받는다
+                data += c.recv(4096)
+            self.assertIn(b" 200 ", data)
+            start = time.perf_counter()
+            self.assertEqual(c.recv(4096), b"")  # 서버가 연결을 닫았다
+            self.assertLess(time.perf_counter() - start, 3)
+
+    def test_client_connection_close_is_respected(self):
+        # urlopen처럼 Connection: close를 보내면 예전처럼 응답 하나로 끊는다
+        head, _ = self.raw_request(b"GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+        self.assertIn(b"Connection: close", head)
+
+    def test_content_length_must_be_plain_digits(self):
+        # int()가 받아 주던 "+12" · "1_2" 등이 200으로 저장되던 것 (Gemini 리뷰로 재현) → 숫자만, 아니면 400 + 연결 닫기
+        body = b'{"value": 7}'
+        for raw in [b"+12", b"1_2", "１２".encode(), b"-0", b"0x0c", b"12.0", b"9" * 5000, b"", b"   "]:  # 빈 값도 거부
+            head, _ = self.raw_request(b"PUT /keys/strict HTTP/1.1\r\nHost: x\r\nContent-Length: " + raw + b"\r\n\r\n" + body)
+            self.assertIn(b" 400 ", head, raw[:10])
+            self.assertIn(b"Connection: close", head, raw[:10])
+        self.assertFalse(self.store.exists("strict"))
+        head, _ = self.raw_request(b"PUT /keys/strict HTTP/1.1\r\nHost: x\r\nContent-Length:  12 \r\n\r\n" + body)
+        self.assertIn(b" 200 ", head)  # 앞뒤 공백은 HTTP 규칙상 허용
+        self.store.delete("strict")
+
+    def test_framing_headers_never_smuggle(self):
+        # 숨긴 DELETE가 실행되던 두 경로 (리뷰로 재현): 중복 Content-Length의 첫 값이 0 (GPT), 값이 빈 Transfer-Encoding (Gemini)
+        smuggled = b"DELETE /keys/victim3 HTTP/1.1\r\nHost: x\r\n\r\n"
+        self.store.set("victim3", 1)
+        self.addCleanup(self.store.delete, "victim3")
+        heads = [
+            b"PUT /keys/d HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nContent-Length: %d\r\n\r\n" % len(smuggled),
+            b"PUT /keys/d HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:\r\n\r\n",
+            b"GET /keys/d HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: \r\n\r\n",
+            # 이름과 콜론 사이 공백: 표준 라이브러리가 "Content-Length "라는 다른 헤더로 저장한다 (자체 점검으로 재현)
+            b"PUT /keys/d HTTP/1.1\r\nHost: x\r\nContent-Length : %d\r\n\r\n" % len(smuggled),
+            b"GET /keys/d HTTP/1.1\r\nHost: x\r\nContent-Length\t: %d\r\n\r\n" % len(smuggled),
+            b"PUT /keys/d HTTP/1.1\r\nHost: x\r\nTransfer-Encoding : chunked\r\n\r\n",
+        ]
+        for head in heads:
+            out_head, out_body = self.raw_request(head + smuggled)
+            self.assertEqual((out_head + out_body).count(b"HTTP/1.1 "), 1, head)
+            self.assertIn(b"Connection: close", out_head, head)
+        self.assertTrue(self.store.exists("victim3"))
+
+    def test_content_length_checked_on_every_route(self):
+        # 본문을 읽지 않는 경로(GET)도 같은 규칙: "+1"이면 400 (전에는 200, GPT 리뷰)
+        head, _ = self.raw_request(b"GET /health HTTP/1.1\r\nHost: x\r\nContent-Length: +1\r\n\r\n")
+        self.assertIn(b" 400 ", head)
+        self.assertIn(b"Connection: close", head)
+
+    def test_expect_header_rules(self):
+        port = self.server.server_address[1]
+        # 모르는 Expect 값 → 본문을 기다리지 않고 바로 417 (전에는 408까지 기다림, GPT 리뷰)
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as c:
+            c.sendall(b"PUT /keys/e HTTP/1.1\r\nHost: x\r\nExpect: 100-continue, foo\r\nContent-Length: 14\r\n\r\n")
+            start = time.perf_counter()
+            out = b""
+            while chunk := c.recv(4096):
+                out += chunk
+        self.assertIn(b" 417 ", out)
+        self.assertLess(time.perf_counter() - start, 0.4)  # 제한 시간(0.5초)을 기다리지 않았다
+        # 본문 0바이트면 100 없이 바로 최종 응답 (Gemini 리뷰)
+        head, body = self.raw_request(b"PUT /keys/e HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 0\r\n\r\n")
+        self.assertNotIn(b" 100 ", head + body)
+        self.assertIn(b" 400 ", head)
+
+    def test_connection_close_token_in_list(self):
+        # "Connection: keep-alive, close"나 헤더 두 줄에 든 close도 닫아 달라는 뜻이다 (표준 라이브러리는 값 전체가 close일 때만, GPT 리뷰)
+        port = self.server.server_address[1]
+        for headers in [b"Connection: keep-alive, close\r\n", b"Connection: keep-alive\r\nConnection: close\r\n"]:
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as c:
+                c.sendall(b"GET /health HTTP/1.1\r\nHost: x\r\n" + headers + b"\r\n")
+                start = time.perf_counter()
+                out = b""
+                while chunk := c.recv(4096):
+                    out += chunk
+            self.assertIn(b"Connection: close", out, headers)
+            self.assertLess(time.perf_counter() - start, 0.4, headers)  # 쉬는 연결 제한 시간이 아니라 바로 닫혔다
+
+    def test_empty_content_length_does_not_smuggle(self):
+        # "Content-Length:"(빈 값)을 "본문 없음"으로 보고 연결을 유지해, 뒤에 숨긴 DELETE가 실행되던 것 (Gemini 리뷰로 재현)
+        self.store.set("victim2", 1)
+        self.addCleanup(self.store.delete, "victim2")
+        for request_line in [b"PUT /keys/a", b"GET /keys/a", b"GET /nope"]:  # 본문을 읽는 경로 · 읽지 않는 경로 모두
+            head, body = self.raw_request(request_line + b" HTTP/1.1\r\nHost: x\r\nContent-Length:\r\n\r\n"
+                                          b"DELETE /keys/victim2 HTTP/1.1\r\nHost: x\r\n\r\n")
+            self.assertEqual((head + body).count(b"HTTP/1.1 "), 1, request_line)
+            self.assertIn(b"Connection: close", head, request_line)
+        self.assertTrue(self.store.exists("victim2"))
+
+    def test_expect_continue_only_after_checks(self):
+        # Expect: 100-continue: 거절할 요청에는 100을 보내지 않고 바로 거절, 받을 요청에만 100 → 본문 → 200 (Gemini 리뷰로 재현)
+        port = self.server.server_address[1]
+        for head in [b"POST /keys/a HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 10\r\n\r\n",  # 405
+                     b"PUT /keys/a HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 2000000\r\n\r\n"]:  # 413
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as c:
+                c.sendall(head)  # 본문은 보내지 않고 기다린다 (curl 등이 하는 방식)
+                out = b""
+                while chunk := c.recv(4096):
+                    out += chunk
+            self.assertNotIn(b" 100 ", out, head[:20])
+            self.assertEqual(out.count(b"HTTP/1.1 "), 1, head[:20])
+        body = b'{"value": 5}'
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as c:
+            c.sendall(b"PUT /keys/expect HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: %d\r\n\r\n" % len(body))
+            self.assertTrue(c.recv(4096).startswith(b"HTTP/1.1 100"))
+            c.sendall(body)
+            self.assertIn(b" 200 ", c.recv(4096))
+        self.assertEqual(self.store.get("expect"), 5)
+        self.store.delete("expect")
+
+    def test_server_close_ends_idle_connections(self):
+        # 서버를 닫으면 다음 요청을 기다리던 연결도 끊어 그 스레드가 바로 끝난다 (전에는 REQUEST_TIMEOUT까지 남음, Gemini 리뷰로 재현)
+        original = server_module.REQUEST_TIMEOUT
+        server_module.REQUEST_TIMEOUT = 5  # 제한 시간에 걸려 우연히 끊기지 않게 길게
+        try:
+            other = create_server(MiniRedis(), port=0)
+        finally:
+            server_module.REQUEST_TIMEOUT = original
+        threading.Thread(target=other.serve_forever, daemon=True).start()
+        with socket.create_connection(("127.0.0.1", other.server_address[1]), timeout=5) as c:
+            c.sendall(b"GET /health HTTP/1.1\r\nHost: x\r\n\r\n")
+            data = b""
+            while not data.endswith(b"}"):
+                data += c.recv(4096)
+            other.shutdown()
+            other.server_close()
+            start = time.perf_counter()
+            self.assertEqual(c.recv(4096), b"")  # 서버가 끊었다
+            self.assertLess(time.perf_counter() - start, 2)  # 제한 시간(5초)을 기다리지 않았다
+
+    def test_thread_start_base_exception_releases_slot(self):
+        # 스레드 시작이 BaseException(KeyboardInterrupt 등)으로 실패하면 자리와 소켓이 남던 것 (Gemini 리뷰로 재현)
+        class Boom(BaseException):
+            pass
+
+        a, b = socket.socketpair()
+        self.addCleanup(b.close)
+        with mock.patch.object(threading.Thread, "start", side_effect=Boom), self.assertRaises(Boom):
+            self.server.process_request(a, ("127.0.0.1", 1))
+        self.assertNotIn(a, self.server._clients)
+        self.assertEqual(a.fileno(), -1)  # 소켓도 닫혔다
+
+    def test_client_reset_on_idle_connection_is_quiet(self):
+        # 쉬는 keep-alive 연결을 클라이언트가 강제로 끊어도(RST) 서버 콘솔에 traceback이 찍히지 않는다
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            c = socket.create_connection(("127.0.0.1", self.server.server_address[1]))
+            c.sendall(b"GET /health HTTP/1.1\r\nHost: x\r\n\r\n")
+            time.sleep(0.1)  # 응답이 도착했지만 읽지 않는다
+            c.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))  # 닫을 때 RST
+            c.close()
+            time.sleep(0.3)  # 서버 스레드가 끊김을 알아챌 시간
+        self.assertNotIn("Traceback", err.getvalue())
+
+    def test_max_clients_rejects_extra_connections(self):
+        # 연결을 열어 두기만 하는 클라이언트가 많아도 스레드가 끝없이 늘지 않는다: 상한을 넘는 연결은 503으로 바로 거절
+        original = server_module.MAX_CLIENTS
+        server_module.MAX_CLIENTS = 3
+        try:
+            small = create_server(MiniRedis(), port=0)
+        finally:
+            server_module.MAX_CLIENTS = original
+        threading.Thread(target=small.serve_forever, daemon=True).start()
+        self.addCleanup(small.server_close)
+        self.addCleanup(small.shutdown)
+        port = small.server_address[1]
+        held = []
+        for _ in range(3):  # 자리를 모두 차지하고 쉬는 연결 3개
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request("GET", "/health")
+            self.assertEqual(conn.getresponse().status, 200)
+            held.append(conn)
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as c:
+            data = b""
+            while chunk := c.recv(4096):  # 서버가 503을 보내고 닫는다
+                data += chunk
+        self.assertIn(b" 503 ", data)
+        self.assertIn("error", json.loads(data.partition(b"\r\n\r\n")[2]))
+        held.pop().close()  # 하나가 나가면 자리가 생긴다
+        deadline = time.monotonic() + 3
+        while True:
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request("GET", "/health")
+            status = conn.getresponse().status
+            conn.close()
+            if status == 200 or time.monotonic() > deadline:
+                break
+            time.sleep(0.05)
+        self.assertEqual(status, 200)
+        for conn in held:
+            conn.close()
 
 
 if __name__ == "__main__":

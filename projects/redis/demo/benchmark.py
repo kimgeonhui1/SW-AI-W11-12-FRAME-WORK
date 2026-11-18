@@ -23,12 +23,13 @@ import sys
 import statistics
 import threading
 import time
+import http.client
+import urllib.request
 from urllib.error import HTTPError
-from urllib.request import urlopen
 from xml.sax.saxutils import escape
 
 from demo import api_server
-from mini_redis.server import create_server
+from mini_redis.server import SafeThreadingHTTPServer, create_server
 from mini_redis.store import MiniRedis
 
 SWEEP_DELAYS = [0, 0.005, 0.02, 0.05, 0.2]  # ② 원본 지연(초). 0은 "원본이 캐시만큼 빠른" 경우
@@ -38,6 +39,35 @@ PER_CLIENT = 5  # ④ 클라이언트 한 명이 보내는 요청 수
 
 
 # 요청 한 번 → (응답 시간 ms, 캐시 상태). 응답 본문까지 다 받은 시점까지 잰다
+# 측정용 HTTP 연결: TCP 연결은 제한 시간 없이 맺고, 연결된 뒤에만 읽기 제한 시간을 건다.
+# Windows에서 제한 시간을 건 소켓은 "논블로킹 connect + select 대기"로 연결하는데, localhost에서도 연결의 약 40%가
+# 타이머 단위(약 15.6ms)만큼 늦게 끝났다 (같은 조건에서 제한 시간 없으면 p50 0.3ms · p95 0.6ms, 있으면 p50 1.3ms · p95 15.8ms).
+# 캐시 응답이 몇 ms라서 이 지연이 "캐시 사용" 숫자를 흔들던 주원인이었다 (예전 README의 p95 20~40ms).
+# 측정 대상은 서버라서 측정 도구의 이 비용은 뺀다. 연결 대상은 이 프로그램이 띄운 localhost 서버다.
+# 연결 단계에 제한 시간이 없어도 멈추지 않게, 동시 클라이언트 수를 서버 연결 대기열(128) 이하로 받는다 (load 참고).
+class _MeasureConnection(http.client.HTTPConnection):
+    def connect(self):
+        read_timeout, self.timeout = self.timeout, None
+        try:
+            super().connect()
+        finally:
+            self.timeout = read_timeout
+        self.sock.settimeout(read_timeout)
+
+
+class _MeasureHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_MeasureConnection, req)
+
+
+_opener = urllib.request.build_opener(_MeasureHandler)
+
+
+# urllib.request.urlopen과 같은 사용법 (테스트가 이 이름을 바꿔 끼워 응답을 모두 닫는지 확인한다)
+def urlopen(url, timeout):
+    return _opener.open(url, timeout=timeout)
+
+
 def _get(url):
     start = time.perf_counter()
     try:
@@ -128,6 +158,9 @@ def _servers(delay):
     finally:
         # shutdown()은 serve_forever가 "끝났다"고 알릴 때까지 기다린다. 시작도 안 한 서버에 부르면 영원히 멈춘다
         # (두 번째 서버 생성이 실패했을 때 재현됨) → 시작한 서버만 멈추고, 소켓은 만든 서버 모두 닫는다
+        # 연결 풀을 먼저 닫는다: 서버보다 늦게 닫으면 그 사이 풀의 연결을 붙잡은 서버 스레드가 남는다 (Gemini 리뷰)
+        if api_server.redis is not old_client:
+            api_server.redis.close()  # 바꿔 끼운 클라이언트가 쥐고 있던 연결(연결 풀)을 닫는다
         for server in reversed(running):
             server.shutdown()
         for server in reversed(created):
@@ -251,6 +284,11 @@ def load(delay, clients_list=CLIENTS, per_client=PER_CLIENT):
     _check_delay(delay)
     _check_count(per_client, "per_client")
     clients_list = _check_list(clients_list, "clients_list", lambda c: _check_count(c, "clients"))
+    # 측정 연결은 제한 시간 없이 맺는다(_MeasureConnection). 동시 연결이 서버 대기열(listen backlog)을 넘으면 OS가 연결 요청을
+    # 버려 OS 재시도 시간(리눅스 약 2분)만큼 기다릴 수 있어서, 대기열 크기를 넘는 클라이언트 수는 받지 않는다
+    limit = SafeThreadingHTTPServer.request_queue_size
+    if max(clients_list) > limit:
+        raise ValueError(f"clients는 서버 연결 대기열 크기({limit}) 이하여야 합니다")
     results = []
     with _servers(delay) as (base, _):
         url = f"{base}/items/1"

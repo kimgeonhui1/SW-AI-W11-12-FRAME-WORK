@@ -2,9 +2,12 @@
 # Mini Redis 서버와 데모 API 서버를 둘 다 실제로 띄우고, 외부 클라이언트처럼 요청한다
 
 import contextlib
+import http.client
 import io
 import json
+import select
 import socket
+import ssl
 import threading
 import time
 import unittest
@@ -14,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.request import Request, urlopen
 
 from demo import api_server
+from mini_redis import server as server_module
 from mini_redis.server import create_server
 from mini_redis.store import MiniRedis
 
@@ -35,6 +39,7 @@ class DemoApiTest(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        api_server.redis.close()  # Redis 클라이언트의 연결 풀을 닫는다
         for s in (cls.demo_server, cls.redis_server):
             s.shutdown()
             s.server_close()
@@ -184,6 +189,15 @@ class DemoApiTest(unittest.TestCase):
         self.assertIn(b" 413 ", head)
         self.assertIn("error", json.loads(body))
 
+    def test_put_content_length_must_be_plain_digits(self):
+        # Mini Redis 서버와 같은 규칙: "+12" · "1_2" · 빈 값 · 두 개는 400 (전에는 "+12"가 200으로 가격을 바꿈, Gemini 리뷰)
+        body = b'{"price": 9}'
+        for header in [b"Content-Length: +12\r\n", b"Content-Length: 1_2\r\n", b"Content-Length:\r\n",
+                       b"Content-Length: 12\r\nContent-Length: 12\r\n"]:
+            raw = self.raw_response(b"PUT /items/9 HTTP/1.1\r\nHost: x\r\n" + header + b"\r\n" + body)
+            self.assertIn(b" 400 ", raw.split(b"\r\n")[0], header)
+        self.assertNotEqual(api_server._items[9]["price"], 9)
+
     def test_chunked_put_gets_411(self):
         # Content-Length 없이 chunked로 보내면 본문을 안 읽어 "price" 400이 나던 것 → 원인대로 411
         before = api_server._items[5]["price"]
@@ -219,6 +233,7 @@ class DemoApiTest(unittest.TestCase):
         original = api_server.redis
         api_server.redis = client
         self.addCleanup(setattr, api_server, "redis", original)
+        self.addCleanup(client.close)
 
     def test_cache_write_failure_still_answers(self):
         # 캐시 조회는 MISS로 성공했는데 저장만 실패 → 원본 값으로 BYPASS 응답 (리뷰 반영)
@@ -268,6 +283,170 @@ class DemoApiTest(unittest.TestCase):
             self.assertEqual((status, body["old_cache_deleted"]), (200, False))
         finally:
             api_server.redis, api_server.REDIS_TIMEOUT = original, original_timeout
+
+    # ── Redis 클라이언트 연결 재사용 (연결 풀) ──
+
+    def test_redis_client_reuses_connection(self):
+        client = api_server.RedisClient(f"http://127.0.0.1:{self.redis_server.server_address[1]}")
+        self.addCleanup(client.close)
+        client.set("pool", 1, 60)
+        conn = client._idle[0]
+        self.assertEqual(client.get("pool"), 1)
+        self.assertEqual(client.get("pool_none"), None)
+        self.assertEqual(client._idle, [conn])  # 요청 세 번에 연결 하나
+
+    def test_redis_client_retries_connection_closed_by_server(self):
+        # 쉬는 연결을 서버가 제한 시간 뒤 닫아도, 다음 요청은 새 연결로 다시 보내 성공해야 한다 (BYPASS가 되면 안 된다)
+        original = server_module.REQUEST_TIMEOUT
+        server_module.REQUEST_TIMEOUT = 0.2  # 핸들러를 만들 때 읽힌다
+        try:
+            short = create_server(MiniRedis(), port=0)
+        finally:
+            server_module.REQUEST_TIMEOUT = original
+        url = start(short)
+        self.addCleanup(short.server_close)
+        self.addCleanup(short.shutdown)
+        client = api_server.RedisClient(url)
+        self.addCleanup(client.close)
+        client.set("k", "v", 60)
+        stale = client._idle[0]
+        time.sleep(0.6)  # 서버가 쉬는 연결을 닫는다
+        self.assertEqual(client.get("k"), "v")
+        self.assertIsNot(client._idle[0], stale)
+        # 쓰기(PUT)도 성공해야 한다: 보내기 전에 끊긴 연결을 알아보고 버린다 (쓰기는 재시도하지 않으므로)
+        time.sleep(0.6)
+        client.set("k", "w", 60)
+        self.assertEqual(client.get("k"), "w")
+
+    def test_write_is_not_resent_after_lost_response(self):
+        # 서버가 PUT을 실행한 뒤 응답 없이 끊으면, 다시 보내지 않는다. 다시 보내면 그사이 다른 요청이 쓴 값을 옛 값으로 덮을 수 있다
+        # (GPT 리뷰: 재시도로 PUT이 두 번 실행되는 것 재현)
+        executed = []
+
+        class Flaky(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_PUT(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                executed.append(1)
+                if len(executed) == 2:  # 두 번째 PUT: 실행만 하고 응답 없이 끊는다
+                    self.close_connection = True
+                    return
+                self.send_response(200)
+                self.send_header("Content-Length", "11")
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
+
+            def log_message(self, *args):
+                pass
+
+        flaky = HTTPServer(("127.0.0.1", 0), Flaky)
+        url = start(flaky)
+        self.addCleanup(flaky.server_close)
+        self.addCleanup(flaky.shutdown)
+        client = api_server.RedisClient(url)
+        self.addCleanup(client.close)
+        client.set("a", 1, 60)
+        with self.assertRaises(api_server.RedisUnavailable):
+            client.set("a", 2, 60)
+        self.assertEqual(len(executed), 2)  # 재시도로 세 번째 실행이 일어나지 않았다
+
+    def test_closed_pooled_connection_is_replaced(self):
+        # 풀 안의 연결이 이미 닫혀 sock이 None이면 select가 TypeError를 내던 것 → 버리고 새 연결로 (자체 점검)
+        client = api_server.RedisClient(f"http://127.0.0.1:{self.redis_server.server_address[1]}")
+        self.addCleanup(client.close)
+        dead = client._take(fresh=True)[0]
+        dead.close()
+        client._idle.append(dead)
+        self.assertIsNone(client.get("closed_pool"))
+        self.assertNotIn(dead, client._idle)
+
+    def test_https_url_uses_tls_connection(self):
+        # urlopen을 쓰던 때처럼 https 주소면 TLS로 연결한다 (풀로 바꾸며 평문으로 보내던 것, 자체 점검)
+        secure = api_server.RedisClient("https://cache.example")
+        plain = api_server.RedisClient("http://cache.example")
+        self.assertIs(secure._conn_class, http.client.HTTPSConnection)
+        self.assertEqual((secure._take(True)[0].port, plain._take(True)[0].port), (443, 80))
+
+    def test_connection_in_use_during_close_is_not_pooled(self):
+        # 요청 도중 close()가 불리면 그 연결은 끝난 뒤 닫은 풀로 돌아가지 않고 닫힌다 (풀 세대 번호, 자체 점검)
+        client = api_server.RedisClient(f"http://127.0.0.1:{self.redis_server.server_address[1]}")
+        self.addCleanup(client.close)
+        conn = client._take(fresh=True)[0]
+        real = conn.getresponse
+
+        def close_meanwhile():
+            client.close()  # 다른 스레드가 서버를 바꿔 끼우며 풀을 닫은 상황
+            return real()
+
+        conn.getresponse = close_meanwhile
+        with mock.patch.object(client, "_take", return_value=(conn, False)):
+            self.assertIsNone(client.get("race"))
+        self.assertEqual(client._idle, [])
+        self.assertIsNone(conn.sock)
+        self.assertIsNone(client.get("race"))  # 닫은 뒤에도 클라이언트는 새 연결로 계속 쓸 수 있다
+        self.assertEqual(len(client._idle), 1)
+
+    def test_reused_get_retries_after_broken_response(self):
+        # 재사용한 연결에서 이상한 상태 줄(BadStatusLine)이 오면 GET은 새 연결로 한 번 더 보낸다 (전에는 바로 BYPASS, Gemini 리뷰로 재현)
+        count = []
+
+        class Garbage(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_GET(self):
+                count.append(1)
+                if len(count) == 2:  # 두 번째 요청(재사용 연결)에만 깨진 응답
+                    self.wfile.write(b"GARBAGE\r\n\r\n")
+                    self.close_connection = True
+                    return
+                body = b'{"value": 1}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Garbage)
+        url = start(server)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        client = api_server.RedisClient(url)
+        self.addCleanup(client.close)
+        self.assertEqual(client.get("k"), 1)
+        self.assertEqual(client.get("k"), 1)  # 깨진 응답 → 새 연결로 재시도해 성공
+        self.assertEqual(len(count), 3)
+
+    def test_tls_connection_is_not_judged_by_readability(self):
+        # TLS는 세션 티켓처럼 응답이 아닌 레코드가 와도 "읽을 것이 있음"이 된다 → 끊긴 연결로 오판하지 않는다 (Gemini 리뷰)
+        conn = mock.Mock()
+        conn.sock = mock.Mock(spec=ssl.SSLSocket)
+        with mock.patch.object(api_server.select, "select", side_effect=AssertionError("TLS는 select로 보지 않는다")):
+            self.assertFalse(api_server._dropped(conn))
+
+    @unittest.skipUnless(hasattr(select, "poll"), "poll이 없는 Windows는 select에 소켓 번호 제한이 없다")
+    def test_stale_check_has_no_fd_limit(self):
+        # 리눅스·맥에서 소켓 번호가 1024 이상이면 select가 ValueError를 내 모든 연결을 끊긴 것으로 보던 것 → poll 사용
+        client = api_server.RedisClient(f"http://127.0.0.1:{self.redis_server.server_address[1]}")
+        self.addCleanup(client.close)
+        client.get("fd")
+        conn = client._idle[0]
+        with mock.patch.object(api_server.select, "select", side_effect=ValueError("filedescriptor out of range in select()")):
+            self.assertFalse(api_server._dropped(conn))
+
+    def test_pool_keeps_at_most_max_idle(self):
+        # 요청이 몰렸다 빠진 뒤 쓰지 않는 연결을 끝없이 쥐고 있지 않는다 (GPT · Gemini 리뷰)
+        client = api_server.RedisClient(f"http://127.0.0.1:{self.redis_server.server_address[1]}")
+        self.addCleanup(client.close)
+        client._idle = [client._take(fresh=True)[0] for _ in range(api_server.MAX_IDLE)]  # 풀이 이미 꽉 찬 상태
+        extra = client._take(fresh=True)[0]  # 동시에 몰린 요청이 새로 만든 연결
+        with mock.patch.object(client, "_take", return_value=(extra, False)):
+            self.assertIsNone(client.get("pool_cap"))
+        self.assertEqual(len(client._idle), api_server.MAX_IDLE)
+        self.assertNotIn(extra, client._idle)
+        self.assertIsNone(extra.sock)  # 풀에 못 들어간 연결은 닫혔다
 
 
 if __name__ == "__main__":
