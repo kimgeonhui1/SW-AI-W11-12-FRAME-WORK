@@ -55,16 +55,18 @@ def _run(args):
         return _error(f"문법 오류: {e}")
 
     try:
-        executor = Executor(Database(args.db))
+        db = Database(args.db)
     except SchemaError as e:
         return _error(f"스키마 오류: {e}")
 
-    for number, stmt in enumerate(statements, 1):
-        try:
-            result = executor.execute(stmt)
-        except (ExecutionError, StorageError, OSError) as e:
-            return _error(f"실행 오류 ({number}번째 문장, 줄 {stmt.line}): {e}")
-        print(format_result(result))
+    with db:  # 끝나면(에러 · Ctrl+C 포함) 열어 둔 테이블 파일을 닫는다
+        executor = Executor(db)
+        for number, stmt in enumerate(statements, 1):
+            try:
+                result = executor.execute(stmt)
+            except (ExecutionError, StorageError, OSError) as e:
+                return _error(f"실행 오류 ({number}번째 문장, 줄 {stmt.line}): {e}")
+            print(format_result(result))
     return 0
 
 

@@ -70,60 +70,114 @@ class SchemaTest(unittest.TestCase):
 class StorageTest(unittest.TestCase):
     def setUp(self):
         self.db = Database(make_db(self, {"users": {"name": "TEXT", "age": "INT"}}))
+        self.addCleanup(self.db.close)  # 열어 둔 테이블 파일을 닫아야 임시 폴더를 지울 수 있다 (Windows)
         self.file = self.db.path("users")
 
     def write_raw(self, data):
         with open(self.file, "wb") as f:
             f.write(data)
 
+    def reopen(self):
+        """프로그램을 다시 켠 것과 같다: 새 Database가 파일을 읽어 인덱스를 다시 만든다"""
+        self.db.close()
+        db = Database(self.db.directory)
+        self.addCleanup(db.close)
+        return db
+
     def test_empty_table_without_file(self):
-        self.assertEqual(list(self.db.scan("users")), [])
+        self.assertEqual((list(self.db.scan("users")), self.db.get("users", 1)), ([], None))
 
     def test_round_trip_tricky_values(self):
-        rows = [["홍길동", 25], ['lee, "jr"', -3], ["줄\n바꿈\t탭", 0], ["", 2**63 - 1], ["\\ 역슬래시", 1]]
-        for row in rows:
-            self.db.append("users", row)
-        self.assertEqual(list(self.db.scan("users")), rows)
-        with open(self.file, encoding="utf-8") as f:
-            lines = f.read().splitlines()
-        self.assertEqual(len(lines), len(rows))  # 한 줄 = 한 행 (값 안의 줄바꿈도 \n 두 글자로 적힌다)
-        self.assertEqual(lines[0], '["홍길동", 25]')  # 한글이 그대로 보인다
+        values = [["홍길동", 25], ['lee, "jr"', -3], ["줄\n바꿈\t탭", 0], ["", 2**63 - 1], ["\\ 역슬래시", 1], ["a" + chr(0x2028) + "b", 2]]
+        ids = [self.db.append("users", v) for v in values]
+        self.assertEqual(ids, [1, 2, 3, 4, 5, 6])  # id는 1부터 자동
+        expected = [[i] + v for i, v in zip(ids, values)]
+        self.assertEqual(list(self.db.scan("users")), expected)
+        self.assertEqual([self.db.get("users", i) for i in ids], expected)  # 인덱스로 찾아도 같다 (한글 등 여러 바이트 글자 뒤의 offset 포함)
+        with open(self.file, "rb") as f:
+            lines = f.read().split(b"\n")[:-1]
+        self.assertEqual(len(lines), len(values))  # 한 줄 = 한 행 (값 안의 줄바꿈도 \n 두 글자로 적힌다)
+        self.assertEqual(lines[0].decode("utf-8"), '[1, "홍길동", 25]')  # 한글이 그대로 보인다
 
-    def test_data_survives_reopen(self):
+    def test_data_and_ids_survive_reopen(self):
         self.db.append("users", ["a", 1])
-        reopened = Database(self.db.directory)  # 프로그램을 다시 켠 것과 같다
-        self.assertEqual(list(reopened.scan("users")), [["a", 1]])
+        self.db.append("users", ["b", 2])
+        db = self.reopen()
+        self.assertEqual(list(db.scan("users")), [[1, "a", 1], [2, "b", 2]])
+        self.assertEqual(db.get("users", 2), [2, "b", 2])
+        self.assertEqual(db.append("users", ["c", 3]), 3)  # 다음 id = 가장 큰 id + 1
+        self.assertEqual(db.get("users", 3), [3, "c", 3])
+
+    def test_next_id_follows_largest_id(self):
+        # 손으로 고친 파일처럼 id 순서가 섞이거나 비어 있어도, 다음 id는 가장 큰 id + 1이다
+        self.write_raw(b'[5, "e", 5]\n[2, "b", 2]\n')
+        db = self.reopen()
+        self.assertEqual(db.get("users", 2), [2, "b", 2])
+        self.assertEqual(db.append("users", ["f", 6]), 6)
 
     def test_append_after_missing_trailing_newline(self):
-        # 마지막 줄에 줄바꿈이 없던 파일(손으로 고침)에 붙여 써도 두 행이 한 줄로 붙지 않는다
-        self.write_raw('["a", 1]'.encode("utf-8"))
-        self.db.append("users", ["b", 2])
-        self.assertEqual(list(self.db.scan("users")), [["a", 1], ["b", 2]])
+        # 마지막 줄에 줄바꿈이 없던 파일(손으로 고침)에 붙여 써도 두 행이 한 줄로 붙지 않고, 새 행의 offset도 정확하다
+        for tail in [b'[1, "a", 1]', b'[1, "a", 1]\n   ']:  # 줄바꿈 없음 / 공백만 있는 마지막 줄
+            self.write_raw(tail)
+            db = self.reopen()
+            self.assertEqual(db.append("users", ["b", 2]), 2)
+            self.assertEqual(list(db.scan("users")), [[1, "a", 1], [2, "b", 2]])
+            self.assertEqual(db.get("users", 2), [2, "b", 2])  # 줄을 끊으려고 넣은 1바이트만큼 뒤의 위치
+            self.assertEqual(self.reopen().get("users", 2), [2, "b", 2])  # 다시 켜서 만든 인덱스도 같은 위치
 
     def test_blank_lines_are_skipped(self):
-        self.write_raw(b'["a", 1]\n\n  \r\n["b", 2]\n')
-        self.assertEqual(list(self.db.scan("users")), [["a", 1], ["b", 2]])
+        self.write_raw(b'[1, "a", 1]\n\n  \r\n[2, "b", 2]\n')
+        db = self.reopen()
+        self.assertEqual(list(db.scan("users")), [[1, "a", 1], [2, "b", 2]])
+        self.assertEqual(db.get("users", 2), [2, "b", 2])  # 빈 줄의 바이트도 offset에 들어간다
 
     def test_corrupt_rows_raise_with_line_number(self):
         bad_lines = [
-            b'["a", 1',  # 쓰다가 꺼져 잘린 줄
+            b'[2, "a", 1',  # 쓰다가 꺼져 잘린 줄
             b"not json",
             b'{"name": "a"}',  # 배열이 아님
-            b'["a"]',  # 컬럼 수가 다름
-            b'["a", 1, 2]',
-            b'["a", "1"]',  # INT 칸에 문자열
-            b'["a", true]',  # true는 파이썬에서 1과 같지만 정수가 아니다
-            b'["a", 1.5]',
-            b'[1, 1]',  # TEXT 칸에 정수
-            b'["\xff", 1]',  # UTF-8이 아님
-            b'["a", 9223372036854775808]',  # INT 64비트 범위 밖 (SQL로는 넣을 수 없는 값, Gemini 리뷰)
-            b'["a", -9223372036854775809]',
+            b'[2, "a"]',  # 컬럼 수가 다름
+            b'[2, "a", 1, 2]',
+            b'["a", 1]',  # id 없음 (Phase 1 형식)
+            b'[2, "a", "1"]',  # INT 칸에 문자열
+            b'[2, "a", true]',  # true는 파이썬에서 1과 같지만 정수가 아니다
+            b'[2, "a", 1.5]',
+            b'[2, 1, 1]',  # TEXT 칸에 정수
+            b'[2, "\xff", 1]',  # UTF-8이 아님
+            b'[2, "a", 9223372036854775808]',  # INT 64비트 범위 밖 (SQL로는 넣을 수 없는 값, Gemini 리뷰)
+            b'[2, "a", -9223372036854775809]',
+            b'[0, "a", 1]',  # id는 1 이상
+            b'[-3, "a", 1]',
+            b'["2", "a", 1]',  # id는 정수
+            b'[true, "a", 1]',
         ]
         for bad in bad_lines:
-            self.write_raw(b'["ok", 1]\n' + bad + b"\n")
+            self.write_raw(b'[1, "ok", 1]\n' + bad + b"\n")
+            db = self.reopen()
             with self.assertRaises(StorageError, msg=bad) as ctx:
-                list(self.db.scan("users"))
+                list(db.scan("users"))
             self.assertIn("2번째 줄", str(ctx.exception), bad)
+            with self.assertRaises(StorageError, msg=bad):  # 인덱스를 만들 때(첫 INSERT · id 검색)도 같은 손상을 알린다
+                db.get("users", 1)
+
+    def test_duplicate_id_in_file(self):
+        self.write_raw(b'[1, "a", 1]\n[1, "b", 2]\n')
+        with self.assertRaises(StorageError) as ctx:
+            self.reopen().append("users", ["c", 3])
+        self.assertIn("이미 있습니다", str(ctx.exception))
+
+    def test_index_detects_file_changed_by_others(self):
+        self.db.append("users", ["a", 1])
+        self.db.append("users", ["b", 2])
+        with open(self.file, "r+b") as f:  # 다른 프로그램이 첫 줄을 다른 id로 바꿔 씀 (길이는 같게)
+            f.write(b'[9, "a", 1]')
+        with self.assertRaises(StorageError):
+            self.db.get("users", 1)
+
+    def test_schema_cannot_define_id(self):
+        for raw in ['{"t": {"id": "INT"}}', '{"t": {"ID": "TEXT"}}']:
+            with self.assertRaises(SchemaError, msg=raw):
+                Database(make_db(self, raw=raw))
 
 
 if __name__ == "__main__":

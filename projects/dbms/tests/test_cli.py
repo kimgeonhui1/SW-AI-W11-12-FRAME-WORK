@@ -51,17 +51,26 @@ class CliTest(unittest.TestCase):
         code, out, err = self.run_cli(path, "--db", self.db)
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(out.splitlines(), [
-            "1개 행을 추가했습니다",
-            "+------+-----+",
-            "| name | age |",
-            "+------+-----+",
-            "| kim  | 25  |",
-            "+------+-----+",
-            "1개 행",
+            "1개 행을 추가했습니다 (id=1)",
+            "+----+------+-----+",
+            "| id | name | age |",
+            "+----+------+-----+",
+            "| 1  | kim  | 25  |",
+            "+----+------+-----+",
+            "1개 행 (전체 탐색)",
         ])
         code, out, _ = self.run_cli(path, "--db", self.db)  # 다시 실행 = 프로그램을 껐다 켬
         self.assertEqual(code, 0)
+        self.assertIn("(id=2)", out)  # 파일을 읽어 다음 id를 이어서 부여
         self.assertIn("2개 행", out)  # 파일에 남아 있던 첫 행 + 새 행
+
+    def test_where_id_uses_index(self):
+        path = self.sql_file("INSERT INTO users VALUES ('a', 1);\nINSERT INTO users VALUES ('b', 2);\n"
+                             "SELECT name FROM users WHERE id = 2;\nSELECT name FROM users WHERE age = 2;")
+        code, out, _ = self.run_cli(path, "--db", self.db)
+        self.assertEqual(code, 0)
+        self.assertIn("1개 행 (인덱스 사용)", out)
+        self.assertIn("1개 행 (전체 탐색)", out)
 
     def test_syntax_error_runs_nothing(self):
         # 3번째 문장에 문법 오류 → 앞의 INSERT 2개도 실행하지 않는다 (먼저 전부 파싱)

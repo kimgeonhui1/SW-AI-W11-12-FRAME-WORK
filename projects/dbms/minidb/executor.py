@@ -2,14 +2,20 @@
 #
 # ■ 하는 일
 #   1) 스키마와 맞춰 보며 검사: 없는 테이블·컬럼, 값 개수, 타입(INT 칸에 문자열 등)
-#   2) INSERT: 값을 스키마의 컬럼 순서로 맞춰 저장소에 한 줄 추가
-#      SELECT: 저장소의 모든 행을 처음부터 읽으며(선형 탐색) WHERE에 맞는 행만 골라, 요청한 컬럼만 돌려준다
+#   2) INSERT: 값을 스키마의 컬럼 순서로 맞춰 저장소에 한 줄 추가 (id는 저장소가 자동으로 부여)
+#      SELECT: WHERE에 맞는 행만 골라 요청한 컬럼만 돌려준다
+#
+# ■ 실행 계획 (가장 단순한 옵티마이저, Phase 2)
+#   WHERE id = 값  → B+ 트리 인덱스로 offset을 찾아 한 줄만 읽는다 (O(log n))
+#   그 밖의 경우   → 파일을 처음부터 끝까지 읽는다 (전체 탐색, O(n))
+#   어느 쪽을 썼는지 Result.plan에 남긴다 ("index" / "scan"). 성능 비교용으로 인덱스를 끈 Executor도 만들 수 있다
 #
 # ■ 검사를 저장 "전에" 모두 끝낸다 → 잘못된 INSERT가 파일에 반쯤 들어가는 일이 없다
 
 from typing import NamedTuple
 
 from .parser import Insert
+from .storage import ID
 
 
 class ExecutionError(ValueError):
@@ -20,26 +26,29 @@ class Result(NamedTuple):
     columns: list  # SELECT 결과의 컬럼 이름 (INSERT는 빈 목록)
     rows: list  # SELECT 결과 행들
     message: str
+    plan: str = ""  # SELECT를 어떻게 찾았나: "index" 또는 "scan" (INSERT는 "")
 
 
 class Executor:
-    def __init__(self, db):
+    def __init__(self, db, use_index=True):
         self.db = db
+        self.use_index = use_index  # False면 WHERE id도 전체 탐색 (인덱스 사용 · 미사용 속도 비교용)
 
     def execute(self, stmt):
         if isinstance(stmt, Insert):
             return self._insert(stmt)
         return self._select(stmt)
 
-    def _schema(self, table):
-        schema = self.db.tables.get(table)
-        if schema is None:
+    def _check_table(self, table):
+        if table not in self.db.tables:
             raise ExecutionError(f"테이블이 없습니다: {table}")
-        return schema
 
     def _insert(self, stmt):
-        schema = self._schema(stmt.table)
+        self._check_table(stmt.table)
+        schema = self.db.tables[stmt.table]  # id를 뺀, 사용자가 값을 넣는 열들
         names = [name for name, _ in schema]
+        if stmt.columns is not None and ID in stmt.columns:
+            raise ExecutionError("id는 자동으로 부여되므로 값을 넣을 수 없습니다")
         columns = names if stmt.columns is None else stmt.columns
         if len(columns) != len(stmt.values):
             raise ExecutionError(f"컬럼은 {len(columns)}개인데 값은 {len(stmt.values)}개입니다")
@@ -55,11 +64,12 @@ class Executor:
         given = dict(zip(columns, stmt.values))
         for name, kind in schema:
             _check_type(stmt.table, name, kind, given[name])
-        self.db.append(stmt.table, [given[name] for name in names])  # 파일에는 항상 스키마 순서로
-        return Result([], [], "1개 행을 추가했습니다")
+        row_id = self.db.append(stmt.table, [given[name] for name in names])  # 파일에는 항상 스키마 순서로
+        return Result([], [], f"1개 행을 추가했습니다 (id={row_id})")
 
     def _select(self, stmt):
-        schema = self._schema(stmt.table)
+        self._check_table(stmt.table)
+        schema = self.db.columns(stmt.table)  # id + 스키마의 열
         position = {name: i for i, (name, _) in enumerate(schema)}
         columns = list(position) if stmt.columns is None else stmt.columns
         for column in columns:
@@ -76,11 +86,16 @@ class Executor:
             _check_type(stmt.table, column, schema[position[column]][1], value)
             where = (position[column], value)
 
-        rows = []
-        for row in self.db.scan(stmt.table):  # 선형 탐색: 모든 행을 하나씩 비교 (Phase 2에서 id는 B+ 트리로 바꾼다)
-            if where is None or row[where[0]] == where[1]:
-                rows.append([row[i] for i in picks])
-        return Result(columns, rows, f"{len(rows)}개 행")
+        if where is not None and where[0] == 0 and self.use_index:  # WHERE id = 값 → 인덱스
+            row = self.db.get(stmt.table, where[1])
+            found = [] if row is None else [row]
+            plan = "index"
+        else:  # 전체 탐색: 모든 행을 하나씩 비교
+            found = (row for row in self.db.scan(stmt.table) if where is None or row[where[0]] == where[1])
+            plan = "scan"
+        rows = [[row[i] for i in picks] for row in found]
+        label = "인덱스 사용" if plan == "index" else "전체 탐색"
+        return Result(columns, rows, f"{len(rows)}개 행 ({label})", plan)
 
 
 def _check_type(table, column, kind, value):
