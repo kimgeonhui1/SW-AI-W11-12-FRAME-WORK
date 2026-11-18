@@ -1,0 +1,286 @@
+{
+ "results": [
+  {
+   "name": "four independent guests",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "seats 0..3 in join order",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "hand 1: only blinds are tagged (SB 10 / BB 20)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha: action buttons only on own turn",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo: action buttons only on own turn",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: action buttons only on own turn",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Delta: action buttons only on own turn",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "hand 1: action log is shown and ends with the hand",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "hand 1: result shows start → net → current and pot received vs net",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "hand 2 starts from hand 1's end chips",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "hand 2: previous hand's tags cleared on every screen",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "reload keeps seat and chips",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "bet panel shows call / min raise total / max total",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "below-minimum input is refused on screen",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "above-maximum input is refused on screen",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "raise is shown as the street total on another screen",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "controls locked while the request is in flight",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "API restart keeps every player's chips",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "stale action 4xx: notice shown, controls unlocked",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "stale action changed nothing",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "after the 4xx the same player acted normally",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "cash-out shows the amount",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "no re-seat after cash-out",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol busted: stays seated, explains the wait, only the explicit exits leave",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: busted screen names the hand to watch",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol watches hand 5 (not dealt in)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: badge shows watching",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: one 1,000-chip rebuy after the watched hand",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol is dealt back in automatically",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol busted: stays seated, explains the wait, only the explicit exits leave",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: busted screen names the hand to watch",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol watches hand 8 (not dealt in)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: badge shows watching",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: one 1,000-chip rebuy after the watched hand",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol is dealt back in automatically",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha busted: stays seated, explains the wait, only the explicit exits leave",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol busted: stays seated, explains the wait, only the explicit exits leave",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha: '다음 라운드 시작' offered to every seated player",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo: '다음 라운드 시작' offered to every seated player",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: '다음 라운드 시작' offered to every seated player",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "showdown hands stay face-up while waiting in round_over",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "two players pressed '다음 라운드 시작' together",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "round restart pays each busted player exactly once",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "chip holders keep their chips; busted players get 1,000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "ledger: hands 1..N stored once",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "table chips == buy-ins + rebuys - cash-outs",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha: profile equals the ledger (rebuys apart from wins)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo: profile equals the ledger (rebuys apart from wins)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: profile equals the ledger (rebuys apart from wins)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Delta: profile equals the ledger (rebuys apart from wins)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha: no script errors in console",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo: no script errors in console",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Carol: no script errors in console",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Delta: no script errors in console",
+   "ok": true,
+   "detail": ""
+  }
+ ],
+ "observed": {
+  "watch_path": 2,
+  "round_restart": 1,
+  "side_pots": 3
+ },
+ "ports": {
+  "dbms": 32851,
+  "redis": 46487,
+  "api": 33651,
+  "static": 52285
+ },
+ "data": "/tmp/jpl-e2e4-db-ydpp1gk6"
+}

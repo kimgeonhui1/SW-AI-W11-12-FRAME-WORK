@@ -1,0 +1,617 @@
+{
+ "results": [
+  {
+   "name": "lobby: joiner appears on host screen without reload",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 1 start)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 1 start)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "both screens agree (hand 1 start)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "chips conserved on screen (hand 1 start)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "hand 1: residue-free start (no flights, no winner glow, no last action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha: rank and suit inside every face-up card and on screen (hand 1 own cards 3D desktop, 2 cards)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo: rank and suit inside every face-up card and on screen (hand 1 own cards 3D 375, 2 cards)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha: HUD fully visible inside the table (hand 1 desktop 3D, width 1280)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo: HUD fully visible inside the table (hand 1 375 3D, width 375)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "during replay the waiting screen offers no action buttons",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (after call + toggles)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (after call + toggles)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "both screens agree (after call + toggles)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "chips conserved on screen (after call + toggles)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "B view switched to 2D with bloom",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo: rank and suit inside every face-up card and on screen (375 2D bloom, 2 cards)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo: HUD fully visible inside the table (375 2D, width 375)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 1 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 1 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 1 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 1 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 1 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 1 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 1 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 1 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 1 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "both screens agree (hand 1 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "chips conserved on screen (hand 1 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha: rank and suit inside every face-up card and on screen (showdown 3D desktop (both hands + board), 9 cards)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo: rank and suit inside every face-up card and on screen (showdown 375 2D (both hands + board), 9 cards)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo: rank and suit inside every face-up card and on screen (showdown 375 3D, 9 cards)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo: HUD fully visible inside the table (hand end 375 3D, width 375)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 2 start)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 2 start)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "both screens agree (hand 2 start)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "chips conserved on screen (hand 2 start)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "hand 2: previous hand fully cleared (board, flights, winner, last action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 2 raise 120)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 2 raise 120)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "both screens agree (hand 2 raise 120)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "chips conserved on screen (hand 2 raise 120)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "opponent is offered call 100 after raise to 120",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "A at 375: no horizontal overflow",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha: HUD fully visible inside the table (A resized to 375 mid-hand, width 375)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha: rank and suit inside every face-up card and on screen (A resized to 375 mid-hand, 2 cards)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (after refresh)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "refresh keeps own seat and cards, opponent hidden",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (after tab return)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (after tab return)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "both screens agree (after tab return)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "chips conserved on screen (after tab return)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "opponent screen shows the offline player as disconnected",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "offline: action not applied on the server",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "retry applied exactly once",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "controls usable again after retry (no permanent lock)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 2 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 2 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 2 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 2 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 2 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 2 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 2 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 2 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "both screens agree (hand 2 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "chips conserved on screen (hand 2 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 3 start)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 3 start)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "both screens agree (hand 3 start)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "chips conserved on screen (hand 3 start)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 3 before double click)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "double click sends one action request",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (before fold)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 3 fold)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 3 fold)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "both screens agree (hand 3 fold)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "chips conserved on screen (hand 3 fold)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "fold: winner never sees folded cards",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "hand 4: previous hand cleared",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 4 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 4 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 4 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 4 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 4 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 4 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 4 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 4 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 4 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 4 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "both screens agree (hand 4 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "chips conserved on screen (hand 4 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "hand 5: previous hand cleared",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 5 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 5 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 5 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 5 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 5 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 5 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 5 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 5 before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 5 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 5 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "both screens agree (hand 5 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "chips conserved on screen (hand 5 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 6 start)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 6 start)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "both screens agree (hand 6 start)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "chips conserved on screen (hand 6 start)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 6 all-in before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 6 all-in before action)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha screen == server (hand 6 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo screen == server (hand 6 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "both screens agree (hand 6 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "chips conserved on screen (hand 6 end)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha: rank and suit inside every face-up card and on screen (final showdown desktop 3D, 9 cards)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo: rank and suit inside every face-up card and on screen (final showdown 375 3D, 9 cards)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "ledger: hands 1..N stored once",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "profiles equal the ledger for host and participant",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "final screen stacks equal the last stored hand",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Alpha: no script errors in console",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "Bravo: no script errors in console",
+   "ok": true,
+   "detail": ""
+  }
+ ],
+ "findings": [],
+ "ports": {
+  "dbms": 60347,
+  "redis": 50515,
+  "api": 48549,
+  "static": 59431
+ },
+ "data": "/tmp/jpl-e2e-db-z_rgfzd5"
+}
