@@ -31,3 +31,11 @@
 - 팀 `dev`에서 지운 파일은 없습니다. 내용이 바뀐 팀 파일은 `projects/redis/demo/benchmark.py` 하나입니다(포커 작업 때 측정 방식을 고친 버전).
 - 루트 `README.md`는 팀 README를 유지하고 끝에 포커 안내만 덧붙였습니다. 원본의 루트 README는 `POKER_README.md`로 옮겼고, 팀 README 사본이던 `docs/UPSTREAM_README.md`는 넣지 않았습니다.
 - 코드 동작은 바꾸지 않았습니다. Redis는 포커가 쓰던 버전(dev 시점) 그대로이고, `feat/Kimgeonhui-Redis`의 이후 변경은 합치지 않았습니다.
+
+### 최신 원본 동기화 (2026-11-18)
+
+- 원본 `feat/poker-multiway`의 `c5c589032a3fe2a45d1682abc13066b6858eadea`를 `078ca8482f735a36f1bb508f9f2b034a7821342a`로 cherry-pick했습니다. 작성자 molru-1과 작성 시각을 보존했고 커밋 메시지에 원본 SHA가 있습니다.
+- 반영 파일: `projects/react/src/poker/RoomApp.js`, `projects/react/src/styles/room.css`, `projects/react/room.html`, `docs/3D/ROOM_3D_CHANGES.md`. 3~4인 화면의 이름표·카드·배지 배치와 CSS 캐시 버전 변경입니다.
+- 원본 최신 커밋과 실행 파일 내용은 줄 끝(CRLF/LF)을 정규화하면 동일합니다. 기존 README 배치 및 이 출처 문서의 차이는 유지합니다.
+- Redis·DBMS·Mini React 코어는 이번 동기화에서 교체하지 않았습니다. 기존 로컬 저장소와 다른 worktree의 미커밋 변경도 가져오지 않았습니다.
+- 이 항목은 최신 원본 동기화 기록이며, 별도 팀원 구현의 채택을 뜻하지 않습니다.
