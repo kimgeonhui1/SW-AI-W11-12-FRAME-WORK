@@ -102,6 +102,19 @@ class MiniRedis:
                     removed += 1
             return removed
 
+    # 스냅샷용: 만료되지 않은 모든 키 → [(키, 값, 남은 초 또는 None)]
+    # 락 하나 안에서 한 번에 찍어서, 저장 도중 다른 요청이 끼어들어도 "한 시점의 사진"이 된다
+    def dump(self):
+        with self._lock:
+            now = self._clock()
+            entries = []
+            for key in self._data.keys():
+                expire_at = self._expires.get(key)
+                if expire_at is not None and expire_at <= now:
+                    continue  # 이미 만료된 키는 저장하지 않는다
+                entries.append((key, self._data.get(key), None if expire_at is None else expire_at - now))
+            return entries
+
     # 저장된 키 수 (아직 sweep되지 않은 만료 키도 포함)
     def __len__(self):
         with self._lock:
