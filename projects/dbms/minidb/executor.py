@@ -14,8 +14,8 @@
 
 from typing import NamedTuple
 
-from .parser import Insert
-from .storage import ID
+from .parser import CreateTable, Insert
+from .storage import ID, SchemaError
 
 
 class ExecutionError(ValueError):
@@ -37,7 +37,16 @@ class Executor:
     def execute(self, stmt):
         if isinstance(stmt, Insert):
             return self._insert(stmt)
+        if isinstance(stmt, CreateTable):
+            return self._create_table(stmt)
         return self._select(stmt)
+
+    def _create_table(self, stmt):
+        try:
+            self.db.create_table(stmt.table, stmt.columns)
+        except SchemaError as e:  # 이미 있는 테이블 · 잘못된 이름 등도 다른 실행 오류와 같은 종류로 알린다
+            raise ExecutionError(str(e)) from None
+        return Result([], [], f"테이블을 만들었습니다: {stmt.table}")
 
     def _check_table(self, table):
         if table not in self.db.tables:

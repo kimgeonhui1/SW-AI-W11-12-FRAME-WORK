@@ -1,7 +1,7 @@
 # [storage.py] 파일 기반 저장소 — 스키마 읽기, 행 추가(INSERT), 행 읽기(SELECT), id 인덱스(B+ 트리) — 처리 흐름의 4단계
 #
 # ■ 폴더 하나 = DB 하나
-#   schema.json : 테이블과 컬럼 정의. CREATE TABLE이 없으므로 미리 만들어 둔다 (과제 조건: 스키마·테이블은 이미 있음)
+#   schema.json : 테이블과 컬럼 정의. 미리 만들어 두고(과제 조건: 스키마·테이블은 이미 있음), CREATE TABLE로 테이블을 더할 수 있다
 #                 {"users": {"name": "TEXT", "age": "INT"}}   ← 컬럼 순서 = 적힌 순서, 타입은 INT 또는 TEXT
 #   users.jsonl : users 테이블의 데이터. 테이블 하나 = 파일 하나, 한 줄 = 한 행 (id와 값을 스키마 순서대로 JSON 배열로)
 #                 [1, "홍길동", 25]
@@ -95,6 +95,18 @@ class Database:
 
     def path(self, table):
         return os.path.join(self.directory, f"{table}.jsonl")
+
+    # CREATE TABLE: schema.json을 새 내용으로 바꾼 "뒤에" 메모리에 반영한다 → 파일 저장이 실패하면 아무것도 바뀌지 않는다
+    # 같은 이름을 동시에 만드는 경쟁은 호출하는 쪽(엔진의 스키마 락)이 막는다
+    def create_table(self, table, columns):
+        columns = _check_table(table, columns, self.tables)
+        # 스키마에 없는 예전 데이터 파일이 남아 있으면, 새 테이블에 열 구성이 다른 옛 행이 섞인다
+        if os.path.exists(self.path(table)):
+            raise SchemaError(f"{table}.jsonl 파일이 이미 있습니다 (스키마에 없는 예전 데이터). 옮기거나 지운 뒤 다시 만드세요")
+        schema = {name: dict(cols) for name, cols in self.tables.items()}
+        schema[table] = dict(columns)
+        _write_atomic(os.path.join(self.directory, "schema.json"), json.dumps(schema, ensure_ascii=False, indent=2) + "\n")
+        self.tables[table] = columns
 
     # 테이블의 전체 열: id + 스키마의 열
     def columns(self, table):
@@ -252,25 +264,55 @@ def load_schema(path):
 
     if not isinstance(data, dict) or not data:
         raise SchemaError('스키마는 {"테이블": {"컬럼": "타입", ...}} 모양이어야 합니다')
-    tables, seen = {}, set()
+    tables = {}
     for table, columns in data.items():
-        _check_name(table, "테이블")
-        # Windows 파일 이름은 대소문자를 구분하지 않아서 Users와 users가 같은 파일을 쓰게 된다
-        if table.upper() in seen:
-            raise SchemaError(f"대소문자만 다른 테이블이 있습니다: {table}")
-        if table.upper() in _WINDOWS_DEVICES:
-            raise SchemaError(f"테이블 이름으로 쓸 수 없습니다 (Windows 장치 이름): {table}")
-        seen.add(table.upper())
-        if not isinstance(columns, dict) or not columns:
+        if not isinstance(columns, dict):
             raise SchemaError(f"{table}: 컬럼이 하나 이상 있어야 합니다")
-        for column, kind in columns.items():
-            _check_name(column, f"{table}의 컬럼")
-            if column.lower() == ID:
-                raise SchemaError(f"{table}: id는 자동으로 붙는 열이라 스키마에 적을 수 없습니다")
-            if not isinstance(kind, str) or kind.upper() not in TYPES:
-                raise SchemaError(f"{table}.{column}: 타입은 INT 또는 TEXT여야 합니다 ({kind!r})")
-        tables[table] = [(column, kind.upper()) for column, kind in columns.items()]
+        tables[table] = _check_table(table, list(columns.items()), tables)
     return tables
+
+
+# 테이블 정의 하나를 검사해 [(컬럼, 타입 대문자)]로 돌려준다. schema.json을 읽을 때와 CREATE TABLE이 같은 규칙을 쓴다
+# existing: 이미 있는 테이블들 (같은 이름 · 대소문자만 다른 이름을 막는 데 쓴다)
+def _check_table(table, columns, existing):
+    _check_name(table, "테이블")
+    # Windows 파일 이름은 대소문자를 구분하지 않아서 Users와 users가 같은 파일을 쓰게 된다
+    clash = next((t for t in existing if t.upper() == table.upper()), None)
+    if clash is not None:
+        raise SchemaError(f"이미 있는 테이블입니다: {table}" if clash == table else f"대소문자만 다른 테이블이 있습니다: {table}")
+    if table.upper() in _WINDOWS_DEVICES:
+        raise SchemaError(f"테이블 이름으로 쓸 수 없습니다 (Windows 장치 이름): {table}")
+    if not columns:
+        raise SchemaError(f"{table}: 컬럼이 하나 이상 있어야 합니다")
+    seen = set()
+    for column, kind in columns:
+        _check_name(column, f"{table}의 컬럼")
+        if column.lower() == ID:
+            raise SchemaError(f"{table}: id는 자동으로 붙는 열이라 스키마에 적을 수 없습니다")
+        # schema.json은 JSON을 읽을 때(_no_duplicates) 막히지만, CREATE TABLE의 컬럼 목록은 여기서 막아야 한다
+        if column in seen:
+            raise SchemaError(f"{table}: 같은 컬럼이 두 번 있습니다: {column}")
+        seen.add(column)
+        if not isinstance(kind, str) or kind.upper() not in TYPES:
+            raise SchemaError(f"{table}.{column}: 타입은 INT 또는 TEXT여야 합니다 ({kind!r})")
+    return [(column, kind.upper()) for column, kind in columns]
+
+
+# 임시 파일에 끝까지 쓰고 디스크에 기록(fsync)한 뒤 한 번에 바꿔치기 → 쓰는 도중 꺼져도 원래 파일은 온전히 남는다
+def _write_atomic(path, text):
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except OSError as e:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise SchemaError(f"스키마 파일을 저장하지 못했습니다: {e}") from None
 
 
 # 이름 규칙을 지켜야 SQL에서 부를 수 있고, 파일 이름으로 써도 안전하다 (../ 같은 경로 문자가 들어갈 수 없다)

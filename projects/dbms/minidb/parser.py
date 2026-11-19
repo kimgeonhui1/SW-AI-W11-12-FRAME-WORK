@@ -3,6 +3,7 @@
 # ■ 지원 문법
 #   INSERT INTO 테이블 [(컬럼, ...)] VALUES (값, ...);
 #   SELECT * | 컬럼, ... FROM 테이블 [WHERE 컬럼 = 값];
+#   CREATE TABLE 테이블 (컬럼 타입, ...);   ← 타입은 INT 또는 TEXT. id 열은 자동으로 붙으므로 적지 않는다
 #   값은 정수 또는 '문자열'. 문장은 ;로 나누고, 마지막 문장은 ;를 빼도 된다
 #
 # ■ 방식: 재귀 하강(recursive descent) 파서
@@ -13,6 +14,7 @@
 
 from typing import NamedTuple, Optional
 
+from .storage import TYPES
 from .tokenizer import SqlSyntaxError, tokenize
 
 
@@ -27,6 +29,12 @@ class Select(NamedTuple):
     table: str
     columns: Optional[list]  # None이면 * (모든 컬럼)
     where: Optional[tuple]  # (컬럼, 값) 또는 None
+    line: int
+
+
+class CreateTable(NamedTuple):
+    table: str
+    columns: list  # [(컬럼, 타입)] 적힌 순서대로
     line: int
 
 
@@ -77,7 +85,9 @@ class _Parser:
             return self.insert()
         if tok.kind == "KEYWORD" and tok.value == "SELECT":
             return self.select()
-        self.fail("INSERT 또는 SELECT 문장이어야 합니다")
+        if tok.kind == "KEYWORD" and tok.value == "CREATE":
+            return self.create_table()
+        self.fail("INSERT, SELECT 또는 CREATE TABLE 문장이어야 합니다")
 
     def insert(self):
         start = self.expect("KEYWORD", "INSERT")
@@ -106,6 +116,26 @@ class _Parser:
             self.expect("SYMBOL", "=")
             where = (column, self.literal())
         return Select(table, columns, where, start.line)
+
+    def create_table(self):
+        start = self.expect("KEYWORD", "CREATE")
+        self.expect("KEYWORD", "TABLE")
+        table = self.expect("NAME", what="테이블 이름").value
+        self.expect("SYMBOL", "(")
+        columns = [self.column_def()]
+        while self.accept("SYMBOL", ","):
+            columns.append(self.column_def())
+        self.expect("SYMBOL", ")")
+        return CreateTable(table, columns, start.line)
+
+    # "컬럼 타입" 하나. 타입은 키워드가 아니라 이름 토큰으로 온다 (INT · TEXT를 열 이름으로 쓰는 기존 스키마를 깨지 않으려고)
+    def column_def(self):
+        name = self.expect("NAME", what="컬럼 이름").value
+        kind = self.peek()
+        if kind.kind != "NAME" or kind.value.upper() not in TYPES:
+            self.fail("타입(INT 또는 TEXT)이 필요합니다")
+        self.pos += 1
+        return name, kind.value.upper()
 
     # 쉼표로 이어진 이름 목록 (최소 1개)
     def names(self, what):

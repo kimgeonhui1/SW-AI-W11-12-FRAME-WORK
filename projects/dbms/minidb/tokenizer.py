@@ -17,7 +17,7 @@
 import re
 from typing import NamedTuple
 
-KEYWORDS = {"INSERT", "INTO", "VALUES", "SELECT", "FROM", "WHERE"}
+KEYWORDS = {"INSERT", "INTO", "VALUES", "SELECT", "FROM", "WHERE", "CREATE", "TABLE"}
 INT_MIN, INT_MAX = -(2**63), 2**63 - 1
 
 # 위에서부터 순서대로 맞춰 본다. 정규식 하나로 자르면 문자를 하나씩 보는 파이썬 반복문보다 훨씬 빠르다

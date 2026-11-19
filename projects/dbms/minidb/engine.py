@@ -12,8 +12,10 @@
 #   - 문장 하나는 테이블 하나만 쓰므로 락을 두 개 잡는 일이 없다 → 교착 상태(deadlock)가 생기지 않는다
 #   - 파이썬 GIL이 있어도 락은 필요하다: GIL은 "next_id 읽기 → +1 → 쓰기" 같은 여러 단계를 한 덩어리로 묶어 주지 않는다
 
-from .executor import Executor
-from .parser import Insert, parse
+import threading
+
+from .executor import ExecutionError, Executor
+from .parser import CreateTable, Insert, parse
 from .rwlock import RWLock
 from .storage import Database
 
@@ -32,6 +34,9 @@ class Engine:
         self.db = Database(directory)
         self._executor = Executor(self.db)
         self._locks = {table: RWLock() for table in self.db.tables}
+        # CREATE TABLE끼리만 잡는다: "이미 있나 확인 → schema.json 저장"을 한 덩어리로 (같은 이름을 두 요청이 동시에 만들지 않게).
+        # SELECT · INSERT는 잡지 않는다 (아래 실행 순서로 안전)
+        self._schema_lock = threading.Lock()
 
     def close(self):
         self.db.close()
@@ -42,11 +47,24 @@ class Engine:
         statements = parse(sql)  # 전부 먼저 파싱 → 문법 오류가 있으면 아무것도 실행하지 않는다 (CLI와 같은 규칙)
         results = []
         for number, stmt in enumerate(statements, 1):
-            lock = self._locks.get(stmt.table)
             try:
-                if lock is None:  # 없는 테이블: 실행기가 "테이블이 없습니다"를 낸다 (잠글 대상이 없음)
-                    results.append(self._executor.execute(stmt))
+                if isinstance(stmt, CreateTable):
+                    with self._schema_lock:
+                        # 테이블 락을 테이블보다 "먼저" 등록한다: 다른 스레드에 새 테이블이 보이는 순간 그 락도 이미 있어야 한다
+                        # (반대 순서면 "테이블은 있는데 락은 없는" 틈에 INSERT가 락 없이 실행된다 — Gemini 설계 검토에서 지적)
+                        self._locks.setdefault(stmt.table, RWLock())
+                        try:
+                            results.append(self._executor.execute(stmt))
+                        except Exception:
+                            # 만들지 못했으면 방금 등록한 락을 치운다: 잘못된 이름으로 CREATE를 반복하면 락이 끝없이 쌓였다 (자체 점검)
+                            if stmt.table not in self.db.tables:
+                                self._locks.pop(stmt.table, None)
+                            raise
                     continue
+                lock = self._locks.get(stmt.table)
+                if lock is None:
+                    # 실행기에 넘기지 않고 여기서 끝낸다: 넘긴 사이에 CREATE가 끝나면 그 테이블에 락 없이 쓰게 된다
+                    raise ExecutionError(f"테이블이 없습니다: {stmt.table}")
                 with lock.write() if isinstance(stmt, Insert) else lock.read():
                     results.append(self._executor.execute(stmt))
             except Exception as e:
