@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<!-- [vdom.test.html] vdom.js 단위 테스트 실행 페이지 (Live Server로 열기) -->
+<!-- 이 페이지를 열면 vdom.test.js가 실행되고, 결과가 #results 안에 표시된다 -->
+<html lang="ko">
+<head>
+  <!-- 한글이 깨지지 않도록 문자 인코딩을 UTF-8로 지정 -->
+  <meta charset="UTF-8" />
+  <!-- 브라우저 탭에 보이는 제목 -->
+  <title>vdom.js 테스트</title>
+  <style>
+    /* 성공한 테스트 줄: 초록색 */
+    .ok { color: green; margin: 2px 0; }
+    /* 실패한 테스트 줄: 빨간색 */
+    .fail { color: red; margin: 2px 0; }
+  </style>
+</head>
+<body>
+  <!-- 테스트 결과가 여기에 채워진다 (vdom.test.js 맨 아래에서 innerHTML로 넣음) -->
+  <div id="results"></div>
+  <!-- type="module": import/export(ES Modules)를 쓰기 위해 필요.
+       모듈은 file:// 로 직접 열면 보안 정책 때문에 막히므로 Live Server(http://)로 열어야 한다 -->
+  <script type="module" src="./vdom.test.js"></script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 340" width="680" height="340" role="img" aria-label="동시 클라이언트 수별 처리량">
+<title>동시 클라이언트 수별 처리량</title>
+<style>
+.bg{fill:#fcfcfb}.t1{fill:#0b0b0b}.t2{fill:#52514e}.grid{stroke:#e4e3df}.axis{stroke:#8a8984}
+.s-on{fill:#2a78d6}.s-off{fill:#eb6834}.ref{stroke:#eb6834}
+text{font-family:system-ui,-apple-system,"Malgun Gothic","Apple SD Gothic Neo",sans-serif}
+@media (prefers-color-scheme:dark){.bg{fill:#1a1a19}.t1{fill:#f0efec}.t2{fill:#c3c2b7}.grid{stroke:#383835}
+.axis{stroke:#6f6e69}.s-on{fill:#3987e5}.s-off{fill:#d95926}.ref{stroke:#d95926}}
+</style>
+<rect class="bg" width="680" height="340" rx="8"/>
+<text class="t1" x="64" y="30" font-size="16" font-weight="600">동시 클라이언트 수별 처리량</text>
+<text class="t2" x="64" y="50" font-size="12">원본 지연 200ms · 원본 동시 조회 최대 5개 · 높을수록 좋음</text>
+<text class="t2" x="56" y="76" font-size="11" text-anchor="end">요청/초</text>
+<line class="axis" x1="64" x2="660" y1="296.0" y2="296.0" stroke-width="1"/>
+<text class="t2" x="56" y="300.0" font-size="11" text-anchor="end">0</text>
+<line class="grid" x1="64" x2="660" y1="244.0" y2="244.0" stroke-width="1"/>
+<text class="t2" x="56" y="248.0" font-size="11" text-anchor="end">100</text>
+<line class="grid" x1="64" x2="660" y1="192.0" y2="192.0" stroke-width="1"/>
+<text class="t2" x="56" y="196.0" font-size="11" text-anchor="end">200</text>
+<line class="grid" x1="64" x2="660" y1="140.0" y2="140.0" stroke-width="1"/>
+<text class="t2" x="56" y="144.0" font-size="11" text-anchor="end">300</text>
+<line class="grid" x1="64" x2="660" y1="88.0" y2="88.0" stroke-width="1"/>
+<text class="t2" x="56" y="92.0" font-size="11" text-anchor="end">400</text>
+<path class="s-off" d="M122.3,296 V296.0 Q122.3,293.5 124.8,293.5 H159.8 Q162.3,293.5 162.3,296.0 V296 Z"><title>캐시 미사용 · 1명: 4.8 요청/초</title></path>
+<text class="t2" x="142.3" y="288.5" font-size="10.5" text-anchor="middle">4.8</text>
+<path class="s-on" d="M164.3,296 V205.0 Q164.3,201.0 168.3,201.0 H200.3 Q204.3,201.0 204.3,205.0 V296 Z"><title>캐시 사용(HIT) · 1명: 183 요청/초</title></path>
+<text class="t2" x="184.3" y="196.0" font-size="10.5" text-anchor="middle">183</text>
+<text class="t2" x="163.3" y="316" font-size="12" text-anchor="middle">1명</text>
+<path class="s-off" d="M321.0,296 V287.2 Q321.0,283.2 325.0,283.2 H357.0 Q361.0,283.2 361.0,287.2 V296 Z"><title>캐시 미사용 · 10명: 25 요청/초</title></path>
+<text class="t2" x="341.0" y="278.2" font-size="10.5" text-anchor="middle">25</text>
+<path class="s-on" d="M363.0,296 V158.7 Q363.0,154.7 367.0,154.7 H399.0 Q403.0,154.7 403.0,158.7 V296 Z"><title>캐시 사용(HIT) · 10명: 272 요청/초</title></path>
+<text class="t2" x="383.0" y="149.7" font-size="10.5" text-anchor="middle">272</text>
+<text class="t2" x="362.0" y="316" font-size="12" text-anchor="middle">10명</text>
+<path class="s-off" d="M519.7,296 V287.4 Q519.7,283.4 523.7,283.4 H555.7 Q559.7,283.4 559.7,287.4 V296 Z"><title>캐시 미사용 · 50명: 24 요청/초</title></path>
+<text class="t2" x="539.7" y="278.4" font-size="10.5" text-anchor="middle">24</text>
+<path class="s-on" d="M561.7,296 V129.8 Q561.7,125.8 565.7,125.8 H597.7 Q601.7,125.8 601.7,129.8 V296 Z"><title>캐시 사용(HIT) · 50명: 327 요청/초</title></path>
+<text class="t2" x="581.7" y="120.8" font-size="10.5" text-anchor="middle">327</text>
+<text class="t2" x="560.7" y="316" font-size="12" text-anchor="middle">50명</text>
+<rect class="s-off" x="64" y="62" width="12" height="12" rx="3"/>
+<text class="t1" x="82" y="72" font-size="12">캐시 미사용</text>
+<rect class="s-on" x="180" y="62" width="12" height="12" rx="3"/>
+<text class="t1" x="198" y="72" font-size="12">캐시 사용(HIT)</text>
+</svg>
