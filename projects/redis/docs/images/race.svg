@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 360" width="760" height="360" role="img" aria-label="캐시 무효화 경쟁 상태: 느린 조회가 옛 가격을 캐시에 넣는다. 캐시 키에 버전을 넣으면 옛 값은 옛 키에만 들어간다">
-<title>캐시 무효화의 함정과 버전 키</title>
+<title>캐시 무효화와 버전 키</title>
 <style>
 .bg{fill:#fafaf9}.t1{fill:#111110}.t2{fill:#6b6a66}.card{fill:#ffffff;stroke:#e4e3df}
 .get{fill:#eef4fc;stroke:#2a78d6}.put{fill:#fdf0ea;stroke:#e8622c}.lane{stroke:#e4e3df}
@@ -16,8 +16,8 @@ text{font-family:system-ui,-apple-system,"Segoe UI","Malgun Gothic","Apple SD Go
 <marker id="ag" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M1,1 L9,5 L1,9 z" fill="#a3a29c"/></marker>
 </defs>
 <rect class="bg" width="760" height="360" rx="14"/>
-<text class="t1" x="28" y="38" font-size="18" font-weight="700">캐시 무효화의 함정</text>
-<text class="t2" x="28" y="60" font-size="13">"수정하면 캐시를 지운다"만으로는 옛 값이 다시 들어올 수 있다</text>
+<text class="t1" x="28" y="38" font-size="18" font-weight="700">캐시 무효화 문제</text>
+<text class="t2" x="28" y="60" font-size="13">수정 후 캐시를 지워도, 느린 조회가 옛 값을 다시 넣을 수 있다</text>
 
 <!-- 타임라인 -->
 <g font-size="12">
@@ -36,24 +36,24 @@ text{font-family:system-ui,-apple-system,"Segoe UI","Malgun Gothic","Apple SD Go
 <text class="t1" x="28" y="188" font-weight="600">캐시</text>
 <line class="lane" x1="112" y1="184" x2="732" y2="184" stroke-width="1"/>
 <rect class="old" x="300" y="172" width="236" height="24" rx="12" stroke-width="1"/>
-<text class="t2" x="418" y="188" text-anchor="middle">비어 있음 (지웠으니 안전해 보임)</text>
+<text class="t2" x="418" y="188" text-anchor="middle">비어 있음</text>
 <rect class="bad" x="556" y="172" width="176" height="24" rx="12" stroke-width="1.4"/>
 <text class="tBad" x="644" y="188" text-anchor="middle" font-weight="700">100 ✗ (원본은 5)</text>
 
 <line class="axis" x1="120" y1="214" x2="728" y2="214" stroke-width="1.2" marker-end="url(#ag)"/>
 <text class="t2" x="120" y="230">시간</text>
-<text class="tBad" x="732" y="232" text-anchor="end" font-weight="600">→ TTL 동안 틀린 가격이 HIT로 나감</text>
+<text class="tBad" x="732" y="232" text-anchor="end" font-weight="600">→ TTL이 끝날 때까지 틀린 가격을 응답</text>
 </g>
 
 <!-- 해결 -->
 <rect class="card" x="28" y="248" width="704" height="92" rx="12" stroke-width="1" filter="url(#sh)"/>
-<text class="t1" x="48" y="274" font-size="14" font-weight="700">해결: 캐시 키에 버전 넣기 <tspan class="t2" font-weight="400">item:{id}:v{version}</tspan></text>
+<text class="t1" x="48" y="274" font-size="14" font-weight="700">해결: 캐시 키에 버전 추가 <tspan class="t2" font-weight="400">item:{id}:v{version}</tspan></text>
 <g font-size="12">
 <rect class="old" x="48" y="286" width="96" height="22" rx="11" stroke-width="1"/>
 <text class="t1" x="96" y="301" text-anchor="middle">item:1:v1</text>
-<text class="t2" x="156" y="301">= 100  ③이 늦게 넣은 옛 값. 아무도 안 읽고, TTL이 지나면 사라짐</text>
+<text class="t2" x="156" y="301">= 100  ③에서 저장된 옛 값. 조회되지 않고 TTL이 지나면 삭제</text>
 <rect class="good" x="48" y="312" width="96" height="22" rx="11" stroke-width="1.4"/>
 <text class="tGood" x="96" y="327" text-anchor="middle" font-weight="700">item:1:v2</text>
-<text class="t1" x="156" y="327">= 5  수정 뒤의 조회는 새 버전 키만 읽음 <tspan class="tGood" font-weight="700">✓</tspan></text>
+<text class="t1" x="156" y="327">= 5  수정 이후의 조회는 새 버전 키만 읽음 <tspan class="tGood" font-weight="700">✓</tspan></text>
 </g>
 </svg>

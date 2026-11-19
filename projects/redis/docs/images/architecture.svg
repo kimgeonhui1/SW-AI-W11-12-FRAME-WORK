@@ -17,7 +17,7 @@ text{font-family:system-ui,-apple-system,"Segoe UI","Malgun Gothic","Apple SD Go
 </defs>
 <rect class="bg" width="760" height="340" rx="14"/>
 <text class="t1" x="28" y="38" font-size="18" font-weight="700">캐시 어사이드 (Cache-Aside)</text>
-<text class="t2" x="28" y="60" font-size="13">캐시를 먼저 보고, 없을 때만 느린 원본으로 간다</text>
+<text class="t2" x="28" y="60" font-size="13">Mini Redis를 먼저 조회하고, 없으면 원본을 조회한다</text>
 
 <!-- 사용자 -->
 <rect class="card" x="28" y="128" width="112" height="84" rx="12" stroke-width="1" filter="url(#sh)"/>
