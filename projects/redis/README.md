@@ -60,15 +60,15 @@ python -m unittest discover -s tests -t .                             # 테스�
 
 | | Pintos (C) | Mini Redis (Python) |
 |---|---|---|
-| **락 해제** | `lock_acquire` / `lock_release`를 직접 짝지음.<br>에러 경로에서 release를 빠뜨리면 **데드락** | `with self._lock:`<br>어떤 경로로 빠져나가도 **자동으로 release** |
-| **미루기** | **지연 로딩**: 페이지를 실제로 접근할 때(page fault) 읽어 옴 | **지연 삭제**: 키를 실제로 읽을 때 만료를 확인해 지움 |
-| **순간의 사진** | `fork()`의 **copy-on-write**: 공유하다가 쓰는 순간에만 복사 | `dump()`가 락 안에서 데이터를 복사하고,<br>느린 파일 쓰기는 락 밖에서 |
+| **Lock** | `lock_acquire` / `lock_release`를 직접 짝지음.<br>에러 경로에서 release를 빠뜨리면 **데드락** | `with self._lock:`<br>어떤 경로로 빠져나가도 **자동으로 release** |
+| **Lazy Loading** | **지연 로딩**: 페이지를 실제로 접근할 때(page fault) 읽어 옴 | **지연 삭제**: 키를 실제로 읽을 때 만료를 확인해 지움 |
+| **Snapshot** | `fork()`의 **copy-on-write**: 공유하다가 쓰는 순간에만 복사 | `dump()`가 락 안에서 데이터를 복사하고,<br>느린 파일 쓰기는 락 밖에서 |
 
 > 지연 로딩은 **만드는** 일을, 지연 삭제는 **지우는** 일을 필요한 순간까지 미룹니다. 아무도 안 쓰는 것에는 비용을 쓰지 않는다는 점이 같습니다.
 
 ## 4. 성능
 
-| 원본이 느릴수록 캐시가 값지다 | 동시 요청이 많을수록 차이가 커진다 |
+| 원본 지연에 따른 응답 시간 | 동시 사용자 수에 따른 처리량 |
 |:---:|:---:|
 | <img src="docs/benchmark/delay.svg" alt="원본 지연별 응답 시간: 캐시 사용은 지연과 상관없이 2-4ms" width="100%"> | <img src="docs/benchmark/concurrency.svg" alt="동시 클라이언트 수별 처리량: 미사용은 초당 25건에서 멈추고 사용은 327건" width="100%"> |
 
