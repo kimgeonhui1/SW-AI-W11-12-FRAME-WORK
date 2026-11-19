@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 340" width="760" height="340" role="img" aria-label="캐시 어사이드 구조: 데모 API가 Mini Redis를 먼저 조회하고, 없을 때만 0.2초 걸리는 원본을 조회한다">
+<title>Mini Redis 구조 (Cache-Aside)</title>
+<style>
+.bg{fill:#fafaf9}.t1{fill:#111110}.t2{fill:#6b6a66}.card{fill:#ffffff;stroke:#e4e3df}
+.blue{fill:#2a78d6}.blueSoft{fill:#eef4fc}.blueStroke{stroke:#2a78d6}.orange{fill:#e8622c}.orangeSoft{fill:#fdf0ea}.orangeStroke{stroke:#e8622c}
+.gray{fill:#a3a29c}.pillText{fill:#ffffff}.layer{fill:#f4f8fd;stroke:#d6e4f6}
+text{font-family:system-ui,-apple-system,"Segoe UI","Malgun Gothic","Apple SD Gothic Neo",sans-serif}
+@media (prefers-color-scheme:dark){.bg{fill:#171716}.t1{fill:#f2f1ee}.t2{fill:#a9a8a1}.card{fill:#222221;stroke:#3a3936}
+.blueSoft{fill:#162436}.orangeSoft{fill:#38211a}.layer{fill:#1b2a3d;stroke:#2c4466}.blue{fill:#4b93ea}.orange{fill:#f07a48}
+.blueStroke{stroke:#4b93ea}.orangeStroke{stroke:#f07a48}}
+</style>
+<defs>
+<filter id="sh" x="-10%" y="-10%" width="120%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity=".08"/></filter>
+<marker id="ab" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M1,1 L9,5 L1,9 z" fill="#2a78d6"/></marker>
+<marker id="ao" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M1,1 L9,5 L1,9 z" fill="#e8622c"/></marker>
+<marker id="ag" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M1,1 L9,5 L1,9 z" fill="#a3a29c"/></marker>
+</defs>
+<rect class="bg" width="760" height="340" rx="14"/>
+<text class="t1" x="28" y="38" font-size="18" font-weight="700">캐시 어사이드 (Cache-Aside)</text>
+<text class="t2" x="28" y="60" font-size="13">캐시를 먼저 보고, 없을 때만 느린 원본으로 간다</text>
+
+<!-- 사용자 -->
+<rect class="card" x="28" y="128" width="112" height="84" rx="12" stroke-width="1" filter="url(#sh)"/>
+<circle class="gray" cx="84" cy="152" r="9"/>
+<path class="gray" d="M68,178 a16,12 0 0 1 32,0 z"/>
+<text class="t1" x="84" y="200" font-size="13" font-weight="600" text-anchor="middle">사용자</text>
+<path d="M140,170 L192,170" stroke="#a3a29c" stroke-width="1.6" fill="none" marker-end="url(#ag)"/>
+
+<!-- 데모 API -->
+<rect class="card" x="196" y="128" width="144" height="84" rx="12" stroke-width="1" filter="url(#sh)"/>
+<text class="t1" x="268" y="166" font-size="15" font-weight="700" text-anchor="middle">데모 API</text>
+<text class="t2" x="268" y="188" font-size="12" text-anchor="middle">GET /items/{id}</text>
+
+<!-- Mini Redis -->
+<rect class="card" x="452" y="82" width="280" height="132" rx="12" stroke-width="1" filter="url(#sh)"/>
+<rect class="blue" x="452" y="82" width="6" height="132" rx="3"/>
+<text class="t1" x="474" y="108" font-size="15" font-weight="700">Mini Redis</text>
+<text class="t2" x="568" y="108" font-size="12">직접 구현</text>
+<rect class="layer" x="474" y="120" width="240" height="24" rx="6" stroke-width="1"/>
+<text class="t1" x="486" y="137" font-size="12"><tspan font-weight="600">server.py</tspan><tspan class="t2" dx="8">HTTP JSON API</tspan></text>
+<rect class="layer" x="474" y="150" width="240" height="24" rx="6" stroke-width="1"/>
+<text class="t1" x="486" y="167" font-size="12"><tspan font-weight="600">store.py</tspan><tspan class="t2" dx="8">락 하나 · TTL</tspan></text>
+<rect class="layer" x="474" y="180" width="240" height="24" rx="6" stroke-width="1"/>
+<text class="t1" x="486" y="197" font-size="12"><tspan font-weight="600">hashtable.py</tspan><tspan class="t2" dx="8">FNV-1a · 체이닝</tspan></text>
+
+<!-- 원본 -->
+<rect class="card" x="452" y="236" width="280" height="64" rx="12" stroke-width="1" filter="url(#sh)"/>
+<rect class="orange" x="452" y="236" width="6" height="64" rx="3"/>
+<text class="t1" x="474" y="262" font-size="15" font-weight="700">느린 원본</text>
+<text class="t2" x="474" y="284" font-size="12">DB · 외부 API 흉내, 동시에 5개까지</text>
+<rect class="orange" x="664" y="250" width="52" height="24" rx="12"/>
+<text class="pillText" x="690" y="267" font-size="12" font-weight="700" text-anchor="middle">0.2초</text>
+
+<!-- 화살표 -->
+<path class="blueStroke" d="M340,152 C396,152 396,130 446,130" stroke-width="2" fill="none" marker-end="url(#ab)"/>
+<rect class="blue" x="352" y="100" width="84" height="22" rx="11"/>
+<text class="pillText" x="394" y="115" font-size="12" font-weight="600" text-anchor="middle">① 먼저 조회</text>
+<path class="orangeStroke" d="M340,190 C396,190 396,268 446,268" stroke-width="2" fill="none" stroke-dasharray="5 4" marker-end="url(#ao)"/>
+<rect class="orange" x="344" y="276" width="96" height="22" rx="11"/>
+<text class="pillText" x="392" y="291" font-size="12" font-weight="600" text-anchor="middle">② 없으면 원본</text>
+
+<!-- 범례 -->
+<circle class="blue" cx="34" cy="252" r="5"/><text class="t1" x="46" y="256" font-size="12"><tspan font-weight="600">HIT</tspan><tspan class="t2" dx="6">약 3ms</tspan></text>
+<circle class="orange" cx="34" cy="276" r="5"/><text class="t1" x="46" y="280" font-size="12"><tspan font-weight="600">MISS</tspan><tspan class="t2" dx="6">0.2초 + 캐시에 저장</tspan></text>
+<circle class="gray" cx="34" cy="300" r="5"/><text class="t1" x="46" y="304" font-size="12"><tspan font-weight="600">BYPASS</tspan><tspan class="t2" dx="6">Redis 장애 시 원본만</tspan></text>
+</svg>

@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 360" width="760" height="360" role="img" aria-label="캐시 무효화 경쟁 상태: 느린 조회가 옛 가격을 캐시에 넣는다. 캐시 키에 버전을 넣으면 옛 값은 옛 키에만 들어간다">
+<title>캐시 무효화의 함정과 버전 키</title>
+<style>
+.bg{fill:#fafaf9}.t1{fill:#111110}.t2{fill:#6b6a66}.card{fill:#ffffff;stroke:#e4e3df}
+.get{fill:#eef4fc;stroke:#2a78d6}.put{fill:#fdf0ea;stroke:#e8622c}.lane{stroke:#e4e3df}
+.bad{fill:#fdeceb;stroke:#d64545}.tBad{fill:#c53030}.good{fill:#e9f6ee;stroke:#1f9d55}.tGood{fill:#17803f}
+.old{fill:#f4f3f0;stroke:#d9d8d3}.axis{stroke:#a3a29c}
+text{font-family:system-ui,-apple-system,"Segoe UI","Malgun Gothic","Apple SD Gothic Neo",sans-serif}
+@media (prefers-color-scheme:dark){.bg{fill:#171716}.t1{fill:#f2f1ee}.t2{fill:#a9a8a1}.card{fill:#222221;stroke:#3a3936}
+.get{fill:#162436;stroke:#4b93ea}.put{fill:#38211a;stroke:#f07a48}.lane{stroke:#33322f}
+.bad{fill:#3a1c1c;stroke:#e06060}.tBad{fill:#f08a8a}.good{fill:#16301f;stroke:#3cbf74}.tGood{fill:#6fd69a}
+.old{fill:#2a2a28;stroke:#3a3936}.axis{stroke:#6f6e69}}
+</style>
+<defs>
+<filter id="sh" x="-5%" y="-10%" width="110%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity=".08"/></filter>
+<marker id="ag" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M1,1 L9,5 L1,9 z" fill="#a3a29c"/></marker>
+</defs>
+<rect class="bg" width="760" height="360" rx="14"/>
+<text class="t1" x="28" y="38" font-size="18" font-weight="700">캐시 무효화의 함정</text>
+<text class="t2" x="28" y="60" font-size="13">"수정하면 캐시를 지운다"만으로는 옛 값이 다시 들어올 수 있다</text>
+
+<!-- 타임라인 -->
+<g font-size="12">
+<text class="t1" x="28" y="104" font-weight="600">조회 GET</text>
+<line class="lane" x1="112" y1="100" x2="732" y2="100" stroke-width="1"/>
+<rect class="get" x="120" y="86" width="300" height="28" rx="14" stroke-width="1.4"/>
+<text class="t1" x="270" y="104" text-anchor="middle">① 원본에서 가격 <tspan font-weight="700">100</tspan> 읽는 중… (0.2초)</text>
+<rect class="get" x="556" y="86" width="176" height="28" rx="14" stroke-width="1.4"/>
+<text class="t1" x="644" y="104" text-anchor="middle">③ 읽은 <tspan font-weight="700">100</tspan>을 캐시에 저장</text>
+
+<text class="t1" x="28" y="146" font-weight="600">수정 PUT</text>
+<line class="lane" x1="112" y1="142" x2="732" y2="142" stroke-width="1"/>
+<rect class="put" x="300" y="128" width="236" height="28" rx="14" stroke-width="1.4"/>
+<text class="t1" x="418" y="146" text-anchor="middle">② 원본을 <tspan font-weight="700">5</tspan>로 바꾸고 캐시 삭제</text>
+
+<text class="t1" x="28" y="188" font-weight="600">캐시</text>
+<line class="lane" x1="112" y1="184" x2="732" y2="184" stroke-width="1"/>
+<rect class="old" x="300" y="172" width="236" height="24" rx="12" stroke-width="1"/>
+<text class="t2" x="418" y="188" text-anchor="middle">비어 있음 (지웠으니 안전해 보임)</text>
+<rect class="bad" x="556" y="172" width="176" height="24" rx="12" stroke-width="1.4"/>
+<text class="tBad" x="644" y="188" text-anchor="middle" font-weight="700">100 ✗ (원본은 5)</text>
+
+<line class="axis" x1="120" y1="214" x2="728" y2="214" stroke-width="1.2" marker-end="url(#ag)"/>
+<text class="t2" x="120" y="230">시간</text>
+<text class="tBad" x="732" y="232" text-anchor="end" font-weight="600">→ TTL 동안 틀린 가격이 HIT로 나감</text>
+</g>
+
+<!-- 해결 -->
+<rect class="card" x="28" y="248" width="704" height="92" rx="12" stroke-width="1" filter="url(#sh)"/>
+<text class="t1" x="48" y="274" font-size="14" font-weight="700">해결: 캐시 키에 버전 넣기 <tspan class="t2" font-weight="400">item:{id}:v{version}</tspan></text>
+<g font-size="12">
+<rect class="old" x="48" y="286" width="96" height="22" rx="11" stroke-width="1"/>
+<text class="t1" x="96" y="301" text-anchor="middle">item:1:v1</text>
+<text class="t2" x="156" y="301">= 100  ③이 늦게 넣은 옛 값. 아무도 안 읽고, TTL이 지나면 사라짐</text>
+<rect class="good" x="48" y="312" width="96" height="22" rx="11" stroke-width="1.4"/>
+<text class="tGood" x="96" y="327" text-anchor="middle" font-weight="700">item:1:v2</text>
+<text class="t1" x="156" y="327">= 5  수정 뒤의 조회는 새 버전 키만 읽음 <tspan class="tGood" font-weight="700">✓</tspan></text>
+</g>
+</svg>
