@@ -23,6 +23,7 @@ import json
 import os
 import socket
 import sys
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from .engine import Engine, StatementError
@@ -59,10 +60,11 @@ class PooledHTTPServer(HTTPServer):
     def process_request(self, request, client_address):
         if not self.pool.submit(self._handle, request, client_address):
             try:
-                request.sendall(_BUSY_RESPONSE)  # 새 연결의 송신 버퍼에 들어가므로 접속 받는 스레드가 멈추지 않는다
+                request.sendall(_BUSY_RESPONSE)  # 새 연결의 송신 버퍼에 들어가므로 바로 끝난다
             except OSError:
                 pass
-            self.shutdown_request(request)
+            _lingering_close(request, limit=0.2)  # 접속 받는 스레드가 오래 멈추지 않게 짧게
+            return
 
     # 작업자 스레드에서 실행: 요청 하나를 처리하고 연결을 닫는다 (socketserver.ThreadingMixIn이 스레드 안에서 하는 일과 같다)
     def _handle(self, request, client_address):
@@ -71,7 +73,7 @@ class PooledHTTPServer(HTTPServer):
         except Exception:
             self.handle_error(request, client_address)
         finally:
-            self.shutdown_request(request)
+            _lingering_close(request, limit=0.5)
 
     def handle_error(self, request, client_address):
         pass  # 응답 도중 클라이언트가 끊는 등은 서버 콘솔에 traceback을 찍지 않는다 (작업자는 계속 일한다)
@@ -182,6 +184,26 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         pass  # 요청마다 콘솔에 찍지 않는다
+
+
+# 응답을 보낸 뒤 연결 닫기 (lingering close, Apache 등도 쓰는 방법)
+#   보내는 쪽만 먼저 닫고(SHUT_WR: "응답 끝"), 클라이언트가 보낸 데이터 중 읽지 않은 것(본문이 붙은 405 · 404 · 411 · 503 등)을
+#   읽어서 버린 뒤 닫는다. 안 읽은 데이터가 남은 채로 닫으면 Windows가 RST(강제 끊김)를 보내, 클라이언트가 응답을 받기도
+#   전에 "연결 끊김"을 봤다 (테스트 반복 실행 · 동시성 벤치마크에서 재현). 계속 보내는 클라이언트에 붙잡히지 않게 limit초까지만
+def _lingering_close(request, limit):
+    try:
+        request.shutdown(socket.SHUT_WR)
+        deadline = time.monotonic() + limit
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            request.settimeout(left)
+            if not request.recv(65536):  # 클라이언트가 응답을 읽고 닫았다
+                break
+    except OSError:  # 시간 초과 · 이미 끊김
+        pass
+    request.close()
 
 
 # 너무 큰 본문을 최대 16MB까지 64KB씩 읽어서 버린다 (그보다 크면 더 기다리지 않고 닫는다)

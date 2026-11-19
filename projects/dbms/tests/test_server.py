@@ -178,6 +178,13 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(ctx.exception.status, 400)
         self.assertEqual(self.request("GET", "/health")[0], 200)
 
+    def test_error_reply_arrives_even_with_unread_body(self):
+        # 본문을 읽지 않고 답하는 요청(본문이 붙은 405 · 404)도 클라이언트가 응답을 받아야 한다.
+        # 안 읽은 본문이 남은 채로 닫으면 Windows가 RST를 보내, 가끔 응답 대신 ConnectionAbortedError가 났다 (반복 실행에서 재현)
+        for _ in range(40):
+            self.assertEqual(self.request("POST", "/health", {"sql": "x" * 2000})[0], 405)
+            self.assertEqual(self.request("POST", "/nope", {"sql": "x" * 2000})[0], 404)
+
     def test_wrong_paths_and_methods(self):
         self.assertEqual(self.request("GET", "/nope")[0], 404)
         self.assertEqual(self.request("GET", "/query")[0], 405)

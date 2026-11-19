@@ -57,8 +57,9 @@ def run(rows=1_000_000, queries=10, directory=None, out=print, seed=0):
             tmp.cleanup()
 
 
-def _measure(rows, queries, directory, out, rng):
-    out(f"[미니 DBMS 인덱스 벤치마크] {rows:,}행, 검색 {queries}번씩")
+# schema.json(users: name, age)이 있는 빈 DB 폴더에 users 행을 rows개 넣는다 (Phase 1 SQL 처리기를 그대로 거친다) → 걸린 초
+# 서버 동시성 벤치마크(bench_server.py)도 같은 데이터를 쓴다
+def load_users(directory, rows, out=print):
     start = time.perf_counter()
     # 대량 적재: INSERT마다 flush하지 않고 끝날 때 한 번에 (행마다 약 9µs 아낌). 실제 DB의 대량 적재(LOAD DATA, COPY)도 같은 생각이다
     with Database(directory, autoflush=False) as db:
@@ -70,7 +71,12 @@ def _measure(rows, queries, directory, out, rng):
                 ex.execute(stmt)
             if last % 100_000 == 0 or last == rows:
                 out(f"  INSERT {last:,} / {rows:,}  ({time.perf_counter() - start:.1f}초)")
-    insert_s = time.perf_counter() - start
+    return time.perf_counter() - start
+
+
+def _measure(rows, queries, directory, out, rng):
+    out(f"[미니 DBMS 인덱스 벤치마크] {rows:,}행, 검색 {queries}번씩")
+    insert_s = load_users(directory, rows, out)
     size = os.path.getsize(os.path.join(directory, "users.jsonl"))
 
     with Database(directory) as db:  # 다시 켠 것과 같다 → 첫 사용 때 파일을 읽어 인덱스를 다시 만든다
