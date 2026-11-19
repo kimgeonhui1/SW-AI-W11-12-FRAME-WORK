@@ -17,6 +17,9 @@
 #   - 정수와 문자열이 구분되어 저장된다 (CSV는 전부 문자열이라 읽을 때마다 다시 바꿔야 한다)
 #   - 사람이 메모장으로 열어 확인할 수 있다
 #
+# ■ 여러 스레드 (Phase 3): 읽기끼리는 동시에 해도 안전하게 만들었다 (인덱스 첫 생성, id 검색 핸들).
+#   INSERT와 다른 작업이 겹치지 않게 하는 것은 엔진(engine.py)의 테이블별 읽기-쓰기 락이 맡는다
+#
 # ■ INSERT는 파일 끝에 한 줄을 덧붙이기만 한다(append, 힙 파일). 기존 줄을 고치지 않으므로 빠르고, 앞의 행이 망가질 일이 없다
 #
 # ■ 인덱스 (Phase 2, 과제 조건: 메모리 기반 B+ 트리)
@@ -26,6 +29,7 @@
 import json
 import os
 import re
+import threading
 
 from .bptree import BPlusTree
 from .tokenizer import INT_MAX, INT_MIN, KEYWORDS
@@ -56,6 +60,8 @@ class _TableState:
         self.needs_newline = False  # 마지막 줄이 줄바꿈 없이 끝났는가 (손으로 고친 파일 등)
         self.writer = None  # 덧붙이기용으로 열어 둔 파일 (INSERT마다 열고 닫지 않으려고)
         self.reader = None  # id 검색용으로 열어 둔 파일 (검색마다 열고 닫으면 열기 비용이 검색 시간의 절반을 넘었다)
+        # reader는 하나를 여러 스레드가 함께 쓴다. seek와 readline 사이에 다른 스레드가 seek하면 남의 줄을 읽으므로 둘을 묶어 잠근다 (Phase 3)
+        self.reader_lock = threading.Lock()
 
 
 class Database:
@@ -69,6 +75,7 @@ class Database:
         # 테이블 이름 → [(컬럼, 타입), ...]  (id는 빼고 스키마에 적힌 열만)
         self.tables = load_schema(os.path.join(directory, "schema.json"))
         self._states = {}
+        self._states_lock = threading.Lock()  # 두 스레드가 같은 테이블을 처음 동시에 쓸 때 인덱스를 한 번만 만들게 (Phase 3)
         self.autoflush = autoflush
 
     def __enter__(self):
@@ -139,10 +146,11 @@ class Database:
         if offset is None:
             return None
         self._flush(table)
-        if state.reader is None:
-            state.reader = open(self.path(table), "rb")
-        state.reader.seek(offset)  # 버퍼를 비우고 그 위치로 옮긴다 → 덧붙인 행도 다시 읽힌다
-        raw = state.reader.readline()
+        with state.reader_lock:
+            if state.reader is None:
+                state.reader = open(self.path(table), "rb")
+            state.reader.seek(offset)  # 버퍼를 비우고 그 위치로 옮긴다 → 덧붙인 행도 다시 읽힌다
+            raw = state.reader.readline()
         row = self._decode(table, raw, f"{offset}바이트 위치", [kind for _, kind in self.columns(table)])
         if row[0] != row_id:  # 인덱스를 만든 뒤 다른 프로그램이 파일을 바꿨다
             raise StorageError(f"{self.path(table)}: 인덱스와 파일이 맞지 않습니다 (id {row_id})")
@@ -160,8 +168,16 @@ class Database:
     # 테이블을 처음 쓸 때: 파일을 끝까지 한 번 읽어 인덱스(id → offset)를 만들고 다음 id를 정한다
     def _state(self, table):
         state = self._states.get(table)
-        if state is not None:
+        if state is not None:  # 대부분은 여기서 끝난다 (락 없이)
             return state
+        with self._states_lock:
+            state = self._states.get(table)  # 기다리는 동안 다른 스레드가 만들었을 수 있다
+            if state is None:
+                state = self._build_state(table)
+                self._states[table] = state
+            return state
+
+    def _build_state(self, table):
         state = _TableState()
         types = [kind for _, kind in self.columns(table)]
         ids, offsets, numbers = [], [], []
@@ -191,7 +207,6 @@ class Database:
                 except KeyError:
                     raise StorageError(f"{self.path(table)} {number}번째 줄: id {row_id}이(가) 이미 있습니다") from None
         state.next_id = max(ids, default=0) + 1
-        self._states[table] = state
         return state
 
     # 파일의 한 줄 → 행. 손상됐으면 StorageError. where: 에러에 적을 위치 (줄 번호 또는 "N바이트 위치")
