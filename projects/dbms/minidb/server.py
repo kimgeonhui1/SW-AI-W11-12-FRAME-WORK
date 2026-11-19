@@ -145,6 +145,8 @@ class Handler(BaseHTTPRequestHandler):
             raw = self.rfile.read(length)
         except (TimeoutError, socket.timeout):  # 파이썬 3.9까지는 socket.timeout이 TimeoutError가 아니다
             raise ApiError(408, "요청 본문을 제한 시간 안에 다 받지 못했습니다")
+        except ConnectionError:  # 보내다 끊은 클라이언트: 서버 오류(500)가 아니라 잘못된 요청 (응답은 받을 사람이 없어 버려진다, Gemini 리뷰)
+            raise ApiError(400, "본문을 받는 도중 연결이 끊겼습니다")
         if len(raw) != length:  # 덜 보내고 연결을 닫은 요청: 잘린 본문이 우연히 올바른 JSON이어도 받지 않는다
             raise ApiError(400, "본문이 Content-Length보다 짧습니다")
         try:

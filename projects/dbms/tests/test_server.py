@@ -163,6 +163,21 @@ class ServerTest(unittest.TestCase):
             c.sendall(b'POST /query HTTP/1.0\r\nContent-Length: 50\r\n\r\n{"sql"')  # 덜 보내고 멈춤
             self.assertIn(b" 408 ", c.recv(4096))
 
+    def test_client_reset_during_body_is_not_server_error(self):
+        # 본문을 보내다 연결을 강제로 끊으면 500(서버 내부 오류)이 아니라 400으로 분류하고, 서버는 계속 정상 동작한다
+        class ResetStream:
+            def read(self, n):
+                raise ConnectionResetError("클라이언트가 연결을 끊음")
+
+        handler = server_module.Handler.__new__(server_module.Handler)  # 소켓 없이 핸들러만
+        handler.headers = http.client.HTTPMessage()
+        handler.headers["Content-Length"] = "100"
+        handler.rfile = ResetStream()
+        with self.assertRaises(server_module.ApiError) as ctx:
+            handler._read_sql()
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(self.request("GET", "/health")[0], 200)
+
     def test_wrong_paths_and_methods(self):
         self.assertEqual(self.request("GET", "/nope")[0], 404)
         self.assertEqual(self.request("GET", "/query")[0], 405)
