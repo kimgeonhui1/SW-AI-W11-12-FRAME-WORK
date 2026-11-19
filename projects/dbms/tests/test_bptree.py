@@ -6,8 +6,9 @@ import unittest
 from minidb.bptree import BPlusTree, _Internal, _Leaf
 
 
-def check_invariants(test, tree):
-    """B+ 트리 규칙을 전부 확인한다. 깨진 곳이 있으면 테스트 실패"""
+def check_invariants(test, tree, after_delete=False):
+    """B+ 트리 규칙을 전부 확인한다. 깨진 곳이 있으면 테스트 실패
+    after_delete: 삭제는 재균형을 하지 않아 잎이 빌 수 있다 → "빈 잎 없음"만 빼고 나머지 규칙은 그대로 본다"""
     leaves = []
 
     def walk(node, depth, low, high):
@@ -32,7 +33,7 @@ def check_invariants(test, tree):
     for (_, left), (_, right) in zip(leaves, leaves[1:]):
         test.assertIs(left.next, right)  # 잎 연결이 왼쪽 → 오른쪽 순서와 같다
     test.assertIsNone(leaves[-1][1].next)
-    if len(leaves) > 1:  # 루트가 아닌 잎은 비어 있지 않다 (나눌 때 반씩 나눈다)
+    if len(leaves) > 1 and not after_delete:  # 루트가 아닌 잎은 비어 있지 않다 (나눌 때 반씩 나눈다)
         test.assertTrue(all(node.keys for _, node in leaves))
     keys = [k for k, _ in tree.items()]
     test.assertEqual(keys, sorted(keys))
@@ -154,6 +155,37 @@ class BPlusTreeTest(unittest.TestCase):
         for order in (2, 0, -1, 2.5, True, "64"):
             with self.assertRaises(ValueError, msg=repr(order)):
                 BPlusTree(order=order)
+
+    def test_delete_matches_dict_and_keeps_rules(self):
+        # 무작위로 넣고 지우기를 섞어도 결과가 dict와 같고, 규칙(빈 잎 허용)이 지켜진다. 지운 뒤 다시 넣는 것도 된다
+        rng = random.Random(7)
+        for order in (3, 4, 64):
+            tree, model = BPlusTree(order=order), {}
+            for k in rng.sample(range(3000), 2000):
+                tree.insert(k, -k)
+                model[k] = -k
+            for k in rng.sample(range(3000), 2500):  # 없는 키도 섞어서
+                self.assertEqual(tree.delete(k), model.pop(k, None) is not None)
+            check_invariants(self, tree, after_delete=True)
+            self.assertEqual(list(tree.items()), sorted(model.items()))
+            for k in rng.sample(range(3000), 800):
+                if k not in model:
+                    tree.insert(k, k)
+                    model[k] = k
+            check_invariants(self, tree, after_delete=True)
+            self.assertEqual(list(tree.items()), sorted(model.items()))
+            self.assertTrue(all(tree.get(k) == v for k, v in model.items()))
+
+    def test_delete_everything_then_append_like_ids(self):
+        # id처럼: 1..500을 넣고 앞에서부터 전부 지운 뒤 501..1000을 넣는다 (빈 잎들이 남아 있어도 맨 오른쪽 분할이 맞게 동작)
+        tree = BPlusTree.bulk_load(list(range(1, 501)), list(range(1, 501)), order=4)
+        for k in range(1, 501):
+            self.assertTrue(tree.delete(k))
+        self.assertEqual((len(tree), tree.get(250)), (0, None))
+        for k in range(501, 1001):
+            tree.insert(k, k)
+        check_invariants(self, tree, after_delete=True)
+        self.assertEqual([k for k, _ in tree.items()], list(range(501, 1001)))
 
 
 if __name__ == "__main__":

@@ -149,7 +149,9 @@ class Database:
         with f:
             for number, raw in enumerate(f, 1):
                 if raw.strip():  # 빈 줄(편집기가 끝에 넣은 줄 등)은 행이 아니다
-                    yield self._decode(table, raw, number, types)
+                    row = self._decode(table, raw, number, types)
+                    if len(row) > 1:  # [id]만 있는 줄은 지운 행 (DELETE의 표시)
+                        yield row
 
     # id로 행 하나 찾기 (인덱스 사용) → 행 또는 None. 트리에서 offset을 얻어 그 위치로 바로 가서 한 줄만 읽는다
     def get(self, table, row_id):
@@ -167,6 +169,33 @@ class Database:
         if row[0] != row_id:  # 인덱스를 만든 뒤 다른 프로그램이 파일을 바꿨다
             raise StorageError(f"{self.path(table)}: 인덱스와 파일이 맞지 않습니다 (id {row_id})")
         return row
+
+    # DELETE: 행들을 지운다 → 지운 개수. row_ids는 실행기가 찾은 id 목록
+    # 그 줄을 같은 바이트 길이의 "[id]" + 공백으로 제자리에서 덮어쓴다 (tombstone, 지웠다는 표시)
+    #   - 길이가 같아서 뒤에 있는 행들의 offset이 그대로다 → 인덱스는 지운 키만 빼면 된다 (줄을 정말 빼면 뒤의 모든 offset이 바뀐다)
+    #   - id를 남겨 두어, 다시 켤 때 next_id가 지운 id를 다시 쓰지 않는다
+    # 한계: 지운 자리는 재사용하지 않는다(파일이 줄지 않음). 덮어쓰는 도중 꺼지면 그 줄이 손상되어 켤 때 알린다
+    def delete(self, table, row_ids):
+        state = self._state(table)
+        self._flush(table)  # autoflush=False로 아직 버퍼에 있는 행도 파일에 있어야 그 위치를 덮어쓸 수 있다
+        types = [kind for _, kind in self.columns(table)]
+        count = 0
+        with open(self.path(table), "r+b") as f:
+            for row_id in row_ids:
+                offset = state.index.get(row_id)
+                if offset is None:
+                    continue
+                f.seek(offset)
+                raw = f.readline()
+                if self._decode(table, raw, f"{offset}바이트 위치", types)[0] != row_id:
+                    raise StorageError(f"{self.path(table)}: 인덱스와 파일이 맞지 않습니다 (id {row_id})")
+                body = len(raw.rstrip(b"\r\n"))  # 줄바꿈(\n, 손으로 고친 파일이면 \r\n)은 그대로 둔다
+                mark = f"[{row_id}]".encode()
+                f.seek(offset)
+                f.write(mark + b" " * (body - len(mark)))
+                state.index.delete(row_id)  # 파일에 쓴 "뒤에" 인덱스에서 뺀다 (쓰기가 실패하면 인덱스는 그대로)
+                count += 1
+        return count
 
     def _flush(self, table):
         state = self._states.get(table)
@@ -193,6 +222,7 @@ class Database:
         state = _TableState()
         types = [kind for _, kind in self.columns(table)]
         ids, offsets, numbers = [], [], []
+        last_deleted = 0  # 지운 행의 가장 큰 id: 맨 끝 행을 지웠어도 그 id를 다시 쓰지 않으려고 next_id 계산에 넣는다
         try:
             f = open(self.path(table), "rb")
         except FileNotFoundError:
@@ -202,9 +232,13 @@ class Database:
                 offset, raw = 0, b""
                 for number, raw in enumerate(f, 1):  # 바이너리 모드: 줄은 \n으로만 나뉘고, len(raw)는 정확한 바이트 수다
                     if raw.strip():
-                        ids.append(self._decode(table, raw, number, types)[0])  # 행 전체를 검사해 손상을 켤 때 바로 알린다
-                        offsets.append(offset)
-                        numbers.append(number)
+                        row = self._decode(table, raw, number, types)  # 행 전체를 검사해 손상을 켤 때 바로 알린다
+                        if len(row) == 1:  # 지운 행: 인덱스에는 넣지 않는다
+                            last_deleted = max(last_deleted, row[0])
+                        else:
+                            ids.append(row[0])
+                            offsets.append(offset)
+                            numbers.append(number)
                     offset += len(raw)
                 state.size = offset
                 state.needs_newline = offset > 0 and not raw.endswith(b"\n")
@@ -218,7 +252,7 @@ class Database:
                     state.index.insert(row_id, offset)
                 except KeyError:
                     raise StorageError(f"{self.path(table)} {number}번째 줄: id {row_id}이(가) 이미 있습니다") from None
-        state.next_id = max(ids, default=0) + 1
+        state.next_id = max(max(ids, default=0), last_deleted) + 1
         return state
 
     # 파일의 한 줄 → 행. 손상됐으면 StorageError. where: 에러에 적을 위치 (줄 번호 또는 "N바이트 위치")
@@ -229,6 +263,9 @@ class Database:
             row = _decode_json(raw.decode("utf-8"))
         except ValueError:  # JSON이 아님, UTF-8이 아님 (UnicodeDecodeError도 ValueError)
             raise StorageError(f"{self.path(table)} {where}이 손상되었습니다") from None
+        # [id] 하나뿐인 줄 = DELETE가 남긴 표시. 테이블은 열이 하나 이상이라 진짜 행은 길이가 2 이상이므로 헷갈리지 않는다
+        if type(row) is list and len(row) == 1 and type(row[0]) is int and 1 <= row[0] <= INT_MAX:
+            return row
         # id는 1 이상이어야 한다 (자동 부여는 1부터)
         if not _row_matches(row, types) or row[0] < 1:
             raise StorageError(f"{self.path(table)} {where}이 스키마와 다릅니다: {raw[:80]!r}")

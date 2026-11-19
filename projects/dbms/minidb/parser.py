@@ -4,6 +4,7 @@
 #   INSERT INTO 테이블 [(컬럼, ...)] VALUES (값, ...);
 #   SELECT * | 컬럼, ... FROM 테이블 [WHERE 컬럼 = 값];
 #   CREATE TABLE 테이블 (컬럼 타입, ...);   ← 타입은 INT 또는 TEXT. id 열은 자동으로 붙으므로 적지 않는다
+#   DELETE FROM 테이블 [WHERE 컬럼 = 값];   ← WHERE가 없으면 모든 행
 #   값은 정수 또는 '문자열'. 문장은 ;로 나누고, 마지막 문장은 ;를 빼도 된다
 #
 # ■ 방식: 재귀 하강(recursive descent) 파서
@@ -29,6 +30,12 @@ class Select(NamedTuple):
     table: str
     columns: Optional[list]  # None이면 * (모든 컬럼)
     where: Optional[tuple]  # (컬럼, 값) 또는 None
+    line: int
+
+
+class Delete(NamedTuple):
+    table: str
+    where: Optional[tuple]  # (컬럼, 값) 또는 None(모든 행)
     line: int
 
 
@@ -87,7 +94,9 @@ class _Parser:
             return self.select()
         if tok.kind == "KEYWORD" and tok.value == "CREATE":
             return self.create_table()
-        self.fail("INSERT, SELECT 또는 CREATE TABLE 문장이어야 합니다")
+        if tok.kind == "KEYWORD" and tok.value == "DELETE":
+            return self.delete()
+        self.fail("INSERT, SELECT, DELETE 또는 CREATE TABLE 문장이어야 합니다")
 
     def insert(self):
         start = self.expect("KEYWORD", "INSERT")
@@ -110,12 +119,21 @@ class _Parser:
         columns = None if self.accept("SYMBOL", "*") else self.names("컬럼 이름 또는 *")
         self.expect("KEYWORD", "FROM")
         table = self.expect("NAME", what="테이블 이름").value
-        where = None
-        if self.accept("KEYWORD", "WHERE"):
-            column = self.expect("NAME", what="컬럼 이름").value
-            self.expect("SYMBOL", "=")
-            where = (column, self.literal())
-        return Select(table, columns, where, start.line)
+        return Select(table, columns, self.where(), start.line)
+
+    def delete(self):
+        start = self.expect("KEYWORD", "DELETE")
+        self.expect("KEYWORD", "FROM")
+        table = self.expect("NAME", what="테이블 이름").value
+        return Delete(table, self.where(), start.line)
+
+    # [WHERE 컬럼 = 값] → (컬럼, 값) 또는 None. SELECT와 DELETE가 같은 규칙을 쓴다
+    def where(self):
+        if not self.accept("KEYWORD", "WHERE"):
+            return None
+        column = self.expect("NAME", what="컬럼 이름").value
+        self.expect("SYMBOL", "=")
+        return column, self.literal()
 
     def create_table(self):
         start = self.expect("KEYWORD", "CREATE")

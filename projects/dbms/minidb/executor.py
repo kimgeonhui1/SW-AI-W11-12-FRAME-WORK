@@ -14,8 +14,10 @@
 
 from typing import NamedTuple
 
-from .parser import CreateTable, Insert
+from .parser import CreateTable, Delete, Insert
 from .storage import ID, SchemaError
+
+_LABELS = {"index": "인덱스 사용", "scan": "전체 탐색"}
 
 
 class ExecutionError(ValueError):
@@ -39,6 +41,8 @@ class Executor:
             return self._insert(stmt)
         if isinstance(stmt, CreateTable):
             return self._create_table(stmt)
+        if isinstance(stmt, Delete):
+            return self._delete(stmt)
         return self._select(stmt)
 
     def _create_table(self, stmt):
@@ -85,26 +89,35 @@ class Executor:
             if column not in position:
                 raise ExecutionError(f"{stmt.table}에 없는 컬럼입니다: {column}")
         picks = [position[c] for c in columns]
+        found, plan = self._find(stmt.table, stmt.where)
+        rows = [[row[i] for i in picks] for row in found]
+        return Result(columns, rows, f"{len(rows)}개 행 ({_LABELS[plan]})", plan)
 
-        where = None
-        if stmt.where is not None:
-            column, value = stmt.where
+    # DELETE: 지울 행을 SELECT와 같은 방법(인덱스 또는 전체 탐색)으로 찾은 뒤 저장소에 지우게 한다
+    def _delete(self, stmt):
+        self._check_table(stmt.table)
+        found, plan = self._find(stmt.table, stmt.where)
+        ids = [row[0] for row in found]  # 파일을 고치기 "전에" 다 찾아 둔다 (읽는 도중에 같은 파일을 덮어쓰지 않게)
+        count = self.db.delete(stmt.table, ids)
+        return Result([], [], f"{count}개 행을 삭제했습니다 ({_LABELS[plan]})", plan)
+
+    # WHERE에 맞는 행 찾기 → (행들, "index" 또는 "scan"). where는 (컬럼, 값) 또는 None
+    def _find(self, table, where):
+        schema = self.db.columns(table)
+        position = {name: i for i, (name, _) in enumerate(schema)}
+        if where is not None:
+            column, value = where
             if column not in position:
-                raise ExecutionError(f"{stmt.table}에 없는 컬럼입니다: {column}")
+                raise ExecutionError(f"{table}에 없는 컬럼입니다: {column}")
             # WHERE age = '25'처럼 타입이 다르면 어떤 행과도 같을 수 없다 → 조용히 0개 대신 실수를 알려 준다
-            _check_type(stmt.table, column, schema[position[column]][1], value)
+            _check_type(table, column, schema[position[column]][1], value)
             where = (position[column], value)
 
         if where is not None and where[0] == 0 and self.use_index:  # WHERE id = 값 → 인덱스
-            row = self.db.get(stmt.table, where[1])
-            found = [] if row is None else [row]
-            plan = "index"
-        else:  # 전체 탐색: 모든 행을 하나씩 비교
-            found = (row for row in self.db.scan(stmt.table) if where is None or row[where[0]] == where[1])
-            plan = "scan"
-        rows = [[row[i] for i in picks] for row in found]
-        label = "인덱스 사용" if plan == "index" else "전체 탐색"
-        return Result(columns, rows, f"{len(rows)}개 행 ({label})", plan)
+            row = self.db.get(table, where[1])
+            return ([] if row is None else [row]), "index"
+        # 전체 탐색: 모든 행을 하나씩 비교
+        return (row for row in self.db.scan(table) if where is None or row[where[0]] == where[1]), "scan"
 
 
 def _check_type(table, column, kind, value):

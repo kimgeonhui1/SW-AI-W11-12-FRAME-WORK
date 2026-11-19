@@ -15,7 +15,7 @@
 import threading
 
 from .executor import ExecutionError, Executor
-from .parser import CreateTable, Insert, parse
+from .parser import CreateTable, Delete, Insert, parse
 from .rwlock import RWLock
 from .storage import Database
 
@@ -65,7 +65,8 @@ class Engine:
                 if lock is None:
                     # 실행기에 넘기지 않고 여기서 끝낸다: 넘긴 사이에 CREATE가 끝나면 그 테이블에 락 없이 쓰게 된다
                     raise ExecutionError(f"테이블이 없습니다: {stmt.table}")
-                with lock.write() if isinstance(stmt, Insert) else lock.read():
+                # 파일 · 인덱스를 바꾸는 INSERT · DELETE는 쓰기 락(혼자), SELECT는 읽기 락(여럿이 함께)
+                with lock.write() if isinstance(stmt, (Insert, Delete)) else lock.read():
                     results.append(self._executor.execute(stmt))
             except Exception as e:
                 raise StatementError(number, stmt.line, e, results) from e

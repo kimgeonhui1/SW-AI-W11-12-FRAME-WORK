@@ -35,7 +35,7 @@ class ParserTest(unittest.TestCase):
     def test_syntax_errors(self):
         cases = {
             "SELECT * FROM a SELECT * FROM b": (1, 17),  # 문장 사이 ; 없음
-            "DELETE FROM users": (1, 1),  # 지원하지 않는 문장
+            "DROP TABLE users": (1, 1),  # 지원하지 않는 문장
             "SELECT * users": (1, 10),  # FROM 없음
             "SELECT FROM users": (1, 8),  # 컬럼 없음
             "SELECT name, FROM users": (1, 14),  # 쉼표 뒤 컬럼 없음
@@ -64,8 +64,8 @@ class ParserTest(unittest.TestCase):
             parse("SELECT * FROM")
         self.assertIn("파일 끝", str(ctx.exception))
         with self.assertRaises(SqlSyntaxError) as ctx:
-            parse("DELETE FROM users")
-        self.assertIn("DELETE", str(ctx.exception))
+            parse("DROP TABLE users")
+        self.assertIn("DROP", str(ctx.exception))
 
 
 if __name__ == "__main__":

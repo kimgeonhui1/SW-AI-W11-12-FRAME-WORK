@@ -23,7 +23,10 @@
 #   새 키만 오른쪽으로 보낸다 → 노드가 거의 꽉 차서 노드 수가 약 절반이 된다. 실제 DB도 순서대로 늘어나는 키에 같은 최적화를 한다
 #   그 밖의 경우(중간에 끼어든 키)는 원래대로 반반 → 양쪽 모두 다음 키가 들어올 빈자리가 있다
 #
-# ■ 삭제는 아직 없다 (과제의 SQL은 INSERT / SELECT뿐. DELETE는 추가 구현 때)
+# ■ 삭제(DELETE, 추가 구현): 잎에서 키와 값만 뺀다. 노드를 합치거나 이웃에게서 빌려 오는 재균형은 하지 않는다
+#   - 잎이 반 아래로 줄거나 비어도, 내부 노드의 안내 키는 여전히 "왼쪽 < 경계 ≤ 오른쪽"을 지키므로 검색 결과는 맞다
+#   - id는 늘기만 하고 지운 id는 다시 들어오지 않아서, 빈자리가 채워지지 않을 뿐 트리가 틀려지지는 않는다
+#   - 실제 DB도 지울 때 바로 합치지 않는 경우가 많다 (PostgreSQL B-tree는 완전히 빈 페이지만 나중에 정리한다)
 
 from bisect import bisect_left, bisect_right
 
@@ -154,6 +157,19 @@ class BPlusTree:
         del node.keys[mid:]  # 가운데 키는 부모로 옮긴다 (왼쪽 · 오른쪽 어디에도 남기지 않는다)
         del node.children[mid + 1:]
         return up, right
+
+    # key 지우기 → 있어서 지웠으면 True, 없으면 False. get과 같은 길로 잎까지 내려가 그 잎에서만 뺀다 (재균형 없음, 맨 위 설명)
+    def delete(self, key):
+        node = self.root
+        while isinstance(node, _Internal):
+            node = node.children[bisect_right(node.keys, key)]
+        i = bisect_left(node.keys, key)
+        if i == len(node.keys) or node.keys[i] != key:
+            return False
+        del node.keys[i]
+        del node.values[i]
+        self._size -= 1
+        return True
 
     # (키, 값)을 키 순서대로. 맨 왼쪽 잎까지 내려간 뒤 잎 연결(next)만 따라간다 (범위 검색의 바탕)
     def items(self):
